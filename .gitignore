@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 环境与密钥（重要：.env 永不入库）
+.env
+.env.*
+!.env.example
+
+# Node / 前端（后期）
+node_modules/
+dist/
+
+# IDE / 系统
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# 日志
+*.log
+logs/
