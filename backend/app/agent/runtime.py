@@ -15,7 +15,7 @@ from app.agent.context import build_summary_middleware, get_checkpointer, get_st
 from app.agent.mcp import build_mcp_tools
 from app.agent.middleware import AuditMiddleware, LoggingMiddleware, RateLimitMiddleware
 from app.agent.model import build_llm
-from app.agent.sandbox import build_main_backend
+from app.agent.sandbox import build_main_backend, default_permissions
 from app.agent.skills import build_skills_middleware, compile_all_skills, seed_skills
 from app.agent.subagents import load_all_subagents
 from app.core.config import settings
@@ -66,6 +66,8 @@ async def get_agent():
             backend=backend,
             middleware=middlewares + [skills_mw],
             tools=extra_tools or None,
+            # P8: 敏感文件操作 → 人工审批中断（deepagents HITL）
+            permissions=default_permissions(),
             # P6: 子智能体（YAML 注册表），同一模型；task 工具委派 + 隔离上下文
             subagents=load_all_subagents(),
         )

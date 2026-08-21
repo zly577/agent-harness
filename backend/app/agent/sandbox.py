@@ -47,3 +47,24 @@ def build_exec_backend():
 def execute_allowed() -> bool:
     """判断路由总开关：是否允许 execute。P3 默认关闭，P8 人工审批后可启用。"""
     return False
+
+
+def default_permissions():
+    """默认文件权限（P8 审批用）。
+
+    mode="interrupt"：deepagents 会对匹配路径的操作触发**人工审批中断**
+    （自动挂 HumanInTheLoopMiddleware）。此处让写入系统/管理类目录的操作需审批。
+    注意：路径须用 **glob 通配模式**（如 `/system/**`）才能匹配其子路径
+    （`/system/` 目录结尾不匹配子孙，经 wcglob 验证）。
+    其他路径走默认 allow。
+    """
+    from deepagents.middleware.filesystem import FilesystemPermission
+
+    return [
+        # 敏感目录写入需审批
+        FilesystemPermission(
+            operations=["write"],
+            paths=["/system/**", "/admin/**", "/root/**"],
+            mode="interrupt",
+        ),
+    ]
