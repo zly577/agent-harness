@@ -12,6 +12,7 @@ from deepagents import create_deep_agent
 
 from app.agent.context import build_summary_middleware, get_checkpointer, get_store
 from app.agent.model import build_llm
+from app.agent.sandbox import build_main_backend
 from app.db.models import Session as DbSession
 from app.db.session import SessionLocal
 
@@ -19,7 +20,7 @@ _agent = None
 
 
 async def get_agent():
-    """懒加载：首次调用时才构建智能体（异步构建 checkpointer/store）。"""
+    """懒加载：首次调用时才构建智能体（异步构建 checkpointer/store/backend）。"""
     global _agent
     if _agent is None:
         _agent = create_deep_agent(
@@ -31,6 +32,7 @@ async def get_agent():
             name="assistant",
             checkpointer=await get_checkpointer(),
             store=await get_store(),
+            backend=build_main_backend(),
             middleware=[build_summary_middleware()],
         )
     return _agent

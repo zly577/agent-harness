@@ -92,7 +92,7 @@ agent-harness/
 | P0 ✅ | 项目骨架：目录、依赖、配置、FastAPI 空服务 | 可启动的空服务 | curl /health |
 | P1 ✅ | 最小可用 Agent：DeepAgents Agent + 对话 API + 内存上下文 | 能对话的最小闭环 | API 发消息收回复 |
 | P2 ✅ | 上下文管理：消息历史 SQLite 持久化（langgraph checkpoint/store）+ MySQL 业务库 + 上下文压缩 | 跨轮次&跨进程记忆 | 长对话测试 |
-| P3 | 虚拟文件系统沙箱 | 文件工具集 + 路径边界 | 工具调用测试 |
+| P3 ✅ | 虚拟文件系统沙箱（StoreBackend + InMemoryStore，判断路由：默认可写不可执行） | 文件工具集 + execute 禁用 | 工具调用测试 |
 | P4 | Skills：YAML 加载 + 动态 Tool + create_skill 审批流 | Skills 注册表 | 新增/调用 Skill |
 | P5 | 中间件框架 | 日志/审计/限流管道 | 运行观测 |
 | P6 | 多智能体：子智能体 YAML 注册表 + Task 委派 + 隔离 | 多智能体协作 | 委派场景测试 |
