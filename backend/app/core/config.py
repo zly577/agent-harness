@@ -1,7 +1,18 @@
-"""全局配置：从 .env / 环境变量读取（pydantic-settings）。"""
+"""全局配置：从 .env / 环境变量读取（pydantic-settings）。
+
+P2 起新增：
+- MYSQL_URL：业务数据持久化（MySQL 8.0）
+- SQLITE_PATH：langgraph checkpoint/store 消息历史（SQLite 单文件）
+
+MySQL 迁移到 PostgreSQL 时只需改 MYSQL_URL 并替换驱动，对上层无耦合。
+"""
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# backend 目录的绝对路径（用于默认 SQLite 位置）
+_BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
 
 
 class Settings(BaseSettings):
@@ -21,10 +32,17 @@ class Settings(BaseSettings):
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-v4-flash"
 
-    # 数据库
-    database_url: str = (
-        "postgresql+psycopg2://postgres:postgres@localhost:5432/agent_harness"
-    )
+    # ===== P2：持久化 =====
+    # 业务数据（MySQL）
+    mysql_url: str = "mysql+pymysql://root:CHANGE_ME@127.0.0.1:3306/agent_harness?charset=utf8mb4"
+    # langgraph 消息历史（SQLite 单文件）
+    sqlite_path: str = str(_BACKEND_DIR / "data" / "harness.sqlite")
+
+    # ===== P2：上下文管理 =====
+    # 触发截断/摘要的消息条数阈值（超过则处理）
+    context_max_messages: int = 12
+    # 摘要后保留的最近消息条数
+    context_keep_messages: int = 6
 
 
 @lru_cache

@@ -1,22 +1,25 @@
-"""Agent 运行时：构建并运行 DeepAgents 智能体。
+"""Agent 运行时：构建并运行 DeepAgents 智能体（P2：持久化 + 上下文管理）。
 
-P1 最小版本：进程内内存会话，无持久化（P2 迁移到 PostgreSQL + checkpointer/store）。
+P1：手工 ("role", content) 二元组内存存储。
+P2：- 重构为真实 BaseMessage，历史交给 langgraph checkpointer（SQLite）持久化
+     - 通过 thread_id 实现多会话隔离
+     - 接入 SummarizationMiddleware 做上下文压缩
+     - 业务会话元信息落到 MySQL（app.db.models.Session）
 """
 import uuid
 
 from deepagents import create_deep_agent
 
+from app.agent.context import build_summary_middleware, get_checkpointer, get_store
 from app.agent.model import build_llm
-
-# 内存会话存储：session_id -> 消息列表（元素为 ("user"/"assistant", content)）
-# TODO(P2): 迁移到 PostgreSQL + langgraph checkpointer/store
-_sessions: dict[str, list[tuple[str, str]]] = {}
+from app.db.models import Session as DbSession
+from app.db.session import SessionLocal
 
 _agent = None
 
 
-def get_agent():
-    """懒加载：首次调用时才构建智能体（避免 import 时初始化模型）。"""
+async def get_agent():
+    """懒加载：首次调用时才构建智能体（异步构建 checkpointer/store）。"""
     global _agent
     if _agent is None:
         _agent = create_deep_agent(
@@ -26,32 +29,50 @@ def get_agent():
                 "请用中文简洁、准确地回答用户的问题。"
             ),
             name="assistant",
+            checkpointer=await get_checkpointer(),
+            store=await get_store(),
+            middleware=[build_summary_middleware()],
         )
     return _agent
 
 
-def new_session() -> str:
-    """创建新会话，返回 session_id。"""
+def create_session() -> str:
+    """创建新会话：
+    - 生成 session_id（作为 langgraph 的 thread_id）
+    - 在 MySQL 业务库登记会话元信息
+    - 返回 session_id
+    """
     session_id = uuid.uuid4().hex
-    _sessions[session_id] = []
+    db = SessionLocal()
+    try:
+        db.add(DbSession(id=session_id, title="新会话", status="active"))
+        db.commit()
+    finally:
+        db.close()
     return session_id
 
 
-def has_session(session_id: str) -> bool:
-    return session_id in _sessions
+def session_exists(session_id: str) -> bool:
+    """判断会话是否存在于业务库。"""
+    db = SessionLocal()
+    try:
+        return db.get(DbSession, session_id) is not None
+    finally:
+        db.close()
 
 
 async def run_chat(session_id: str, user_message: str) -> str:
-    """向智能体发送一条用户消息，返回回复文本，并把本轮对话写入内存历史。"""
-    history = _sessions[session_id]
-    messages = history + [("user", user_message)]
+    """向智能体发送一条用户消息，返回回复文本。
 
-    result = await get_agent().ainvoke({"messages": messages})
-
+    - thread_id = session_id，历史由 checkpointer 管理（无需手工存储消息）
+    - 输入直接传 user 消息（由 langgraph 转为 BaseMessage）
+    """
+    agent = await get_agent()
+    result = await agent.ainvoke(
+        {"messages": [{"role": "user", "content": user_message}]},
+        config={"configurable": {"thread_id": session_id}},
+    )
     reply = result["messages"][-1].content
     if not isinstance(reply, str):
         reply = str(reply)
-
-    history.append(("user", user_message))
-    history.append(("assistant", reply))
     return reply

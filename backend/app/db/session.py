@@ -1,15 +1,16 @@
-"""数据库引擎与会话管理（P2 起真正使用；create_engine 为惰性连接，未启动 PG 也不会报错）。"""
+"""MySQL 业务库：引擎与会话管理（P2 启用，持久化会话元信息等业务数据）。"""
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.core.config import settings
 
-engine = create_engine(settings.database_url, pool_pre_ping=True)
+# 业务数据：MySQL
+engine = create_engine(settings.mysql_url, pool_pre_ping=True, pool_recycle=3600)
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
 
 def get_db():
-    """FastAPI 依赖：每请求一个会话，请求结束关闭。"""
+    """FastAPI 依赖：每请求一个业务库会话，请求结束关闭。"""
     db = SessionLocal()
     try:
         yield db

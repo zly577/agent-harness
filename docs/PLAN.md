@@ -90,8 +90,8 @@ agent-harness/
 | 阶段 | 内容 | 交付物 | 验证方式 |
 |------|------|--------|---------|
 | P0 ✅ | 项目骨架：目录、依赖、配置、FastAPI 空服务 | 可启动的空服务 | curl /health |
-| P1 | 最小可用 Agent：DeepAgents Agent + 对话 API + 内存上下文 | 能对话的最小闭环 | API 发消息收回复 |
-| P2 | 上下文管理：PostgreSQL 持久化 + 截断/摘要（含 alembic 迁移） | 跨轮次记忆 | 长对话测试 |
+| P1 ✅ | 最小可用 Agent：DeepAgents Agent + 对话 API + 内存上下文 | 能对话的最小闭环 | API 发消息收回复 |
+| P2 ✅ | 上下文管理：消息历史 SQLite 持久化（langgraph checkpoint/store）+ MySQL 业务库 + 上下文压缩 | 跨轮次&跨进程记忆 | 长对话测试 |
 | P3 | 虚拟文件系统沙箱 | 文件工具集 + 路径边界 | 工具调用测试 |
 | P4 | Skills：YAML 加载 + 动态 Tool + create_skill 审批流 | Skills 注册表 | 新增/调用 Skill |
 | P5 | 中间件框架 | 日志/审计/限流管道 | 运行观测 |
@@ -148,4 +148,6 @@ agent-harness/
 |------|------|------|
 | P0 | 模型 deepseek-v4-flash，Key 存 .env | 模型名待用户与 provider 确认（P1 实测） |
 | P0 | 使用 conda 环境 agent_env（Python 3.12.13） | 已满足 deepagents ≥3.11，无需升级 Python；deepagents 生态已预装，共享环境零改动 |
-| P0 | alembic 推迟到 P2 | 见优化建议 P0-1 |
+| P2 | 消息历史改用 **SQLite** checkpoint/store，业务数据改用 **MySQL** | PostgreSQL 因本机无 PG + HTTPS 出网被断 + 不启动 Docker 而不可行；MySQL 8.0 本机运行可用（root 账号），langgraph 仅原生支持 checkpoint/store 的 PG/SQLite/内存 |
+| P2 | 上下文压缩用 langgraph 官方 `SummarizationMiddleware` | 不手写 SQLite 读 state，借用 deepagents/langchain 正规中间件 |
+| P2 | alembic 推迟到 P4 前 | 当前用 `Base.metadata.create_all` 轻量建表；模型多后换正式迁移 |

@@ -1,4 +1,4 @@
-"""对话路由（P1）。"""
+"""对话路由（P2：MySQL 持久化会话校验）。"""
 from fastapi import APIRouter, HTTPException
 
 from app.agent import runtime
@@ -9,10 +9,10 @@ router = APIRouter(prefix="/api/v1", tags=["chat"])
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest):
-    # 会话解析：无 session_id 则新建；有则校验存在
+    # 会话解析：无 session_id 则新建（登记 MySQL）；有则校验存在
     if req.session_id is None:
-        session_id = runtime.new_session()
-    elif runtime.has_session(req.session_id):
+        session_id = runtime.create_session()
+    elif runtime.session_exists(req.session_id):
         session_id = req.session_id
     else:
         raise HTTPException(status_code=404, detail="session not found")

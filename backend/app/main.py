@@ -1,4 +1,5 @@
-"""FastAPI 应用入口（P0：项目骨架 + 健康检查）。"""
+"""FastAPI 应用入口（P0：项目骨架 + 健康检查；P2：启动建表）。"""
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -7,10 +8,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import api_router
 from app.core.config import settings
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # TODO(P2): 启动时校验 PostgreSQL 连接
+    # 启动时自动建业务表（MySQL）。P4 前后应换为 alembic 迁移。
+    from app.db.base import Base
+    from app.db.session import engine
+    import app.db.models  # noqa: F401  确保模型注册
+
+    Base.metadata.create_all(bind=engine)
+    logger.info("[P2] MySQL 业务表 ready")
     yield
 
 

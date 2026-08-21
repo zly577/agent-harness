@@ -13,6 +13,16 @@ venv/
 .env.*
 !.env.example
 
+# 运行时数据（SQLite 消息历史/记忆）
+backend/data/
+*.sqlite
+*.sqlite3
+
+# 临时文件
+_sid.txt
+_dbcheck.py
+_piptest/
+
 # Node / 前端（后期）
 node_modules/
 dist/
