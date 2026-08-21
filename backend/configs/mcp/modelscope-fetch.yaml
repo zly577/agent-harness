@@ -1,0 +1,8 @@
+# 一个可插拔的 MCP server 配置示例。
+# 结构对应 mcpServers 单 server 项；填参数即可新增一个 MCP 工具源。
+# 说明：当前网络受限未装 langchain_mcp_adapters，此配置在 MCP_ENABLED=1 后才会被加载。
+name: modelscope-fetch
+type: streamable_http
+url: https://mcp.api-inference.modelscope.net/72a8fb8cc6f646/mcp
+headers: {}
+enabled: true

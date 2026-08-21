@@ -6,18 +6,23 @@ P2：- 重构为真实 BaseMessage，历史交给 langgraph checkpointer（SQLit
      - 接入 SummarizationMiddleware 做上下文压缩
      - 业务会话元信息落到 MySQL（app.db.models.Session）
 """
+import logging
 import uuid
 
 from deepagents import create_deep_agent
 
 from app.agent.context import build_summary_middleware, get_checkpointer, get_store
+from app.agent.mcp import build_mcp_tools
 from app.agent.middleware import AuditMiddleware, LoggingMiddleware, RateLimitMiddleware
 from app.agent.model import build_llm
 from app.agent.sandbox import build_main_backend
 from app.agent.skills import build_skills_middleware, compile_all_skills, seed_skills
 from app.agent.subagents import load_all_subagents
+from app.core.config import settings
 from app.db.models import Session as DbSession
 from app.db.session import SessionLocal
+
+logger = logging.getLogger(__name__)
 
 _agent = None
 
@@ -41,6 +46,14 @@ async def get_agent():
         ]
         skills_mw = build_skills_middleware(backend)
 
+        # P7: 外部 MCP 工具（MCP_ENABLED=1 + 装依赖 + 网络可达时才加载）
+        extra_tools: list = []
+        if settings.mcp_enabled:
+            mcp_tools, mcp_errors = await build_mcp_tools()
+            extra_tools.extend(mcp_tools)
+            for err in mcp_errors:
+                logger.warning("[mcp] %s", err)
+
         _agent = create_deep_agent(
             model=build_llm(),
             system_prompt=(
@@ -52,6 +65,7 @@ async def get_agent():
             store=await get_store(),
             backend=backend,
             middleware=middlewares + [skills_mw],
+            tools=extra_tools or None,
             # P6: 子智能体（YAML 注册表），同一模型；task 工具委派 + 隔离上下文
             subagents=load_all_subagents(),
         )

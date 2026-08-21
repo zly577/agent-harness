@@ -1,0 +1,13 @@
+# 多 MCP server 写法（兼容你给的 mcpServers 结构）。
+# 可把魔塔 MCP 广场返回的整段 mcpServers 直接贴进来（替换 url/name）。
+# 已 enabled: false，未启用；需要时改 enabled 或删除。
+mcpServers:
+  fetch:
+    type: streamable_http
+    url: https://mcp.api-inference.modelscope.net/72a8fb8cc6f646/mcp
+    enabled: false
+  # 示例再加一个（需要时取消注释）
+  # another:
+  #   type: streamable_http
+  #   url: https://example-mcp-endpoint.example/mcp
+  #   enabled: false

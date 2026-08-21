@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     # 摘要后保留的最近消息条数
     context_keep_messages: int = 6
 
+    # ===== P7：MCP =====
+    # 是否尝试加载外部 MCP 工具（需先装 langchain_mcp_adapters + 网络可达）
+    mcp_enabled: bool = False
+
 
 @lru_cache
 def get_settings() -> Settings:
