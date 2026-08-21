@@ -15,6 +15,7 @@ from app.agent.middleware import AuditMiddleware, LoggingMiddleware, RateLimitMi
 from app.agent.model import build_llm
 from app.agent.sandbox import build_main_backend
 from app.agent.skills import build_skills_middleware, compile_all_skills, seed_skills
+from app.agent.subagents import load_all_subagents
 from app.db.models import Session as DbSession
 from app.db.session import SessionLocal
 
@@ -51,6 +52,8 @@ async def get_agent():
             store=await get_store(),
             backend=backend,
             middleware=middlewares + [skills_mw],
+            # P6: 子智能体（YAML 注册表），同一模型；task 工具委派 + 隔离上下文
+            subagents=load_all_subagents(),
         )
     return _agent
 
