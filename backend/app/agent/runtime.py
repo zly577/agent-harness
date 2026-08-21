@@ -114,3 +114,57 @@ async def run_chat(session_id: str, user_message: str) -> str:
     if not isinstance(reply, str):
         reply = str(reply)
     return reply
+
+
+async def stream_chat(session_id: str, user_message: str):
+    """流式对话：产出 (kind, data) 事件序列，供 SSE 使用。
+
+    kind:
+      - "token": data 为模型输出增量文本
+      - "tool":  data 为工具名（可选，前端展示）
+      - "approval": data 为待审批信息（session 需要人工审批）
+      - "result": data 为最终回复全文
+      - "error":  data 为错误信息
+
+    说明：deepagents 的 astream(stream_mode="messages") 产出 AIMessageChunk；
+    只推送非空 content 增量。若运行结束发现有审批中断，额外推送 approval 事件。
+    """
+    from app.agent.context import get_checkpointer
+    from app.agent.approvals import read_pending_approval
+
+    agent = await get_agent()
+    config = {"configurable": {"thread_id": session_id}}
+
+    # 在 checkpoint 创建 thread_id 时，确保会话存在于 langgraph checkpoint
+    cp = await get_checkpointer()
+
+    async for chunk in agent.astream(
+        {"messages": [{"role": "user", "content": user_message}]},
+        config,
+        stream_mode="messages",
+    ):
+        msg, metadata = chunk
+        node = metadata.get("langgraph_node")
+        content = getattr(msg, "content", "")
+        if node == "tools":
+            yield ("tool", str(getattr(msg, "name", "")))
+        if isinstance(content, str) and content:
+            yield ("token", content)
+
+    # 检查是否有审批中断
+    try:
+        pinfo = await read_pending_approval(agent, config)
+        if pinfo.get("pending"):
+            yield ("approval", pinfo)
+            return
+    except Exception:
+        pass
+
+    # 无中断：取最终回复
+    try:
+        state = await agent.aget_state(config)
+        messages = (state.values or {}).get("messages") or []
+        reply = str(messages[-1].content) if messages else ""
+        yield ("result", reply)
+    except Exception:
+        yield ("result", "")

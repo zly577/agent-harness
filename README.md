@@ -60,8 +60,8 @@ Invoke-RestMethod -Uri http://127.0.0.1:8000/api/v1/chat -Method Post `
 
 ## 路线图
 
-P0 骨架 ✅ → P1 最小 Agent ✅ → P2 上下文持久化 ✅ → P3 虚拟FS沙箱 ✅ → P4 Skills ✅ → P5 中间件 ✅ → P6 多智能体 ✅ → P7 MCP ✅ → P8 人工介入+安全 ✅ → P9 Vue3 前端 → P10 部署。
+P0 骨架 ✅ → P1 最小 Agent ✅ → P2 上下文持久化 ✅ → P3 虚拟FS沙箱 ✅ → P4 Skills ✅ → P5 中间件 ✅ → P6 多智能体 ✅ → P7 MCP ✅ → P8 人工介入+安全 ✅ → P9 Vue3 前端 ✅ → P10 部署。
 
-详见 [docs/P8-hitl-security-design.md](docs/P8-hitl-security-design.md)。
+详见 [docs/P9-frontend-design.md](docs/P9-frontend-design.md)。
 
 详见 [docs/PLAN.md](docs/PLAN.md)。

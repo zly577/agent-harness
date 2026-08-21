@@ -1,3 +1,8 @@
+# Node / 前端（P9）
+node_modules/
+dist/
+.npm-cache/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -22,10 +27,6 @@ backend/data/
 _sid.txt
 _dbcheck.py
 _piptest/
-
-# Node / 前端（后期）
-node_modules/
-dist/
 
 # IDE / 系统
 .idea/
