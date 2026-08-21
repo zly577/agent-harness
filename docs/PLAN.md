@@ -94,7 +94,7 @@ agent-harness/
 | P2 ✅ | 上下文管理：消息历史 SQLite 持久化（langgraph checkpoint/store）+ MySQL 业务库 + 上下文压缩 | 跨轮次&跨进程记忆 | 长对话测试 |
 | P3 ✅ | 虚拟文件系统沙箱（StoreBackend + InMemoryStore，判断路由：默认可写不可执行） | 文件工具集 + execute 禁用 | 工具调用测试 |
 | P4 ✅ | Skills：YAML 定义编译 → skill 播种 → SkillsMiddleware 复用 + create_skill 草稿 API | Skills 注册表 | 新增/调用 Skill |
-| P5 | 中间件框架 | 日志/审计/限流管道 | 运行观测 |
+| P5 ✅ | 中间件框架（Audit 入库 MySQL + Logging + 限流护栏） | 日志/审计管道 | 运行观测 |
 | P6 | 多智能体：子智能体 YAML 注册表 + Task 委派 + 隔离 | 多智能体协作 | 委派场景测试 |
 | P7 | MCP 接入（魔塔社区） | MCP 工具适配 | 真实 MCP 调用 |
 | P8 | 人工介入 + 安全边界：interrupt 审批流 + 三层 Guardrail | 完整 HITL + 拦截 | 敏感操作拦截测试 |

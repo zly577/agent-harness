@@ -11,6 +11,7 @@ import uuid
 from deepagents import create_deep_agent
 
 from app.agent.context import build_summary_middleware, get_checkpointer, get_store
+from app.agent.middleware import AuditMiddleware, LoggingMiddleware, RateLimitMiddleware
 from app.agent.model import build_llm
 from app.agent.sandbox import build_main_backend
 from app.agent.skills import build_skills_middleware, compile_all_skills, seed_skills
@@ -30,7 +31,13 @@ async def get_agent():
         compile_all_skills()
         await seed_skills(backend)
 
-        middlewares = [build_summary_middleware()]
+        # P5: 中间件管道 = 上下文压缩 + 技能 + 日志 + 审计 + 限流（默认关闭）
+        middlewares = [
+            build_summary_middleware(),
+            LoggingMiddleware(),
+            AuditMiddleware(),
+            RateLimitMiddleware(max_messages=0),
+        ]
         skills_mw = build_skills_middleware(backend)
 
         _agent = create_deep_agent(
