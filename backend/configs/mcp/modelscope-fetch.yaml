@@ -1,8 +1,12 @@
-# 一个可插拔的 MCP server 配置示例。
-# 结构对应 mcpServers 单 server 项；填参数即可新增一个 MCP 工具源。
-# 说明：当前网络受限未装 langchain_mcp_adapters，此配置在 MCP_ENABLED=1 后才会被加载。
+# 一个可插拔的 MCP server 配置示例（P7 遗留）。
+# ⚠️ 2026-09-18 起**默认停用**：
+#   这个文件是示例，里面的魔塔端点地址带着别人的 key。MCP_ENABLED 打开后，
+#   任何 enabled: true 的条目都会在**每次构建 agent 时**被真实连接一次
+#   （而 get_agent 在请求路径上）——一条不可达的示例配置就会拖慢所有会话。
+#   真正要用的工具源请在数据库里按用户新增（POST /api/v1/mcp/servers），
+#   那份是按用户隔离的，也不会因为"示例"被所有人共享。
 name: modelscope-fetch
 type: streamable_http
 url: https://mcp.api-inference.modelscope.net/72a8fb8cc6f646/mcp
 headers: {}
-enabled: true
+enabled: false

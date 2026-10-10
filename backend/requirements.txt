@@ -1,18 +1,82 @@
+# ============================================================================
+# Agent Harness 后端依赖
+#
+# 维护约定（2026-09-22 重新核对）：
+#  1. 本文件是**完整可运行清单**：凡是代码 import 到的第三方包都必须在这里，
+#     不允许出现「装得上但没声明」的包（pymysql/aiosqlite/pyyaml/langchain-tavily/
+#     opensandbox/mcp/pywin32 都曾属于这一类，换台机器一定翻车）。
+#  2. 版本下限 = 本机 agent_env 实测通过的版本，不写 `==`（便于打补丁版本升级）；
+#     **上限只在真有兼容性雷时写**（目前仅 mcp）。
+#  3. 标注 [可选] 的按需安装，不装不影响主流程；不装的路径必须是显式降级，
+#     不能是 ImportError 糊在脸上。
+#  4. 每项后面注明**谁在用它**，避免下次清理时误删。
+#
+# 核对方式（改完本文件后可复跑）：
+#   grep -rhoE "^\s*(import|from)\s+[a-zA-Z_][a-zA-Z0-9_]*" --include=*.py \
+#       app alembic tests conftest.py | sed -E 's/^\s*(import|from)\s+//' \
+#       | cut -d. -f1 | sort -u
+#
+# 安装：
+#   C:\Users\Administrator\anaconda3\envs\agent_env\python.exe -m pip install -r requirements.txt
+# ============================================================================
+
 # ===== Web 框架 =====
-fastapi>=0.115
-uvicorn[standard]>=0.30
-pydantic>=2.7
-pydantic-settings>=2.3
-python-dotenv>=1.0
-httpx>=0.27
+fastapi>=0.141
+uvicorn[standard]>=0.40          # [standard] 带 watchfiles/httptools/websockets，--reload 才生效
+pydantic>=2.13
+pydantic-settings>=2.14          # Settings 读 backend/.env
+python-dotenv>=1.2               # pydantic-settings 的传递依赖；显式声明防止上游改默认后端
+httpx>=0.28                      # fastapi TestClient 依赖；供应商 SDK 底层也用它
+# 注：本项目没有文件上传端点（无 UploadFile/File()），**不需要 python-multipart**。
 
 # ===== Agent 核心（DeepAgents = LangChain + LangGraph）=====
-deepagents>=0.7
-langchain>=0.3
-langchain-core>=0.3
-langchain-openai>=0.2
-langchain-deepseek>=1.0
+deepagents>=0.7.1                # create_deep_agent / SubAgent / 内建文件工具
+langchain>=1.3                   # TodoListMiddleware 等
+langchain-core>=1.5              # BaseMessage / BaseChatModel / 工具装饰器
+langgraph>=1.2                   # 直接 import：AsyncSqliteSaver、Command、StateSnapshot
+langchain-openai>=1.3            # openai 协议供应商（OpenAI/Kimi/通义/vLLM/Ollama/LM Studio…）
+langchain-anthropic>=1.5         # anthropic 协议供应商
+langchain-deepseek>=1.1          # ⚠️ 不可删：思考增量靠它解析 additional_kwargs.reasoning_content，
+                                 #    换成裸 ChatOpenAI 会让长推理期间前端黑屏（见 P14）
+langchain-tavily>=0.2            # tavily_search 工具（app/agent/runtime.py）
 
-# ===== 数据库（P2 起使用）=====
-sqlalchemy>=2.0
-psycopg2-binary>=2.9
+# ===== 外部 MCP 工具源（P19）=====
+# 装了才有 MCP 能力；没装时 app/agent/mcp.py::_has_adapters() 会降级并给出安装提示。
+# ⚠️ 上限不能去：适配器 0.3.2 要求 mcp>=1.24,<2.0 —— mcp 2.x 把
+#    `streamablehttp_client` 改名成了 `streamable_http_client`，直接 ImportError。
+langchain-mcp-adapters>=0.3.2    # MultiServerMCPClient（每 server 一个 client，失败隔离）
+mcp>=1.24,<2.0                   # 协议实现；Windows 上会 import pywintypes（见下）
+
+# mcp 的 stdio transport 在 Windows 上会 import pywintypes，而 pywintypes312.dll 在
+# site-packages/pywin32_system32/ —— 该目录靠 pywin32 的 .pth 在**解释器启动时**注入。
+# 于是「装 pywin32 之后再启动的后端能用，之前启动的进程一直报 No module named 'pywintypes'」。
+# mcp.py::_ensure_windows_pywin32() 有兜底补 sys.path，但依赖本身必须声明。
+pywin32>=311 ; sys_platform == "win32"
+
+# ===== 业务数据（MySQL 8.0）=====
+sqlalchemy>=2.0.51               # ORM；config.mysql_url 是 mysql+pymysql://
+pymysql>=1.1                     # mysql+pymysql:// 驱动
+# 若将来迁到 PostgreSQL，换成 psycopg[binary] 并改 MYSQL_URL 的驱动段。
+# （历史清单里的 psycopg2-binary / langchain-community / langchain-ollama /
+#   langchain-google-genai 从未被任何代码 import，已确认移除，勿再加回）
+
+# ===== 数据库迁移（P18 起）=====
+alembic>=1.20                    # 建表/加列/存量回填（替代裸 create_all）；lifespan 里自动 upgrade
+
+# ===== 消息历史与短期记忆（SQLite 单文件）=====
+aiosqlite>=0.22                  # langgraph AsyncSqliteSaver / AsyncSqliteStore 的驱动
+
+# ===== 认证与密钥（P18）=====
+PyJWT>=2.13                      # access token（HS256）
+cryptography>=49.0               # Fernet 加密 llm_providers.api_key / mcp headers&env
+argon2-cffi>=25.1                # 密码哈希（argon2id）；不需要 bcrypt/passlib
+
+# ===== 执行沙箱（P11）=====
+opensandbox>=0.1.16              # execute 工具的执行后端（HybridDefaultBackend）
+
+# ===== YAML 配置解析 =====
+PyYAML>=6.0                      # configs/subagents/*.yaml、configs/skills/*.yaml、configs/mcp/*.yaml
+
+# ===== 测试 =====
+pytest>=9.1
+# 说明：本项目测试是同步的（TestClient + asyncio.run 探针），**未使用 pytest-asyncio**。

@@ -1,4 +1,10 @@
-# P7 MCP 接入——可插拔 YAML 注册 + 适配层
+> ⚠️ **本文是 P7 期的设计稿，实现已在 P19 被重写。**
+> 这一节说的"未装适配器 → 安全降级"**不再是现状**：依赖已装，且本文里的
+> API 用法（`StreamableHttpTransport` / `load_mcp_tools(transport=, client_name=)`）
+> 是**错的**，照它写必定 ImportError/TypeError。
+> 现状与用法见 **`docs/P19-mcp.md`**，本文只保留作为历史设计记录。
+
+# P7 MCP 接入——可插拔 YAML 注册 + 适配层（历史稿）
 
 ## 目标
 
