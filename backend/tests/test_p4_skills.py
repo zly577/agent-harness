@@ -79,10 +79,16 @@ async def _list_skills(backend, path):
 
 
 def test_create_skill_api_validation():
-    """路由校验：create_skill 非法名返回 400。"""
-    from fastapi.testclient import TestClient
-    from app.main import app
-    client = TestClient(app)
+    """路由校验：create_skill 非法名返回 400。
+
+    P18：`/api/v1/skills/` 是**系统级**资源（`configs/skills/*.yaml`，所有用户共享），
+    所以写操作收紧为**仅管理员**。这里必须用管理员客户端 ——
+    用普通用户的 `auth_client` 会先被 403 拦掉，测不到"非法名 → 400"这条校验分支。
+    """
+    from tests.helpers import make_auth_client, unique_email, create_user
+
+    admin = create_user(email=unique_email("skilladmin"), display_name="技能管理员", role="admin")
+    client, _ = make_auth_client(admin, raise_server_exceptions=False)
     resp = client.post("/api/v1/skills/", json={
         "name": "Bad Name!",
         "description": "x",

@@ -2,12 +2,14 @@
 
 注意：FastAPI 0.141.x 的 include_router 使用惰性 _IncludedRouter 代理，
 app.routes 中无法直接读取 path，因此用 openapi 与行为断言代替。
+
+P18：业务接口改为"默认拒绝"，client 必须带登录凭证。
 """
-from fastapi.testclient import TestClient
+from tests.helpers import auth_client
 
 from app.main import app
 
-client = TestClient(app)
+client = auth_client(raise_server_exceptions=False)
 
 
 def test_chat_route_in_openapi():

@@ -1,0 +1,19 @@
+# Agent Harness 后端 systemd 服务（模板）
+# deploy.sh 会自动把 __APP_USER__ / __APP_DIR__ 替换为实际值后安装到 /etc/systemd/system/
+
+[Unit]
+Description=Agent Harness Backend (FastAPI)
+After=network-online.target mysql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__APP_USER__
+WorkingDirectory=__APP_DIR__/backend
+ExecStart=__APP_DIR__/backend/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
