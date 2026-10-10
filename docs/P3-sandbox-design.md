@@ -1,5 +1,13 @@
 # P3 虚拟文件系统沙箱与执行路由设计
 
+> **⚠️ 已被 P11 取代**：P11 起主 backend 改为「**本地磁盘读写 + OpenSandbox 执行**」的
+> `CompositeBackend`（文件工具落本地磁盘，execute 进容器，执行前后自动同步），
+> 见 `docs/P11-opensandbox-hybrid-design.md`。
+>
+> 本文保留 P3 的原始设计意图（判断路由）与**仍然有效的技术结论**；
+> 其中「默认 `StoreBackend`」的部分现已改为 `build_store_backend()` 备用形态，
+> `execute_allowed()` 也不再恒为 False（跟随 `SANDBOX_ENABLED`）。
+
 ## 目标
 
 实现"判断路由"：**默认可写文件但不可执行；需要执行代码时才接入沙箱执行后端**。
