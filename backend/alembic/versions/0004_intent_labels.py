@@ -1,4 +1,4 @@
-"""P20：工具调用意图标签（tool_call_logs 加两列 + 新建 task_steps 读模型）
+"""工具调用意图标签（tool_call_logs 加两列 + 新建 task_steps 读模型）
 
 Revision ID: 0004_intent_labels
 Revises: 0003_mcp_servers
@@ -65,14 +65,14 @@ def upgrade() -> None:
             op.add_column(
                 "tool_call_logs",
                 sa.Column("intent_label", sa.String(64), nullable=True,
-                          comment="P20 意图标签（展示文案，≤24 字符）"),
+                          comment=" 意图标签（展示文案，≤24 字符）"),
             )
             print("[0004] tool_call_logs.intent_label 已添加")
         if "intent_source" not in cols:
             op.add_column(
                 "tool_call_logs",
                 sa.Column("intent_source", sa.String(16), nullable=True,
-                          comment="P20 标签来源：model/fallback/backfill"),
+                          comment=" 标签来源：model/fallback/backfill"),
             )
             print("[0004] tool_call_logs.intent_source 已添加")
 
@@ -101,9 +101,9 @@ def upgrade() -> None:
         sa.Column("status", sa.String(16), nullable=False, server_default="running",
                   comment="running/done/error/interrupted"),
         sa.Column("intent_label", sa.String(64), nullable=True,
-                  comment="P20 意图标签（与 tool_call 事件同值）"),
+                  comment=" 意图标签（与 tool_call 事件同值）"),
         sa.Column("intent_source", sa.String(16), nullable=True,
-                  comment="P20 标签来源：model/fallback/backfill"),
+                  comment=" 标签来源：model/fallback/backfill"),
         sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
         sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
         sa.UniqueConstraint("session_id", "call_id", name="uq_task_steps_session_call"),

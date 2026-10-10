@@ -1,4 +1,4 @@
-"""P22 测试：运行可见性 —— 「到底还在不在跑 / 操作了什么 / 成没成」。
+"""测试：运行可见性 —— 「到底还在不在跑 / 操作了什么 / 成没成」。
 
 覆盖四块：
 
@@ -223,7 +223,7 @@ def test_merge_tool_log_brings_status_and_outcome():
 
 
 def test_merge_tool_log_marks_error_from_result_even_when_row_says_done():
-    """🔥 老数据兜底：P22 之前 `status` 一律写 `done`，但结果里明明有 `Error:`。
+    """🔥 老数据兜底： `status` 一律写 `done`，但结果里明明有 `Error:`。
 
     只看 `status` 会让这类记录显示"已完成"，而卡片上同时贴着"↳ Error: ..." ——
     自相矛盾的卡片比不显示更让人困惑。判定结果说了算。

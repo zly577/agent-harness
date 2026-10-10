@@ -1,4 +1,4 @@
-"""P18：认证与多租户 + 供应商配置
+"""认证与多租户 + 供应商配置
 
 Revision ID: 0002_auth_multitenant
 Revises: 0001_baseline

@@ -1,4 +1,4 @@
-r"""沙箱与执行路由（P3 → P11：本地磁盘读写 + OpenSandbox 执行）。
+r"""沙箱与执行路由（本地磁盘读写 + OpenSandbox 执行）。
 ## 路由总览
 
 模型有 8 个文件系统工具（deepagents 自动注册）：`ls` `read_file` `write_file`
@@ -7,7 +7,7 @@ r"""沙箱与执行路由（P3 → P11：本地磁盘读写 + OpenSandbox 执行
 | 场景 | 工具 | 落地位置 | 实现 |
 |------|------|----------|------|
 | 不需要执行代码 | ls/read_file/write_file/edit_file/delete/glob/grep | **本地磁盘**（工作区 `/workspace` → `HARNESS_WORKSPACE`） | `FilesystemBackend` |
-| 读写本机真实文件（P12，可选） | 同上，路径 `/mnt/<盘符>/...` | **本机磁盘**（`C:\`、`D:\` …） | `FilesystemBackend`（独立 route） |
+| 读写本机真实文件（可选） | 同上，路径 `/mnt/<盘符>/...` | **本机磁盘**（`C:\`、`D:\` …） | `FilesystemBackend`（独立 route） |
 | 需要执行代码 | execute（shell 命令） | **OpenSandbox 容器** | `OpenSandboxBackend` |
 | 执行前后 | — | 工作区 ↔ 容器 文件同步 | `HybridDefaultBackend` |
 
@@ -15,7 +15,7 @@ r"""沙箱与执行路由（P3 → P11：本地磁盘读写 + OpenSandbox 执行
 而文件操作按路径前缀路由、未命中走 `default`。于是把 `default` 做成
 「本地磁盘为文件层 + 沙箱为执行层」的混合后端，就同时拿到了两种语义。
 
-## P21：权限模式（本模块的第二个入口）
+## 权限模式（本模块的第二个入口）
 
 `build_main_backend(mode=...)` 有两个分支，**文件层完全相同，只有执行层不同**：
 
@@ -29,7 +29,7 @@ r"""沙箱与执行路由（P3 → P11：本地磁盘读写 + OpenSandbox 执行
 ## 为什么本地磁盘用 FilesystemBackend 而不是 StoreBackend
 
 - `StoreBackend` 是**内存态**虚拟文件系统（进程重启丢文件），且不可执行；
-  它适合 P3 那种「只用虚拟 FS 演示」的场景。
+  它适合那种「只用虚拟 FS 演示」的场景。
 - `FilesystemBackend(root_dir=..., virtual_mode=True)` 把模型看到的虚拟绝对路径
   （`/a.txt`）映射到宿主机真实目录（`<root>/a.txt`），**能持久、能下载、能在文件
   管理器里直接看**，还能被 `execute` 通过挂载/同步读到。
@@ -44,12 +44,12 @@ r"""沙箱与执行路由（P3 → P11：本地磁盘读写 + OpenSandbox 执行
 """
 from app.core.config import settings
 
-# P21：权限模式（默认权限 / 完全访问）—— 决定 default 是"沙箱执行"还是"本机 shell"。
+# 权限模式（默认权限 / 完全访问）—— 决定 default 是"沙箱执行"还是"本机 shell"。
 from app.agent.access import MODE_FULL, MODE_SANDBOX, normalize_mode
 
-# P11：混合后端（本地磁盘 + OpenSandbox）实现在 opensandbox_backend.py
-# P12：本机磁盘挂载（/mnt/<名>/... 直读直写本机，execute 仍只进沙箱）
-# P21：HostShellBackend（完全访问：execute 直接在本机跑）同样实现在那里
+# 混合后端（本地磁盘 + OpenSandbox）实现在 opensandbox_backend.py
+# 本机磁盘挂载（/mnt/<名>/... 直读直写本机，execute 仍只进沙箱）
+# HostShellBackend（完全访问：execute 直接在本机跑）同样实现在那里
 from app.agent.opensandbox_backend import (
     DEFAULT_PREFIX,  # noqa: F401  (re-export 供 API/测试使用)
     MACHINE_MOUNT_ROOT,  # noqa: F401
@@ -116,7 +116,7 @@ def build_main_backend(
     workspace: str | None = None,
     mode: str = MODE_SANDBOX,
 ):
-    r"""主智能体的 backend。**同一套文件层 + 两种执行层**（P21）。
+    r"""主智能体的 backend。**同一套文件层 + 两种执行层**。
 
     Args:
         session_key: 会话标识；每个会话一个沙箱容器（`mode="full"` 时用不到，但保持签名一致）。
@@ -156,7 +156,7 @@ def build_main_backend(
     因此前端文件面板的默认路径是 `/workspace`（见 frontend/src/App.vue），
     不要用 `/` 当用户工作区展示。
 
-    ## P12：本机磁盘挂载（`/mnt/<盘符>/...`）
+    ## 本机磁盘挂载（`/mnt/<盘符>/...`）
 
     `HARNESS_MACHINE_ACCESS=true` 时额外挂上本机磁盘（见 `build_machine_routes()`），
     于是模型可以**直接读写本机真实文件**：
@@ -206,7 +206,7 @@ def build_main_backend(
 
 
 def build_store_backend():
-    """备用：纯内存虚拟文件系统（P3 语义，不可执行、不落盘）。
+    """备用：纯内存虚拟文件系统（语义，不可执行、不落盘）。
 
     仅在需要「沙箱被禁用时也不碰宿主磁盘」的部署形态下使用。
     """
@@ -228,7 +228,7 @@ def build_exec_backend(session_key: str = "default", path_prefix: str | None = N
 
 
 def execute_allowed() -> bool:
-    """判断路由总开关：是否允许 execute 进沙箱（P8 人工审批后可进一步收紧）。"""
+    """判断路由总开关：是否允许 execute 进沙箱（人工审批后可进一步收紧）。"""
     return bool(settings.sandbox_enabled)
 
 
@@ -243,7 +243,7 @@ def validate_permissions(backend=None, mode: str = MODE_SANDBOX) -> list[str]:
     所以这里提前把所有权限源都核一遍，返回问题清单（空 = 全部通过）。
     在 `runtime.get_agent()` 里调用，让配置错误在启动/首次对话时就说清楚。
 
-    P21：`mode` 只影响"没传 backend 时按哪种模式现建一个"；权限规则本身来自
+    `mode` 只影响"没传 backend 时按哪种模式现建一个"；权限规则本身来自
     `default_permissions(mode)`。
     """
     from deepagents.middleware.filesystem import _all_paths_scoped_to_routes
@@ -276,7 +276,7 @@ def validate_permissions(backend=None, mode: str = MODE_SANDBOX) -> list[str]:
 
 
 def default_permissions(mode: str = MODE_SANDBOX):
-    """默认文件权限（人工审批用）。**P21：只有"碰本机"才需要审批。**
+    """默认文件权限（人工审批用）。**只有"碰本机"才需要审批。**
 
     ## 语义（用户拍板的那条线）
 

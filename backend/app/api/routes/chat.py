@@ -1,4 +1,4 @@
-"""对话路由（P2：MySQL 持久化会话校验；P18：归属隔离）。
+"""对话路由（MySQL 持久化会话校验；归属隔离）。
 
 一次性的非流式对话接口（`POST /api/v1/chat`）。前端走的是流式那条
 （`/api/v1/chat/stream`），这个端点主要给脚本/探针用。
@@ -32,7 +32,7 @@ async def chat(
         session_id = req.session_id
         runtime.touch_session(session_id)
 
-    # P18：与流式入口共用同一段逻辑（含归属校验 + agent 重建），行为必须一致
+    # 与流式入口共用同一段逻辑（含归属校验 + agent 重建），行为必须一致
     apply_provider_choice(db, session_id, user, req.provider_id)
 
     try:
@@ -40,7 +40,7 @@ async def chat(
     except ProviderNotConfigured:
         # 交给 main.py 的全局处理器转 400（"还没配模型"是用户能自己解决的前置条件）。
         raise
-    except Exception as e:  # 其它模型/运行时错误统一转 500（P1 兜底，P5 中间件细化）
+    except Exception as e: # 其它模型/运行时错误统一转 500（兜底；中间件细化）
         # ⚠️ 必须过 scrub_secrets：供应商 SDK 的报错里可能带请求头或 URL
         # （见过 `...?api_key=sk-xxx` 这种），而这条 detail 会原样回给前端。
         raise HTTPException(

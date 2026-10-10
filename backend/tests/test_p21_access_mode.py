@@ -1,4 +1,4 @@
-"""P21 测试：权限模式（默认权限（沙箱内） / 完全访问）。
+"""测试：权限模式（默认权限（沙箱内） / 完全访问）。
 
 覆盖：
 1. `access` 注册表 —— 归一化校验、三级作用域解析、状态输出；
@@ -25,7 +25,7 @@ from app.agent import access, permissions, sandbox
 
 @pytest.fixture()
 def tmp_path(request):
-    """覆写 pytest 的 tmp_path：用工作区内目录，避免受限沙箱下 rmtree 失败（同 P11/P12）。"""
+    """覆写 pytest tmp_path：用工作区内目录，避免受限沙箱下 rmtree 失败（同）。"""
     safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", request.node.name)[:60]
     base = Path(__file__).resolve().parent / "_tmp_hybrid" / f"p21_{safe}"
     base.mkdir(parents=True, exist_ok=True)

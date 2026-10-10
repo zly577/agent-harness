@@ -1,4 +1,4 @@
-"""MySQL 业务库：引擎与会话管理（P2 启用，持久化会话元信息等业务数据）。"""
+"""MySQL 业务库：引擎与会话管理（启用，持久化会话元信息等业务数据）。"""
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 

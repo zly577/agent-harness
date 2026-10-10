@@ -1,4 +1,4 @@
-"""密码哈希与 access token（P18）。
+"""密码哈希与 access token。
 
 ## 密码用 argon2id，不是 bcrypt
 

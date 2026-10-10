@@ -1,4 +1,4 @@
-"""子智能体注册表（P6）。
+"""子智能体注册表。
 
 从 `configs/subagents/*.yaml` 加载子智能体定义，经 Pydantic 校验后构建 deepagents `SubAgent`。
 
@@ -6,10 +6,10 @@
 隔离：deepagents 的 `task` 工具让子任务运行在 **isolated context window**（上下文隔离）；
 工具/权限隔离通过 `permissions` 实现。
 
-## P11 起的重要约束：子智能体的权限路径必须落在 route 前缀内
+## 重要约束：子智能体的权限路径必须落在 route 前缀内
 
 `create_deep_agent` 会为**每个子智能体**单独构造一个 `FilesystemMiddleware`，用的是
-**父级的 backend**（`graph.py:668`）。P11 起父级 backend 具备执行能力
+**父级的 backend**（`graph.py:668`）。父级 backend 具备执行能力
 （`SandboxBackendProtocol`），于是 deepagents 的这条校验对子智能体同样生效：
 
     所有权限路径（paths）都必须以某个 route 前缀开头，否则 NotImplementedError
@@ -19,7 +19,7 @@
 （`/notes/` → `/workspace/notes/**`，`/` → `/workspace/**`），
 与主 Agent 的 `PERMISSION_ROUTE_PREFIX = "/workspace/"` 对齐。
 
-P12 起，本机磁盘挂载点（`/mnt/<名称>/...`）也是合法 route 前缀：配置里直接写
+，本机磁盘挂载点（`/mnt/<名称>/...`）也是合法 route 前缀：配置里直接写
 `/mnt/d/proj` 即可授权该目录（`_to_route_path()` 会识别已带前缀的写法，不再叠
 `/workspace`）。注意它只在 `HARNESS_MACHINE_ACCESS=true` 时才存在 route —— 否则
 这条校验会失败，`validate_permissions()` 会在启动期把问题说清楚。
@@ -70,7 +70,7 @@ def _route_prefixes() -> list[str]:
     """当前所有可用的 route 前缀（权限路径必须落在其中之一，否则 deepagents 报错）。
 
     - `/workspace/` = 工作区（本地磁盘 + 沙箱镜像）
-    - `/mnt/<名>/` = 本机磁盘挂载点（P12；HARNESS_MACHINE_ACCESS=false 时为空）
+    `/mnt/<名>/` = 本机磁盘挂载点（HARNESS_MACHINE_ACCESS=false 时为空）
     """
     from app.agent.opensandbox_backend import machine_mount_prefix, machine_mounts
 
@@ -85,7 +85,7 @@ def _to_route_path(raw: str) -> str:
     | `/`       | `/workspace/**`    | 整个工作区                |
     | `/notes/` | `/workspace/notes/**` | 工作区下的 notes 子目录 |
     | `/workspace/x` | `/workspace/x/**` | 已带前缀，只补通配     |
-    | `/mnt/d/proj`  | `/mnt/d/proj/**`  | 本机 D 盘的 proj 目录（P12） |
+    | `/mnt/d/proj` | `/mnt/d/proj/**` | 本机 D 盘的 proj 目录 |
 
     判据：**是否已经以某个 route 前缀开头**（工作区 / 本机挂载点）；都不是就当成
     工作区相对路径。带 `/mnt/...` 的写法只在 `HARNESS_MACHINE_ACCESS=true` 时才有对应
@@ -165,13 +165,13 @@ def build_subagent(cfg: SubAgentConfig):
         description=cfg.description,
         system_prompt=cfg.system_prompt,
         permissions=permissions or None,
-        # P20：只剥离 `_intent`，不注入 schema。
+        # 只剥离 `_intent`，不注入 schema。
         # 子智能体的工具调用走 `subagent_tool` 事件（不在这期的契约里），所以
         # 不需要它们产标签；但**剥离必须生效** —— 模型见过 `_intent` 这个字段后
         # 完全可能自作主张带上它，工具收到意外关键字参数会直接报错，那就破坏了
         # "展示层增强不许影响执行"这条底线。
         #
-        # P22：护栏必须**单独挂**（子智能体不继承主 Agent 的中间件栈）。少了这一行，
+        # 护栏必须**单独挂**（子智能体不继承主 Agent 的中间件栈）。少了这一行，
         # 子智能体照样能跑 `Stop-Process -Name python -Force` 把后端杀掉 ——
         # 而"调用者是谁"对后果毫无影响：死的是同一个进程。
         middleware=[build_intent_strip_middleware(), build_self_kill_guard_middleware()],

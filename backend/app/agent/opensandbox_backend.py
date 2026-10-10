@@ -93,7 +93,7 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-#: 本机磁盘在模型侧的挂载根：`/mnt/<名称>/...`（P12）。
+#: 本机磁盘在模型侧的挂载根：`/mnt/<名称>/...`。
 MACHINE_MOUNT_ROOT: Final[str] = "/mnt"
 
 
@@ -590,7 +590,7 @@ class WorkspacePrefixMixin:
     `/a.txt` → `<root>/a.txt`（模型看到 `/` 就是 root）。但本项目模型侧的路径统一带
     工作区前缀（`/workspace/a.txt`），而且**这个前缀必须与容器内的工作目录同名** ——
     否则"文件工具看到的路径"和"`execute` 在容器里看到的路径"就不是同一个字符串，
-    模型得在两套路径体系之间手工翻译（这正是 P11 之前的老毛病）。
+    模型得在两套路径体系之间手工翻译（这正是的老毛病）。
 
     于是需要一层很薄的翻译：
 
@@ -912,10 +912,10 @@ class HybridDefaultBackend(WorkspacePrefixMixin, FilesystemBackend, SandboxBacke
 
 
 def local_workspace_root() -> Path:
-    """**工作区的父目录**（P18 起语义变化，看下面的说明）。
+    """**工作区的父目录**（语义变化，看下面的说明）。
 
-    P11~P17：这是唯一的读写根目录，默认 `<repo>/workspace`，可用 `HARNESS_WORKSPACE` 覆盖。
-    P18：多租户改造后每个用户的工作区是 `<这个目录>/<user_id>/`，所以本函数返回的是
+    这是唯一的读写根目录，默认 `<repo>/workspace`，可用 `HARNESS_WORKSPACE` 覆盖。
+    多租户改造后每个用户的工作区是 `<这个目录>/<user_id>/`，所以本函数返回的是
     **父目录**，具体用户的工作区请用 `app.core.workspace.workspace_for(user_id)`。
 
     保留这个函数名（而不是直接删掉）有两个原因：
@@ -932,7 +932,7 @@ DEFAULT_PREFIX: Final[str | None] = settings.sandbox_root or None
 
 
 # ============================================================================
-# P12：本机磁盘挂载（默认环境 = 本机，只有 execute 进沙箱）
+# 本机磁盘挂载（默认环境 = 本机，只有 execute 进沙箱）
 # ============================================================================
 
 #: 自动挂载盘符时扫描的字母（跳过 A:/B: 这类保留盘符）
@@ -958,7 +958,7 @@ def machine_mounts() -> list[tuple[str, Path]]:
     """本机磁盘挂载点：`[(挂载名, 本机真实路径)]`，模型侧路径 = `/mnt/<挂载名>/...`。
 
     三种情况：
-    - `HARNESS_MACHINE_ACCESS=false`（默认）→ 空列表，行为与 P11 完全一致（只有工作区）；
+    `HARNESS_MACHINE_ACCESS=false`（默认）→ 空列表，行为与完全一致（只有工作区）；
     - `HARNESS_MACHINE_ACCESS=true` 且 `HARNESS_MACHINE_MOUNTS` 为空 → 自动挂载本机存在的
       所有盘符（`c=C:/`、`d=D:/` …），即"整个本机"；
     - 显式配置 → 解析逗号分隔的 `名称=路径` 或裸路径（裸路径用盘符/目录名当挂载名）。
@@ -1462,7 +1462,7 @@ def sandbox_status() -> dict[str, object]:
         "image": settings.sandbox_image,
         "root": settings.sandbox_root,
         "ttl_minutes": settings.sandbox_ttl_minutes,
-        # P12：本机磁盘挂载点（模型侧 /mnt/<名>/）。开启 SANDBOX_MOUNT_MACHINE_DIRS 后，
+        # 本机磁盘挂载点（模型侧 /mnt/<名>/）。开启 SANDBOX_MOUNT_MACHINE_DIRS 后，
         # 这些目录同时只读挂进容器 ⇒ execute 也能按同一路径读到。
         "machine_access": bool(getattr(settings, "harness_machine_access", False)),
         "machine_mounts": [

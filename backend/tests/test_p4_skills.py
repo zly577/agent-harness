@@ -1,4 +1,4 @@
-"""P4 测试：Skills 系统（YAML 定义/编译/播种/创建），不触发真实模型。"""
+"""测试：Skills 系统（YAML 定义/编译/播种/创建），不触发真实模型。"""
 import asyncio
 
 import pytest
@@ -81,7 +81,7 @@ async def _list_skills(backend, path):
 def test_create_skill_api_validation():
     """路由校验：create_skill 非法名返回 400。
 
-    P18：`/api/v1/skills/` 是**系统级**资源（`configs/skills/*.yaml`，所有用户共享），
+    `/api/v1/skills/` 是**系统级**资源（`configs/skills/*.yaml`，所有用户共享），
     所以写操作收紧为**仅管理员**。这里必须用管理员客户端 ——
     用普通用户的 `auth_client` 会先被 403 拦掉，测不到"非法名 → 400"这条校验分支。
     """

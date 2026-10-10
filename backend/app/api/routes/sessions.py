@@ -1,6 +1,6 @@
-"""会话管理路由：列表 / 历史 / 重命名 / 删除 / 运行状态与停止（P15；P18 加归属隔离）。
+"""会话管理路由：列表 / 历史 / 重命名 / 删除 / 运行状态与停止（加归属隔离）。
 
-## P18：每一个以 session_id 入参的端点，第一件事都是归属校验
+## 每一个以 session_id 入参的端点，第一件事都是归属校验
 
 统一走 `owned_session_or_404(db, session_id, user)`：不存在**或**不属于当前用户
 一律 404（刻意不区分，避免被用来枚举别人的 session_id 是否存在）。
@@ -27,7 +27,7 @@ router = APIRouter(prefix="/api/v1", tags=["sessions"])
 
 class RenameRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=255, description="新标题")
-    #: P18：会话可以记住模型供应商（可空 = 跟随用户/系统默认）。
+    #: 会话可以记住模型供应商（可空 = 跟随用户/系统默认）。
     #: 用"未提供"与"显式置空"区分：None = 不改；空字符串 = 清除绑定。
     provider_id: str | None = Field(
         None, description="绑定的模型供应商 id；传空字符串表示清除绑定"
@@ -52,7 +52,7 @@ def list_sessions(
 ):
     """返回**当前用户**的会话（按最近更新倒序），供前端侧边栏展示。
 
-    P18：以前这里是 `db.query(DbSession).all()` —— 全表返回，任何登录用户都能
+    以前这里是 `db.query(DbSession).all()` —— 全表返回，任何登录用户都能
     看到所有人的会话列表（这正是本期要修的头号问题）。
 
     额外带上 `running`：该会话后端是否还有正在进行的回答。
@@ -108,7 +108,7 @@ def get_session_steps(
     user: User = Depends(get_current_user),
     db: OrmSession = Depends(get_db),
 ):
-    """任务看板的「当前步骤」：该会话的工具调用读模型（P20）。
+    """任务看板的「当前步骤」：该会话的工具调用读模型。
 
     数据来自派生读模型 `task_steps`（由 `tool_call` 事件投影而来，见
     `app/db/projections.py`），每行带 `intent_label`（给用户看的一句话）

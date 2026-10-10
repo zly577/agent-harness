@@ -1,4 +1,4 @@
-"""API 路由聚合（P18：安全默认 = 拒绝）。
+"""API 路由聚合（安全默认 = 拒绝）。
 
 ## 默认拒绝是怎么做到的
 
@@ -38,12 +38,12 @@ api_router.include_router(chat.router)
 api_router.include_router(chat_stream.router)
 api_router.include_router(sessions.router)
 api_router.include_router(llm.router)
-# P19：MCP 工具源管理（按用户隔离）
+# MCP 工具源管理（按用户隔离）
 api_router.include_router(mcp.router)
 api_router.include_router(skills.router)
 api_router.include_router(approvals.router)
 api_router.include_router(hitl.router)
-# P21：权限模式（默认权限（沙箱内）/ 完全访问）
+# 权限模式（默认权限（沙箱内）/ 完全访问）
 api_router.include_router(access.router)
 api_router.include_router(files.router)
 

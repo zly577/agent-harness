@@ -1,7 +1,7 @@
-"""P3 测试：执行路由总开关 + 备用内存虚拟文件系统（不触发真实模型调用）。
+"""测试：执行路由总开关 + 备用内存虚拟文件系统（不触发真实模型调用）。
 
-说明：P11 起主 backend 变成「本地磁盘读写 + OpenSandbox 执行」的混合后端
-（见 test_p11_hybrid_backend.py）。本文件保留 P3 引入的两个契约：
+说明：主 backend 变成「本地磁盘读写 + OpenSandbox 执行」的混合后端
+（见 test_p11_hybrid_backend.py）。本文件保留引入的两个契约：
 - `execute_allowed()` 是沙箱门禁总开关；
 - `build_store_backend()` 仍提供纯内存虚拟文件系统（备用形态，不碰宿主磁盘）。
 """
@@ -33,9 +33,9 @@ def test_storebackend_virtual_fs_write_read_ls_glob():
     async def _run():
         be = sandbox.build_store_backend()
         # async 写读
-        await be.awrite("/notes.txt", "P3 sandbox test")
+        await be.awrite("/notes.txt", " sandbox test")
         data = await be.aread("/notes.txt")
-        assert data.file_data["content"] == "P3 sandbox test"
+        assert data.file_data["content"] == " sandbox test"
         # 同步 ls / glob（StoreBackend 内部走 sync store.search）
         ls = be.ls("/")
         paths = [e["path"] for e in ls.entries]

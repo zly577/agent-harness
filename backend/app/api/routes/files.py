@@ -1,10 +1,10 @@
 """虚拟文件系统路由：浏览 / 下载 / 删除智能体生成的文件。
 
-文件落在**当前用户**的工作区目录（P18：`<repo>/workspace/<user_id>/`，
+文件落在**当前用户**的工作区目录（`<repo>/workspace/<user_id>/`，
 模型看到的是 `/workspace/...`），智能体通过 write_file / edit_file 等工具写入。
 本路由提供浏览、下载、删除能力。
 
-## P18：为什么这里没有 session_id
+## 为什么这里没有 session_id
 
 工作区的隔离粒度是**用户**（见 `app/core/workspace.py` 的说明），
 所以文件 API 只认"当前登录用户"，不接受任何能指向他人目录的参数 ——
@@ -18,7 +18,7 @@
 `delete('/workspace')` 会「返回成功但什么都没做」——所以边界不能指望它兜：
 
 1. **只允许删工作区内的路径**：`norm` 必须严格以 `<WORKSPACE_PREFIX>/` 开头。
-   `/mnt/<盘符>/...` 是本机真实磁盘（P12 挂载）——那是用户电脑上的文件，
+   `/mnt/<盘符>/...` 是本机真实磁盘（挂载）——那是用户电脑上的文件，
    面板里根本不该有这种路径，更不能经由这个接口删掉。
 2. **不允许删工作区根本身**（以及它的任何写法，如 `/workspace/`）。
 3. 路径里的 `..` 由 backend 自己的虚拟路径解析处理；这里再用前缀校验兜一层。
@@ -75,7 +75,7 @@ def _assert_deletable(norm: str) -> None:
     if norm == root:
         raise HTTPException(status_code=400, detail="不能删除工作区根目录")
     if norm.startswith(MACHINE_MOUNT_ROOT + "/"):
-        # /mnt/<盘符>/... 是用户电脑上的真实文件（P12 挂载），不该经由这里删除
+        # /mnt/<盘符>/... 是用户电脑上的真实文件（挂载），不该经由这里删除
         raise HTTPException(
             status_code=400,
             detail="这是挂载的本机磁盘（用户电脑上的真实文件），不支持在这里删除",

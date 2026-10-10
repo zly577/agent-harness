@@ -1,4 +1,4 @@
-"""FastAPI 依赖：当前用户与资源归属校验（P18）。
+"""FastAPI 依赖：当前用户与资源归属校验。
 
 ## 归属校验为什么是**辅助函数**而不是 `Depends`
 
@@ -27,7 +27,7 @@ from app.db.models import User
 from app.db.session import get_db
 
 #: 资源不可见时的统一响应文案。
-#: 沿用 P2 起的英文写法（`test_api_routes.py` 断言的就是这个字符串），
+#: 沿用的英文写法（`test_api_routes.py` 断言的就是这个字符串），
 #: 同时保证"不存在"与"不属于你"返回完全相同的内容。
 NOT_FOUND_DETAIL = "session not found"
 

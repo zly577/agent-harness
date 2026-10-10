@@ -1,4 +1,4 @@
-"""P19：MCP 工具源配置（mcp_servers）
+"""MCP 工具源配置（mcp_servers）
 
 Revision ID: 0003_mcp_servers
 Revises: 0002_auth_multitenant

@@ -20,7 +20,7 @@ deepagents 的审批中断是**编译期**决定的一次性配置：`create_dee
 - `set_hitl(False)` → 该会话（或全局）后续对话**全程无中断**，本机访问直接执行。
 - `set_hitl(True)` → 恢复"访问本机真实文件（`/mnt/**`）需人工同意"。
 
-## P21：审批范围由「权限模式」和「HITL 开关」共同决定
+## 审批范围由「权限模式」和「HITL 开关」共同决定
 
 | 权限模式（`app/agent/access.py`） | HITL 开关 | 实际行为 |
 |---|---|---|
@@ -28,11 +28,11 @@ deepagents 的审批中断是**编译期**决定的一次性配置：`create_dee
 | `sandbox` | 关 | 全程不弹窗，本机访问直接执行 |
 | `full`（完全访问） | 任意 | **一律不弹窗**（用户已显式选择"就在本机干活"） |
 
-工作区 `/workspace/**` 不再需要审批 —— 它是"沙箱内的地盘"（P21 起）。
+工作区 `/workspace/**` 不再需要审批 —— 它是"沙箱内的地盘"。
 - 运行期改的是内存态（进程重启回到 .env 默认值），便于本机调试与演示；
   要跨重启保持，改 .env 即可。
 
-## ⚠️ 关闭时**不能**让 HITL 中间件从图里消失（P17 修复）
+## ⚠️ 关闭时**不能**让 HITL 中间件从图里消失（修复）
 
 早期实现里 `agent_permissions(off)` 返回空列表，deepagents 于是**根本不挂**
 `HumanInTheLoopMiddleware` —— 图少了一个节点。这件事的代价远超"少一次审批"：
@@ -72,9 +72,9 @@ logger = logging.getLogger(__name__)
 DISABLED_INTERRUPT_KEY = "__hitl_disabled__"
 
 #: 全局默认开关；进程内可被 API 改写（初始值 = .env 的 HITL_ENABLED）。
-#: P18 起：只有 admin 能改它（见 api/routes/hitl.py），普通用户改的是自己那一层。
+#: 只有 admin 能改它（见 api/routes/hitl.py），普通用户改的是自己那一层。
 _global_hitl: bool = bool(getattr(settings, "hitl_enabled", True))
-#: 按用户覆盖：user_id → bool（P18）。
+#: 按用户覆盖：user_id → bool。
 _user_hitl: dict[str, bool] = {}
 #: 按会话覆盖：session_id → bool。没用到的会话跟随用户/全局默认。
 _session_hitl: dict[str, bool] = {}
@@ -102,7 +102,7 @@ def set_hitl(enabled: bool, session_id: str | None = None,
         user_id: 指定则只影响该用户（不改全局）。
         两者都不传 = 改全局默认（并清掉各用户/会话的覆盖，让所有人统一跟随）。
 
-    P18 的作用域差异很重要：以前"不带 session_id"就是全局切换，任何用户点一下
+    作用域差异很重要：以前"不带 session_id"就是全局切换，任何用户点一下
     都会改掉所有人的默认值。现在全局那一层只能由 admin 改（路由层拦），
     普通用户传 user_id 只影响自己。
     """
@@ -127,7 +127,7 @@ def _interrupt_rules(session_id: str | None = None, user_id: str | None = None,
                      mode: str | None = None) -> list:
     """本次构建 Agent 实际要生效的审批规则。
 
-    两个条件**同时**满足才有规则（P21）：
+    两个条件**同时**满足才有规则：
 
     1. 权限模式是 `sandbox`（完全访问 = 用户已显式选择"不问了"，直接放行）；
     2. HITL 开关是开的。
@@ -173,7 +173,7 @@ def hitl_interrupt_on(session_id: str | None = None, user_id: str | None = None,
     None，等于不挂中间件，图就少一个节点 —— 已挂起的中断会因此"隐身 / 复活"，
     详见模块头注释里那张对照表。
 
-    ⚠️ P21 特别提醒：`HARNESS_MACHINE_ACCESS=false` 时 `default_permissions()` 返回
+    ⚠️ 特别提醒：`HARNESS_MACHINE_ACCESS=false` 时 `default_permissions()` 返回
     **空列表**（没有本机路径可审批），所以"空规则 ⇒ 也要挂中间件"这条现在真的会被
     走到 —— 以前总有一条 `/workspace/**` 兜着，不会暴露这个问题。
     """

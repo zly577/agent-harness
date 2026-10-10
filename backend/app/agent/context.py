@@ -1,4 +1,4 @@
-"""上下文管理与消息历史持久化（P2，异步版）。
+"""上下文管理与消息历史持久化（异步版）。
 
 分层（详见 docs/P2-storage-design.md）：
 - **消息历史（SQLite checkpoint）**：langgraph `AsyncSqliteSaver` 持久化每个会话的
@@ -72,7 +72,7 @@ def build_summary_middleware(model=None) -> SummarizationMiddleware:
     """上下文压缩中间件：消息超过 context_max_messages 时摘要，保留最近 context_keep_messages 条。
 
     Args:
-        model: 用来做摘要的模型。**必须传主 Agent 用的那个实例**（P18 起由
+        model: 用来做摘要的模型。**必须传主 Agent 用的那个实例**（由
             `runtime.get_agent` 传入）—— 不传就退回 `.env` 的引导配置，
             那会导致"对话走用户选的供应商、摘要偷偷走另一个模型"，
             而且这条路径在界面上完全不可见。

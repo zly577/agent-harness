@@ -2,10 +2,9 @@
 
 基于 **DeepAgents（LangChain + LangGraph）** 的自有 Harness 架构通用智能体系统。
 
-当前进度：**P21 权限模式（默认权限（沙箱内） / 完全访问）**。前端顶栏一个开关决定
-`execute` 跑在隔离沙箱还是直接在本机 shell；默认权限下只有访问本机真实文件才弹人工审批。
-P12 打底：默认环境 = 本机电脑，只有执行代码才进沙箱。
-P11：不需要执行代码时用本地磁盘读写文件。
+默认环境是**用户这台电脑**：读写文件直接落在本机磁盘，只有执行代码才进隔离沙箱。
+前端顶栏一个开关决定 `execute` 跑在沙箱里还是直接在本机 shell；默认档位下，
+访问本机真实文件会弹人工审批。
 
 ## 技术栈
 
@@ -17,9 +16,9 @@ P11：不需要执行代码时用本地磁盘读写文件。
 - 文件读写：本地磁盘（`FilesystemBackend`，根目录 `<repo>/workspace`）
 - 代码执行：OpenSandbox 沙箱容器（`opensandbox` SDK，每会话一个容器）
 - 运行环境：conda `agent_env`（Python 3.12.13，deepagents 生态已预装）
-- 前端：Vue3（P9 起）
+- 前端：Vue3
 
-## 工具分流（P11 + P12 + P21 的核心）
+## 工具分流
 
 前端顶栏有一个**权限模式**开关，决定 `execute` 跑在哪：
 
@@ -80,7 +79,7 @@ Invoke-RestMethod -Uri http://127.0.0.1:8000/api/v1/chat -Method Post `
 
 > 存储说明：**SQLite**（`backend/data/harness.sqlite`）存消息历史/短期记忆（langgraph checkpoint/store，跨进程重启不丢）；**MySQL**（`agent_harness.sessions`）存业务会话元信息；**本地磁盘**（`workspace/`）存模型读写的文件。详见 [docs/P2-storage-design.md](docs/P2-storage-design.md)。
 
-## 沙箱配置（P11）
+## 沙箱配置
 
 ```powershell
 # backend/.env
@@ -94,7 +93,7 @@ SANDBOX_ROOT=/workspace           # 容器工作目录 = 模型看到的路径�
 
 OpenSandbox 服务没起也不影响文件读写：`execute` 会返回一句可读的错误而不是抛异常。
 
-## 本机磁盘访问（P12）：默认环境 = 这台电脑
+## 本机磁盘访问：默认环境 = 这台电脑
 
 ```powershell
 # backend/.env
@@ -107,7 +106,7 @@ HARNESS_MACHINE_MOUNTS=           # 留空 = 自动挂载本机所有存在的�
 - 模型侧路径：`/mnt/<盘符>/...`（`ls /mnt` 能看到挂了哪些盘）；写操作默认走人工审批；
 - `execute` 仍然只在沙箱容器里跑，**容器只镜像 `/workspace`**，看不到 `/mnt/*` 的真实文件；
 - 想让某段代码在沙箱里跑：先用文件工具把内容写到 `/workspace/` 下，再 `execute`；
-- 关掉它就回到 P11 行为（只有 `/workspace`）。
+关掉它就回到只有 `/workspace` 的行为。
 
 设计与坑详见 [docs/P12-machine-access-design.md](docs/P12-machine-access-design.md)。
 
@@ -119,14 +118,12 @@ HARNESS_MACHINE_MOUNTS=           # 留空 = 自动挂载本机所有存在的�
   本机磁盘挂载点（`/mnt/<盘符>/`）同样各自关在该盘/该目录内，写操作默认需人工审批；
   代码执行只在一次性沙箱容器内进行，产出才同步回本地磁盘。
 
-## 路线图
+## 功能概览
 
-P0 骨架 ✅ → P1 最小 Agent ✅ → P2 上下文持久化 ✅ → P3 虚拟FS沙箱 ✅ → P4 Skills ✅ → P5 中间件 ✅ → P6 多智能体 ✅ → P7 MCP ✅ → P8 人工介入+安全 ✅ → P9 Vue3 前端 ✅ → P10 部署 → P11 本地磁盘 + OpenSandbox 执行 ✅ → **P12 默认环境 = 本机 + 只有执行代码进沙箱 ✅**。
+- **对话与记忆**：多轮对话、消息历史持久化、上下文管理与摘要
+- **文件与执行**：虚拟文件系统、本地磁盘读写、OpenSandbox 沙箱执行、本机 shell 执行
+- **智能体编排**：子智能体注册与任务委派、Skills 技能加载、MCP 外部工具源接入
+- **安全与治理**：人工审批中断与恢复、权限模式切换、账号认证与多租户隔离
+- **可观测性**：SSE 流式输出、工具调用事件流、运行状态投影、意图标签
 
-详见 [docs/P12-machine-access-design.md](docs/P12-machine-access-design.md)。
-
-详见 [docs/P11-opensandbox-hybrid-design.md](docs/P11-opensandbox-hybrid-design.md)。
-
-详见 [docs/P9-frontend-design.md](docs/P9-frontend-design.md)。
-
-详见 [docs/PLAN.md](docs/PLAN.md)。
+详细设计见 [docs/](docs/) 目录。

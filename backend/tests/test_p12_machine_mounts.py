@@ -1,7 +1,7 @@
-"""P12 测试：默认环境 = 本机电脑，只有 execute 进沙箱。
+"""测试：默认环境 = 本机电脑，只有 execute 进沙箱。
 
 覆盖：
-1. `HARNESS_MACHINE_ACCESS` 关闭时行为与 P11 完全一致（只有 `/workspace`）；
+1. `HARNESS_MACHINE_ACCESS` 关闭时行为与完全一致（只有 `/workspace`）；
 2. 打开后 `/mnt/<名>/...` 直接读写**本机真实文件**（不经过沙箱、不需要沙箱在线）；
 3. `/mnt` 这一层的 `ls` 只列挂载点，不会漏到工作区；误用路径给可读错误；
 4. 越界（`..`）仍被拒 —— 挂载点内部仍有 virtual_mode 边界；
@@ -30,7 +30,7 @@ from tests.test_p11_hybrid_backend import CONTAINER_ROOT, _FakeClient
 
 @pytest.fixture()
 def tmp_path(request):
-    """覆写 pytest 的 tmp_path：用工作区内目录，避免受限沙箱下 rmtree 失败（同 P11）。"""
+    """覆写 pytest tmp_path：用工作区内目录，避免受限沙箱下 rmtree 失败（同）。"""
     safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", request.node.name)[:60]
     base = Path(__file__).resolve().parent / "_tmp_hybrid" / f"p12_{safe}"
     base.mkdir(parents=True, exist_ok=True)
@@ -69,7 +69,7 @@ def no_machine(monkeypatch):
 
 @pytest.fixture()
 def fake_sandbox(tmp_path, monkeypatch):
-    """把 registry.get 换成假容器（同 P11 的假容器实现）。"""
+    """把 registry.get 换成假容器（同的假容器实现）。"""
     host_dir = tmp_path / "container"
     host_dir.mkdir(parents=True, exist_ok=True)
     client = _FakeClient(host_dir)
@@ -95,11 +95,11 @@ def fake_sandbox(tmp_path, monkeypatch):
 
 
 def test_machine_access_off_by_default(workspace, no_machine):
-    """关掉开关 → 没有 /mnt 路由，挂载点为空，也没有任何需要审批的路径（P11/P21 行为）。"""
+    """关掉开关 → 没有 /mnt 路由，挂载点为空，也没有任何需要审批的路径（行为）。"""
     assert osb.machine_mounts() == []
     be = sandbox.build_main_backend(session_key="t", workspace=str(workspace))
     assert set(be.routes) == {sandbox.PERMISSION_ROUTE_PREFIX}
-    # P21：本机访问关闭 ⇒ 没有本机路径可审批 ⇒ 空列表。
+    # 本机访问关闭 ⇒ 没有本机路径可审批 ⇒ 空列表。
     # 工作区 /workspace/** 不再列入审批（它是"沙箱内的地盘"，读写真自由）。
     assert sandbox.default_permissions() == []
 
@@ -219,9 +219,9 @@ def test_misuse_of_mount_root_is_readable(workspace, machine):
 
 
 def test_workspace_glob_with_double_absolute_path(workspace):
-    """P12 顺带修的坑：`glob` 的模式是**相对 search path** 解释的。
+    """顺带修的坑：`glob` 的模式是**相对 search path** 解释的。
 
-    P11 下 `glob('/workspace/sub/*.txt', '/workspace/sub')` 永远是空结果（绝对模式被拿去
+      下 `glob('/workspace/sub/*.txt', '/workspace/sub')` 永远是空结果（绝对模式被拿去
     和相对路径比对），挂载点上同理。归一化后两者都能匹配。
     """
     be = sandbox.build_main_backend(session_key="t", workspace=str(workspace))
@@ -233,8 +233,8 @@ def test_workspace_glob_with_double_absolute_path(workspace):
         "/workspace/sub/deep.txt"
     ]
     # path=None → CompositeBackend 会"搜所有后端"；`/workspace/` 这条占位 route 会让同一个
-    # 文件既以"不带前缀"（default 的原始结果）又以"带前缀"（route remap）出现 —— P11 遗留的
-    # 别名副作用（见 docs/P12 §已知边界），这里只要求带前缀的那条在。
+    # 文件既以"不带前缀"（default 的原始结果）又以"带前缀"（route remap）出现 —— 遗留的
+    # 别名副作用（见 docs/§已知边界），这里只要求带前缀的那条在。
     assert "/workspace/sub/deep.txt" in [m["path"] for m in be.glob("/workspace/sub/*.txt").matches]
 
 
@@ -246,7 +246,7 @@ def test_workspace_glob_with_double_absolute_path(workspace):
 def test_permissions_cover_mounts_and_pass_route_check(workspace, machine):
     """访问挂载点要人工审批（**读和写都要**），且权限路径仍落在 route 前缀内。
 
-    P21 起审批边界是"只有碰本机才问"：
+    审批边界是"只有碰本机才问"：
     - 工作区 `/workspace/**` 不再列入（沙箱内自由读写）；
     - 本机 `/mnt/<名>/**` 的 read + write 都触发审批。
     """
@@ -318,7 +318,7 @@ def mount_into_sandbox(monkeypatch, machine):
 
 
 def test_sandbox_mount_specs_off_by_default(machine):
-    """默认不挂进容器 —— 容器里没有 /mnt（P12 原行为，不能悄悄改变）。"""
+    """默认不挂进容器 —— 容器里没有 /mnt（原行为，不能悄悄改变）。"""
     assert settings.sandbox_mount_machine_dirs is False
     assert osb.sandbox_mount_specs() == []
     assert osb.sandbox_mount_key() == ""

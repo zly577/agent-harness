@@ -1,4 +1,4 @@
-"""P4 技能接口的请求/响应模型。"""
+"""技能接口的请求/响应模型。"""
 from pydantic import BaseModel, Field
 
 

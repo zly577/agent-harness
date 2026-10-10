@@ -5,7 +5,7 @@
 HTTP 响应头触发 latin-1 编码失败。本测试验证修复后的 RFC 5987 响应头
 与目录浏览/导航行为。
 
-P18 的两处必要调整：
+两处必要调整：
 1. 业务接口改为"默认拒绝"，所以 client 必须带登录凭证；
 2. **工作区按用户隔离**，文件 API 服务的是「当前用户的工作区」
    （`<repo>/workspace/<user_id>/`）。所以这里的种子数据也必须写进**同一个**
@@ -16,7 +16,7 @@ import asyncio
 
 from tests.helpers import make_auth_client
 
-# 已登录的客户端 + 它对应的账号（P18 起文件 API 按用户隔离，必须知道是哪个用户）
+# 已登录的客户端 + 它对应的账号（文件 API 按用户隔离，必须知道是哪个用户）
 client, TEST_USER = make_auth_client(raise_server_exceptions=False)
 
 

@@ -1,4 +1,4 @@
-"""供应商解析与连通性探测（P18）。
+"""供应商解析与连通性探测。
 
 ## 解析顺序（2026-09-18 收紧：**只用你自己的**）
 
@@ -200,7 +200,7 @@ def resolve_for_agent(db: OrmSession, user_id: str | None, session_provider_id: 
 def migrate_system_providers(db: OrmSession, owner_user_id: str | None) -> int:
     """把遗留的**系统级**供应商收编给 `owner_user_id`（改成他的私有供应商）。
 
-    背景：P18 早期版本支持"系统级共享供应商"——启动时用 `.env` 的 DeepSeek 配置
+    背景： 早期版本支持"系统级共享供应商"——启动时用 `.env` DeepSeek 配置
     自动建一条（所有用户可用）。2026-09-18 使用方要求改成"每个用户必须自己配模型"，
     系统级这一层随之退出解析。
 

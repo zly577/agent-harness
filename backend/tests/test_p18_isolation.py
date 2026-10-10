@@ -1,4 +1,4 @@
-"""P18 跨用户隔离测试（多租户的核心回归）。
+"""跨用户隔离测试（多租户的核心回归）。
 
 ## 这个文件在防什么
 
@@ -250,7 +250,7 @@ def test_memory_file_not_visible_in_other_users_panel(client2, u1):
 
 
 def test_tool_log_written_with_owner(u1):
-    """工具流水落库时带上归属（P18 新增列）。"""
+    """工具流水落库时带上归属（新增列）。"""
     from app.agent.runtime import _log_tool_event
     from app.db.models import ToolCallLog
     from app.db.session import SessionLocal

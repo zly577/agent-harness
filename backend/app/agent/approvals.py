@@ -1,4 +1,4 @@
-"""人工介入审批核心（P8）。
+"""人工介入审批核心。
 
 利用 deepagents 内置的 HITL 机制：
 - 通过 `permissions=[FilesystemPermission(mode="interrupt", ...)]`，deepagents 自动把
@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 #: 自己留一份。它只在 `read_pending_approval` 读到 pending 时登记，容量以"本进程
 #: 期间用户真正碰过、且真的被中断过的会话"为界，不会无限膨胀。
 #:
-#: P18：值从 `set[str]` 改成 `dict[session_id, user_id]`。
+#: 值从 `set[str]` 改成 `dict[session_id, user_id]`。
 #: 原因很实在：多租户下 `clear_pending_interrupt(None)` 会把**所有人**挂起的审批
 #: 一次性 reject 掉 —— 我关自己的审批开关，别人正在等的审批就没了。
 #: 记下归属之后，收尾时可以按用户过滤（见 `known_pending_sessions`）。
@@ -201,7 +201,7 @@ async def read_pending_approval(agent, config: dict, user_id: str | None = None)
     见 `app/agent/permissions.py`）。
 
     Args:
-        user_id: 会话归属者（P18）。只用于**登记**（关闭开关时按用户收尾），
+        user_id: 会话归属者。只用于**登记**（关闭开关时按用户收尾），
             不参与"是否 pending"的判断 —— 那个判断只看 checkpoint。
     """
     state = await agent.aget_state(config)

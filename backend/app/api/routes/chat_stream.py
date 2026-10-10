@@ -1,9 +1,9 @@
-"""SSE 流式对话路由（P9；P15 起改为"订阅运行"而不是"驱动运行"）。
+"""SSE 流式对话路由（起改为"订阅运行"而不是"驱动运行"）。
 
 POST /api/v1/chat/stream  body: {"message","session_id"}
 返回 text/event-stream，每行 data: <json>。
 
-## P15 的关键变化：连接不再等于运行
+## 关键变化：连接不再等于运行
 
 以前这个端点的 SSE 生成器**就是**跑 agent 的那个协程，客户端一断（刷新/关页/
 切网络）就被 Starlette 取消，回答随之消失。现在：
@@ -19,7 +19,7 @@ POST /api/v1/chat/stream  body: {"message","session_id"}
   - {"type":"thinking","scope","delta"}   推理增量（思考中，让长推理不再黑屏）
   - {"type":"tool_call","id","name","args"} 工具调用（含参数）
   - {"type":"tool_result","id","name","content","ok","exit_code","reason","duration_ms"} 工具返回结果
-    （P22：后四个字段是后端判定好的成败/耗时，前端不要从 content 里猜）
+    （后四个字段是后端判定好的成败/耗时，前端不要从 content 里猜）
   - {"type":"subagent_start","id","subagent_type","summary"} 子智能体开始（摘要）
   - {"type":"subagent_token","id","delta"} 子智能体产出增量
   - {"type":"subagent_thinking","id","delta"} 子智能体推理增量
@@ -123,7 +123,7 @@ async def chat_stream(
 ):
     """发一条消息并订阅这一轮的运行（运行本身在后台，不受本连接生死影响）。
 
-    P18 归属：没有 session_id 就建一个**归属当前用户**的；带了 session_id
+      归属：没有 session_id 就建一个**归属当前用户**的；带了 session_id
     就先校验它属于当前用户（否则 404）。`user_id` 会随本轮运行一起被捕获
     （见 `run_manager.start`），供工作区/长期记忆定位。
     """
@@ -135,7 +135,7 @@ async def chat_stream(
         session_id = req.session_id
         runtime.touch_session(session_id)
 
-    # P18：本轮指定的供应商（可选）。先确认用户能用它，再写回会话 + 重建 agent。
+    # 本轮指定的供应商（可选）。先确认用户能用它，再写回会话 + 重建 agent。
     # 顺序很重要：**必须在起运行之前**，否则这一轮会先用旧模型跑起来。
     if req.provider_id is not None:
         apply_provider_choice(db, session_id, user, req.provider_id)

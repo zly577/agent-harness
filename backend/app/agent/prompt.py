@@ -24,11 +24,11 @@ P12（`HARNESS_MACHINE_ACCESS=true`）时，提示词里会额外声明本机磁
 `/mnt/<盘符>/...`（= 用户电脑的真实文件，**不进沙箱**），见
 `machine_mount_prompt_section()`。
 
-P20 起末尾还会追加「工具调用意图标签」段落（`_intent`），见
+末尾还会追加「工具调用意图标签」段落（`_intent`），见
 `app/agent/intent.py::render_intent_prompt_section` —— 它让模型每次调工具时
 都产出一句面向终端用户的说明，供任务看板的"当前步骤"展示。
 
-## P21：提示词结构按「权限模式」二选一
+## 提示词结构按「权限模式」二选一
 
 ```
     _PROMPT_HEAD  +  _FS_TOOLS_SANDBOX|_FS_TOOLS_FULL  +  _PROMPT_TAIL
@@ -98,7 +98,7 @@ _PROMPT_HEAD = (
 )
 
 #: 文件 / 命令工具段 —— **默认权限（沙箱内）**。
-#: P21：完全访问模式下整段被 `_FS_TOOLS_FULL` **替换**（两段互斥）。
+#: 完全访问模式下整段被 `_FS_TOOLS_FULL` **替换**（两段互斥）。
 #: 这一点很关键 —— 若两段同时出现，模型会同时读到"execute 在容器里跑"和
 #: "execute 在本机跑"，只能靠猜（历史教训：BASE_SYSTEM_PROMPT 自相矛盾曾导致
 #: 模型三套路径各试一遍、空转 51 次，见 `_probe/probe_prompt_path_rules.py`）。
@@ -189,7 +189,7 @@ SEED_MEMORY = f"""# Agent 记忆
 def memory_file_path(user_id: str | None = None) -> Path:
     """本地磁盘上 Agent.md 的真实路径（= **该用户**工作区根下的 Agent.md）。
 
-    P18 起按用户隔离：`<base>/<user_id>/Agent.md`。
+    按用户隔离：`<base>/<user_id>/Agent.md`。
     这是"长期记忆不泄漏"的关键落点 —— 以前它是全用户共享的一篇文章，
     A 记下的偏好会直接进 B 的系统提示词。
     """
@@ -215,7 +215,7 @@ def ensure_memory_file(user_id: str | None = None) -> Path:
 
 
 def machine_mount_prompt_section() -> str:
-    """本机磁盘挂载点的提示词段落（P12；2026-09-30 重写）。
+    """本机磁盘挂载点的提示词段落（2026-09-30 重写）。
 
     `HARNESS_MACHINE_ACCESS=true` 时列出**这台电脑实际挂载进来的盘符/目录**，
     并交代三件模型必须知道的事：
@@ -229,7 +229,7 @@ def machine_mount_prompt_section() -> str:
     3. **`execute` 不是找文件的工具**：容器只有 `/workspace` 的镜像、看不到 `/mnt/*`，
        用 execute 去 ls 本机会拿到空目录，然后误判"文件不存在"。
 
-    没开启时返回空串（提示词与 P11 完全一致）。
+    没开启时返回空串（提示词与完全一致）。
     """
     from app.agent.opensandbox_backend import machine_mounts
 
@@ -273,12 +273,12 @@ def machine_mount_prompt_section() -> str:
 def build_system_prompt(locale: str | None = None, mode: str = "sandbox") -> str:
     """返回主 Agent 的系统提示词（框架规则；偏好由 memory 通道注入）。
 
-    P12：本机磁盘挂载说明是**按当前配置动态生成**的（列出真实挂载点），
+    本机磁盘挂载说明是**按当前配置动态生成**的（列出真实挂载点），
     没开启 `HARNESS_MACHINE_ACCESS` 时不会多出这一段。
 
-    P20：末尾追加「工具调用意图标签（`_intent`）」段落，让模型每次调工具时
+    末尾追加「工具调用意图标签（`_intent`）」段落，让模型每次调工具时
     都吐一句给用户看的说明（任务看板的"当前步骤"靠它）。`INTENT_LABEL_ENABLED=false`
-    时这一段不会出现，提示词与 P19 逐字节相同。
+    时这一段不会出现，提示词与逐字节相同。
 
     Args:
         locale: 意图段落的语言（`zh*` / `en*`）。留空时用配置 `INTENT_LOCALE`；
@@ -308,7 +308,7 @@ def build_system_prompt(locale: str | None = None, mode: str = "sandbox") -> str
 
 
 def full_access_prompt_section() -> str:
-    """「完全访问模式」的运行环境段落（P21）。
+    """「完全访问模式」的运行环境段落。
 
     与 `machine_mount_prompt_section()` 是**互为替代**的两段（同一位置、不同模式）：
     后者讲"默认工作环境是本机磁盘，但 execute 仍进沙箱"，这一段讲"连 execute 都在本机"。
@@ -369,7 +369,7 @@ def memory_sources(user_id: str | None = None) -> list[str]:
     注意：`MemoryMiddleware` 只把**存在**的文件注入提示词；文件缺失时它会静默跳过
     （`file_not_found`），所以这里也顺手保证文件存在，语义更明确。
 
-    P18：`user_id` 决定这是谁的长期记忆（见 `memory_file_path`）。
+    `user_id` 决定这是谁的长期记忆（见 `memory_file_path`）。
     这里返回的仍是**虚拟路径** `/workspace/Agent.md` —— 它由（按用户构建的）
     backend 解析到该用户的工作区，所以同一份提示词配置对每个用户都成立。
     """

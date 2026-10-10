@@ -1,4 +1,4 @@
-"""baseline：P2/P5 已存在的三张表
+"""baseline： 已存在的三张表
 
 Revision ID: 0001_baseline
 Revises: -
@@ -23,7 +23,7 @@ Create Date: 2026-09-18
 
 ## 表结构是"这一版"的快照
 
-这里的列定义刻意**冻结在 P18 之前**（没有 `user_id` / `provider_id`）：
+这里的列定义刻意**冻结在 **（没有 `user_id` / `provider_id`）：
 后面 `0002` 再负责加列。这样"全新库"和"老库"会走完全相同的两条 revision，
 最终 schema 一致。如果这里直接抄当前模型（含 user_id），全新库建出来的表会带
 `user_id`，紧接着 0002 再 ADD COLUMN 就会撞"列已存在"。

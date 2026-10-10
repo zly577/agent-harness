@@ -1,4 +1,4 @@
-"""Skills 系统（P4）。
+"""Skills 系统。
 
 设计目标（贴合用户“用 YAML 配置新 skills，并可由 Agent 创建”）：
 - 用户以**纯 YAML 文件**声明一个技能（更友好、可读、可审查），放在
@@ -7,8 +7,8 @@
   （带 YAML frontmatter），复用 deepagents 的 `SkillsMiddleware` 加载。
 - 启动时把技能文件**播种**进 backend 的虚拟文件系统（/skills/），供
   `SkillsMiddleware(sources=[...])` 扫描。
-- Agent 创建技能：P4 提供 `create_skill` 支持（生成 YAML 定义，草稿态），
-  激活仍需人工审批（P8 起强制）。
+Agent 创建技能： 提供 `create_skill` 支持（生成 YAML 定义，草稿态），
+  激活仍需人工审批（强制）。
 
 YAML 定义结构（definitions/<name>.yaml）:
     name: greet-skill           # 小写字母数字+单连字符
@@ -104,7 +104,7 @@ def create_skill_definition(name: str, description: str, instructions: str,
                             allowed_tools: list[str] | None = None) -> Path:
     """把一个新的技能定义写入 definitions/ 下的 YAML（草稿态）。
 
-    仅写盘，不自动激活；激活需人工审批（P8 起）。返回写入的 YAML 路径。
+    仅写盘，不自动激活；激活需人工审批。返回写入的 YAML 路径。
     """
     defn = SkillDefinition(
         name=name, description=description, instructions=instructions,

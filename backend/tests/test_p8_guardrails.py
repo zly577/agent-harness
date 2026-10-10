@@ -1,4 +1,4 @@
-"""P8 测试：三层 Guardrail（无需网络/模型）。"""
+"""测试：三层 Guardrail（无需网络/模型）。"""
 from app.agent.guardrails import check_action, check_input, check_output
 
 

@@ -1,4 +1,4 @@
-"""审批相关请求/响应模型（P8）。"""
+"""审批相关请求/响应模型。"""
 from pydantic import BaseModel, Field
 
 
@@ -38,7 +38,7 @@ class ApprovalDecideRequest(BaseModel):
 class HitlConfigRequest(BaseModel):
     """热插拔人工介入：enabled=True 开启（敏感写操作需人工同意），False 关闭（全程自动）。
 
-    ## P18：作用域改成显式字段
+    ## 作用域改成显式字段
 
     以前 `session_id` 传空就等于"改全局默认"，于是任何用户点一下页头的开关
     都会改掉**所有人**的默认值（关闭时还会把所有挂起的审批一起 reject）。

@@ -1,4 +1,4 @@
-"""P18 测试辅助：认证账号与带 token 的客户端。
+"""测试辅助：认证账号与带 token 的客户端。
 
 ## 为什么测试账号直接写库，而不是走注册接口
 
@@ -106,7 +106,7 @@ def auth_client(**kwargs) -> TestClient:
 def purge_test_users() -> int:
     """删掉所有 `@p18.test` 账号、它们的会话，以及它们的工作区目录。
 
-    P18 起工作区是 `<repo>/workspace/<user_id>/`，所以清账号的同时必须把目录
+    工作区是 `<repo>/workspace/<user_id>/`，所以清账号的同时必须把目录
     一起删掉 —— 否则每跑一次测试就在磁盘上留一批带 `Agent.md` 的目录，
     越积越多（而且看起来很像"真实用户"）。
     """
@@ -123,13 +123,13 @@ def purge_test_users() -> int:
         db.query(DbSession).filter(DbSession.user_id.in_(ids)).delete(
             synchronize_session=False
         )
-        # P18：测试会建供应商配置，必须一起清（它们在界面上是真实存在的条目）
+        # 测试会建供应商配置，必须一起清（它们在界面上是真实存在的条目）
         from app.db.models import LlmProvider
 
         db.query(LlmProvider).filter(LlmProvider.user_id.in_(ids)).delete(
             synchronize_session=False
         )
-        # P19：MCP 工具源同理（里面还存着加密的 headers/env，更不该留）
+        # MCP 工具源同理（里面还存着加密的 headers/env，更不该留）
         from app.db.models import McpServer
 
         db.query(McpServer).filter(McpServer.user_id.in_(ids)).delete(

@@ -7,7 +7,7 @@
 // 而 `tool_call` 必须等参数 JSON 拼完整才发得出来）。旧前端收到它会走
 // `applyDataEvent` 的 default 分支被忽略，所以前后端可以独立上线。
 //
-// P18：所有请求统一走 ./api 的封装 —— 它会自动注入 Authorization 头，
+// 所有请求统一走 ./api 的封装 —— 它会自动注入 Authorization 头，
 // 并在收到 401 时清凭证 + 通知界面回登录页。**SSE 流里的 401 也走同一条路径**，
 // 所以"后端重启导致凭证失效"时用户看到的是回登录页，而不是一个静默断掉的流。
 
@@ -19,7 +19,7 @@ import { apiFetch, apiFetchRaw } from './api'
  * @param {string|null} sessionId 会话 id（'new' 表示新建）
  * @param {AbortSignal} signal 取消信号
  * @param {(evt:object)=>void} onEvent 事件回调
- * @param {string|null} [providerId] 本轮使用的模型供应商 id（P18）。
+ * @param {string|null} [providerId] 本轮使用的模型供应商 id。
  *   传空 = 不指定，由后端按「会话已绑定 → 用户默认 → 系统默认」解析。
  *   注意它会**写回会话**（后续轮次沿用），不是"只影响这一轮"的临时值。
  */
@@ -73,7 +73,7 @@ export async function setHitlConfig(enabled, sessionId) {
 }
 
 /**
- * 读取权限模式（P21）。
+ * 读取权限模式。
  *
  * 两种模式：
  * - `sandbox` 默认权限：文件读写落工作区，execute 进沙箱；访问本机文件需审批。
@@ -89,7 +89,7 @@ export async function fetchAccessConfig(sessionId) {
 }
 
 /**
- * 切换权限模式（P21）。
+ * 切换权限模式。
  *
  * 后端会重建该用户的 Agent 缓存（backend / permissions 是编译期输入），
  * 所以切换后**下一轮对话**才用新模式 —— 正在跑的那一轮不受影响。

@@ -1,4 +1,4 @@
-"""P3/P11 测试：本地磁盘读写 + OpenSandbox 执行 的判断路由（不联网、不建真容器）。
+"""测试：本地磁盘读写 + OpenSandbox 执行的判断路由（不联网、不建真容器）。
 
 覆盖：
 1. backend 组合形态（CompositeBackend + 混合 default）与 deepagents 的 execute 注册条件；
@@ -218,7 +218,7 @@ def test_main_backend_shape(workspace):
 def test_default_permissions_scoped_to_route(workspace, monkeypatch):
     """权限路径必须落在 route 前缀内，否则 FilesystemMiddleware 直接报错。
 
-    P21：审批范围收窄到"只碰本机才问"——
+    审批范围收窄到"只碰本机才问"——
 
     - **没有本机挂载点**时默认权限是空列表（工作区 `/workspace/**` 已不需要审批）；
       空列表同样必须通过 route 校验（route 表本身非空即可）；

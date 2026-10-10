@@ -1,4 +1,4 @@
-"""审批路由（P8）：待审批查询 / 批准 / 拒绝。
+"""审批路由：待审批查询 / 批准 / 拒绝。
 
 - GET  /api/v1/approvals/{session_id}   查看某会话当前待审批项
 - POST /api/v1/approvals/{session_id}   body: {"decision":"approve"|"reject"}
@@ -70,7 +70,7 @@ async def clear_pending_interrupt(session_id: str | None, user_id: str | None = 
     刷新过 / 切过页面 / 关过标签页的会话它一无所知 —— 那些中断会留在库里，
     等下次重新打开人工介入时在弹窗里"复活"。
 
-    P18：`user_id` 用于**限定范围**。多租户下不带这个参数就等于"我关自己的审批，
+    `user_id` 用于**限定范围**。多租户下不带这个参数就等于"我关自己的审批，
     顺手把别人正在等的审批全 reject 了" —— 那不是安全问题（不泄漏数据），
     但是明确的跨用户干扰。传空表示进程级收尾（仅诊断/测试用）。
 
@@ -201,7 +201,7 @@ async def decide(
                 "count": decided,
             })
             try:
-                # 恢复动作走运行管理器（P15 起所有运行都归它）：
+                # 恢复动作走运行管理器（所有运行都归它）：
                 # - 与连接解耦：断流/刷新不影响恢复写完，checkpoint 不会停在中断态；
                 # - 状态诚实：恢复期间该会话的 run 是 running（而不是继续谎报
                 #   awaiting_approval）——否则恢复途中用户发新消息会与恢复同时写

@@ -1,4 +1,4 @@
-"""启动引导（P18）：引导管理员 + 存量数据归属回填。
+"""启动引导：引导管理员 + 存量数据归属回填。
 
 ## 为什么放在启动时，而不是放在 alembic 迁移里
 
@@ -206,7 +206,7 @@ def run_bootstrap() -> None:
             # 新建管理员时，存量数据本来就属于它，上面这次回填已经处理完了
             logger.info("[bootstrap] 引导完成（新建管理员 %s）", owner.email)
 
-        # P18：把旧布局的工作区（全部文件都摊在 <base>/ 根下）搬进
+        # 把旧布局的工作区（全部文件都摊在 <base>/ 根下）搬进
         # <base>/<引导管理员 id>/。幂等 + 先备份，细节见 app/core/workspace.py。
         result = migrate_legacy_workspace(owner.id if owner else None)
         if result.get("moved"):

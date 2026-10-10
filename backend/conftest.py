@@ -1,10 +1,10 @@
 """pytest 全局钩子。
 
-背景（P2）：aiosqlite 全局连接（checkpointer/store）在测试进程结束时未主动释放，
+背景：aiosqlite 全局连接（checkpointer/store）在测试进程结束时未主动释放，
 导致 Python 解释器退出挂起（每个 pytest 进程结束都 hang，表现为命令超时）。
 这里在 session 结束时强制关闭该连接，并用 os._exit 兜底避免解释器资源回收挂住。
 
-P18 起新增：认证相关 fixture（`auth_client` / `admin_client` / `anon_client`）
+新增：认证相关 fixture（`auth_client` / `admin_client` / `anon_client`）
 与测试账号清理。
 """
 import asyncio
@@ -64,7 +64,7 @@ def _purge_test_accounts() -> None:
 
 
 # ============================================================================
-# P18：认证 fixture
+# 认证 fixture
 # ============================================================================
 
 
@@ -157,12 +157,12 @@ def _print_summary(session, exitstatus) -> None:
 def pytest_sessionfinish(session, exitstatus):
     """收尾：清理测试账号 → 关 SQLite 连接 → 打印汇总。
 
-    ## ⚠️ 这里曾经有个 `os._exit()`，现在去掉了（P18）
+    ## ⚠️ 这里曾经有个 `os._exit()`，现在去掉了
 
     历史上的问题是 aiosqlite 的全局连接没被关闭 → 解释器退出挂住 →
     每个 pytest 进程结束都 hang。当时的兜底是 `os._exit(exitstatus)`。
 
-    P18 发现这个兜底有两个真实代价：
+      发现这个兜底有两个真实代价：
     1. 它会**跳过 session 级 fixture 的 teardown**（清理逻辑不执行）；
     2. 它会**吞掉 pytest 的 FAILURES 段落**（失败明细和统计都在收尾输出里）——
        失败时只看到一行 `197 passed / 3 failed`，完全不知道是哪 3 个、

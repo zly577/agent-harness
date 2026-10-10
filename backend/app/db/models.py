@@ -1,15 +1,15 @@
 """业务 ORM 模型（MySQL agent_harness）。
 
 模型清单：
-- Session（P2）：会话主记录
-- ToolCallLog（P2）：工具调用流水（P20 起兼作 `tool_call` 事件的存储）
-- TaskStep（P20）：任务看板「当前步骤」读模型（派生自 ToolCallLog）
-- AuditLog（P5）：Agent 运行审计
-- User（P18）：登录用户（多租户归属的根）
-- LlmProvider（P18）：模型供应商配置（openai / anthropic 双协议）
-- McpServer（P19）：外部 MCP 工具源配置（按用户；headers/env 加密）
+Session：会话主记录
+ToolCallLog：工具调用流水（兼作 `tool_call` 事件的存储）
+TaskStep：任务看板「当前步骤」读模型（派生自 ToolCallLog）
+AuditLog：Agent 运行审计
+User：登录用户（多租户归属的根）
+LlmProvider：模型供应商配置（openai / anthropic 双协议）
+McpServer：外部 MCP 工具源配置（按用户；headers/env 加密）
 
-## P18 的归属设计（重要）
+## 归属设计（重要）
 
 `sessions` / `tool_call_logs` / `audit_logs` 都加了 `user_id`，但它**故意是可空的**：
 
@@ -86,7 +86,7 @@ class ToolCallLog(Base):
     回放历史会话的工具调用面板——checkpoint 里的消息可能被上下文压缩
     （SummarizationMiddleware）裁剪，或在运行中途被关闭而不完整。
 
-    ## P20：这张表 = `tool_call` 事件的**事件存储**
+    ## 这张表 = `tool_call` 事件的**事件存储**
 
     `intent_label` / `intent_source` 就是数据契约里那两个字段。它们的取值
     规律（`resolve_intent` 保证）：
@@ -114,13 +114,13 @@ class ToolCallLog(Base):
     args: Mapped[str] = mapped_column(Text, default="", comment="调用参数（JSON 字符串，不含 _intent）")
     result: Mapped[str] = mapped_column(Text, default="", comment="工具返回结果")
     status: Mapped[str] = mapped_column(String(16), default="running", comment="running/done/error/interrupted")
-    #: P20：规范化后的展示文案（≤24 字符、单行）；NULL = 无标签（功能关闭/待回填）
+    #: 规范化后的展示文案（≤24 字符、单行）；NULL = 无标签（功能关闭/待回填）
     intent_label: Mapped[str | None] = mapped_column(
-        String(64), nullable=True, comment="P20 意图标签（展示文案，≤24 字符）"
+        String(64), nullable=True, comment=" 意图标签（展示文案，≤24 字符）"
     )
-    #: P20：标签来源（model / fallback / backfill）；与 intent_label 同时有值
+    #: 标签来源（model / fallback / backfill）；与 intent_label 同时有值
     intent_source: Mapped[str | None] = mapped_column(
-        String(16), nullable=True, comment="P20 标签来源：model/fallback/backfill"
+        String(16), nullable=True, comment=" 标签来源：model/fallback/backfill"
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
@@ -128,7 +128,7 @@ class ToolCallLog(Base):
 
 
 class TaskStep(Base):
-    """任务看板的「当前步骤」读模型（P20）。
+    """任务看板的「当前步骤」读模型。
 
     ## 它是派生数据，权威来源是 `tool_call_logs`
 
@@ -171,10 +171,10 @@ class TaskStep(Base):
         String(16), default="running", comment="running/done/error/interrupted"
     )
     intent_label: Mapped[str | None] = mapped_column(
-        String(64), nullable=True, comment="P20 意图标签（与 tool_call 事件同值）"
+        String(64), nullable=True, comment=" 意图标签（与 tool_call 事件同值）"
     )
     intent_source: Mapped[str | None] = mapped_column(
-        String(16), nullable=True, comment="P20 标签来源：model/fallback/backfill"
+        String(16), nullable=True, comment=" 标签来源：model/fallback/backfill"
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
@@ -185,7 +185,7 @@ class TaskStep(Base):
 
 
 class AuditLog(Base):
-    """Agent 运行审计记录（P5）。"""
+    """Agent 运行审计记录。"""
 
     __tablename__ = "audit_logs"
 
@@ -203,7 +203,7 @@ class AuditLog(Base):
 
 
 class LlmProvider(Base):
-    """模型供应商配置（P18）。一个供应商 + 一个模型 = 一条记录。
+    """模型供应商配置。一个供应商 + 一个模型 = 一条记录。
 
     ## `user_id` 为空 = 系统级共享供应商
 
@@ -250,11 +250,11 @@ class LlmProvider(Base):
 
 
 class McpServer(Base):
-    """外部 MCP 工具源配置（P19）。
+    """外部 MCP 工具源配置。
 
     ## 为什么是**按用户**而不是全局
 
-    P18 之后工作区、长期记忆、模型供应商都是按用户隔离的，MCP 若还是"全局
+    工作区、长期记忆、模型供应商都是按用户隔离的，MCP 若还是"全局
     YAML + 全局生效"，就会出现"A 配了一个能读内网的 MCP、B 的 agent 里也挂着它"。
     所以数据库里的每一行都归某个用户；`user_id` **不可空**（这张表没有存量数据，
     不存在"加 NOT NULL 跑不过去"的历史包袱）。

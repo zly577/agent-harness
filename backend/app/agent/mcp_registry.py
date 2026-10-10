@@ -1,4 +1,4 @@
-"""MCP 配置来源与「数据库行 ↔ McpServerConfig」转换（P19）。
+"""MCP 配置来源与「数据库行 ↔ McpServerConfig」转换。
 
 ## 两个来源，一套语义
 

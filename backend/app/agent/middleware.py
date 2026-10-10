@@ -1,4 +1,4 @@
-"""中间件框架（P5）：日志 / 审计。
+"""中间件框架：日志 / 审计。
 
 基于 langchain `AgentMiddleware` 的 hooks 实现，挂接在 create_deep_agent 的
 middleware 参数里：
@@ -671,7 +671,7 @@ async def _write_audit(thread_id: str, run_id: str, action: str, detail: dict) -
 
 
 # ============================================================================
-# P20：工具调用意图标签（`_intent`）
+# 工具调用意图标签（`_intent`）
 #
 # 拆成两个"半场"，都在同一个中间件里，因为它们共享同一个字段契约：
 #
@@ -821,7 +821,7 @@ def build_intent_strip_middleware() -> AgentMiddleware:
 
 
 # ============================================================================
-# 自杀式命令护栏（P22）—— "按进程名杀 python" = 杀掉 harness 后端自己
+# 自杀式命令护栏—— "按进程名杀 python" = 杀掉 harness 后端自己
 #
 # 事故（2026-10-09）：模型要"重启 9000 端口的 auth_app"，于是执行了
 #     Stop-Process -Name python -Force -ErrorAction SilentlyContinue

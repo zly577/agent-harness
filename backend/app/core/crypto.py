@@ -1,4 +1,4 @@
-"""供应商 api_key 的对称加密与脱敏（P18）。
+"""供应商 api_key 的对称加密与脱敏。
 
 ## 用 Fernet（AES-128-CBC + HMAC-SHA256）
 

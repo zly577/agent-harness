@@ -1,9 +1,9 @@
-"""工作区根目录：按用户隔离（P18）。
+"""工作区根目录：按用户隔离。
 
 ## 为什么需要单独一个模块
 
 工作区路径原来只有一个入口 `opensandbox_backend.local_workspace_root()`，
-它返回的是**一个全局目录** `<repo>/workspace`。P18 要求按用户隔离之后，
+它返回的是**一个全局目录** `<repo>/workspace`。 要求按用户隔离之后，
 "工作区在哪"这件事被三处独立引用（backend 构建、长期记忆 Agent.md、文件 API），
 如果再各自拼一遍路径，很容易出现"某个角落还在用旧路径"的不一致 ——
 那种 bug 的表现是"文件写进去了但看不着"，排查成本很高。
@@ -20,7 +20,7 @@
 
 ## 旧数据搬迁
 
-P18 之前所有文件都躺在 `<base>/` 根下（含 `Agent.md`）。升级后它们必须
+所有文件都躺在 `<base>/` 根下（含 `Agent.md`）。升级后它们必须
 搬进 `<base>/<引导管理员 id>/`，否则用户会看到"工作区空了"。
 搬迁见 `migrate_legacy_workspace()`：**先整目录备份、再移动**，可无损回滚。
 """
@@ -44,7 +44,7 @@ def workspace_base() -> Path:
     """所有用户工作区的父目录。
 
     默认 `<repo>/workspace`（`backend/app/core/workspace.py` → 上溯三层到仓库根），
-    可用环境变量 `HARNESS_WORKSPACE` 覆盖（与 P11 起的语义一致，现在它指的是**父目录**）。
+    可用环境变量 `HARNESS_WORKSPACE` 覆盖（与的语义一致，现在它指的是**父目录**）。
     """
     override = (os.environ.get("HARNESS_WORKSPACE") or "").strip()
     if override:
@@ -232,7 +232,7 @@ def _write_marker(marker: Path) -> None:
     """写迁移标记；失败只告警（最坏是下次多备份一次，不会丢数据）。"""
     try:
         marker.write_text(
-            "P18：工作区已按用户隔离（<base>/<user_id>/）。\n"
+            "工作区已按用户隔离（<base>/<user_id>/）。\n"
             "删除本文件会让下次启动**重新尝试**搬迁旧布局条目。\n",
             encoding="utf-8",
         )

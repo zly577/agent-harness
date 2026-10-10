@@ -1,6 +1,6 @@
-"""P2 测试：存储层（MySQL 会话 + SQLite checkpoint），不触发真实模型调用。
+"""测试：存储层（MySQL 会话 + SQLite checkpoint），不触发真实模型调用。
 
-P18：`create_session()` 现在**必须**带 user_id（否则会写出无主的会话行 ——
+`create_session()` 现在**必须**带 user_id（否则会写出无主的会话行 ——
 那对谁都不可见，等于每次跑测试都往库里扔一条垃圾）。这里用一个 `@p18.test`
 测试账号，跑完由 `conftest._purge_test_accounts` 连同它的会话一起删掉。
 """
@@ -13,7 +13,7 @@ def _test_user() -> dict:
     """拿一个测试账号（复用 helpers，收尾会被自动清理）。"""
     from tests.helpers import create_user, unique_email
 
-    return create_user(email=unique_email("p2"), display_name="P2 测试")
+    return create_user(email=unique_email("p2"), display_name=" 测试")
 
 
 def _create_test_session() -> str:
@@ -47,7 +47,7 @@ def test_session_row_in_mysql():
         assert row is not None
         assert row.status == "active"
         assert row.title == "新会话"
-        # P18：归属必须落库，否则这个会话谁都看不到
+        # 归属必须落库，否则这个会话谁都看不到
         assert row.user_id == user["id"]
     finally:
         db.close()

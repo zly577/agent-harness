@@ -1,4 +1,4 @@
-"""P6 测试：子智能体 YAML 注册表 + SubAgent 构建（不触发真实模型）。
+"""测试：子智能体 YAML 注册表 + SubAgent 构建（不触发真实模型）。
 
 注意：deepagents 的 SubAgent 是 TypedDict（dict），故用下标访问。
 """
@@ -46,7 +46,7 @@ def test_build_subagent_permissions():
 
 
 def test_subagent_permission_paths_are_route_scoped():
-    """P11 回归：子智能体权限路径必须落在 /workspace route 前缀内。
+    """回归：子智能体权限路径必须落在 /workspace route 前缀内。
 
     背景：deepagents 为每个子智能体单独建 FilesystemMiddleware，用的是父级（可执行）
     backend，因此子智能体的权限路径也受「必须落在 route 前缀内」约束；否则

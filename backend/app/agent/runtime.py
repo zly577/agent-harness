@@ -1,7 +1,7 @@
-"""Agent 运行时：构建并运行 DeepAgents 智能体（P2：持久化 + 上下文管理）。
+"""Agent 运行时：构建并运行 DeepAgents 智能体（持久化 + 上下文管理）。
 
-P1：手工 ("role", content) 二元组内存存储。
-P2：- 重构为真实 BaseMessage，历史交给 langgraph checkpointer（SQLite）持久化
+手工 ("role", content) 二元组内存存储。
+重构为真实 BaseMessage，历史交给 langgraph checkpointer（SQLite）持久化
      - 通过 thread_id 实现多会话隔离
      - 接入 SummarizationMiddleware 做上下文压缩
      - 业务会话元信息落到 MySQL（app.db.models.Session）
@@ -90,7 +90,7 @@ def session_owner(session_id: str) -> str | None:
 
     ## 为什么要有这个"查库兜底"
 
-    P18 起工作区与长期记忆都按用户隔离，于是 `get_agent()` 必须知道"这是谁的工作区"。
+    工作区与长期记忆都按用户隔离，于是 `get_agent()` 必须知道"这是谁的工作区"。
     最省事的做法是让每个调用点都把 `user_id` 传下来 —— 但只要**有一处忘了**，
     那个调用点就会落到匿名目录，表现是"我刚写的文件不见了"（写到了另一个目录），
     是那种很难一眼看出的 bug。
@@ -151,7 +151,7 @@ def set_session_provider(session_id: str, provider_id: str | None) -> bool:
 def get_main_backend(session_key: str = _MAIN_SESSION, user_id: str | None = None):
     """获取某会话的 backend（本地磁盘 + 沙箱执行），供文件浏览/下载 API 使用。
 
-    P18：`user_id` 决定**本地磁盘根**（`<base>/<user_id>/`）。传空时会用
+    `user_id` 决定**本地磁盘根**（`<base>/<user_id>/`）。传空时会用
     `session_owner()` 兜底查一次（见该函数的说明）；两者都拿不到才落到匿名目录。
 
     注意这里刻意**不**按用户全局缓存 backend：沙箱容器是按会话绑定的状态，
@@ -164,7 +164,7 @@ def get_main_backend(session_key: str = _MAIN_SESSION, user_id: str | None = Non
         return cached[1]
     owner = user_id or session_owner(session_key)
     # 尚未跑过对话的会话：先按用户建 backend（本地磁盘目录会立即创建）
-    # P21：这里也要跟随该会话的权限模式 —— 文件浏览 API 用到的 backend
+    # 这里也要跟随该会话的权限模式 —— 文件浏览 API 用到的 backend
     # 必须与对话用的是同一个（完全访问模式下 default 是 HostShellBackend），
     # 否则"文件面板看到的"和"对话读写的"会来自两个不同的后端对象。
     return build_main_backend(
@@ -188,21 +188,21 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
     if cached is not None:
         return cached[0]
 
-    # P18：一次查库拿到「归属用户」与「会话绑定的供应商」。
+    # 一次查库拿到「归属用户」与「会话绑定的供应商」。
     # user_id 显式传进来时以调用方为准（路由已经做过归属校验），
     # 为空才用查库兜底 —— 避免"某处忘了传"导致工作区串到匿名目录。
     db_owner, session_provider_id = session_context(session_key)
     owner = user_id or db_owner
 
-    # P18：按「会话 → 用户默认 → 系统默认」解析出本次要用的模型供应商。
+    # 按「会话 → 用户默认 → 系统默认」解析出本次要用的模型供应商。
     # 这一步必须在构建 graph **之前**完成：模型是 create_deep_agent 的编译期输入，
     # 换供应商只能重建 agent（见 invalidate_agents）。
     provider = _resolve_provider_for_agent(owner, session_provider_id)
     model = build_llm(provider)
 
-    # P3/P11: 本地磁盘读写（FilesystemBackend）+ OpenSandbox 执行（execute 工具）
-    # P18: 本地磁盘根按用户隔离 → 会话/用户之间的文件与 Agent.md 互不可见
-    # P21: 权限模式决定"执行层" —— 默认权限进沙箱，完全访问直接在本机跑。
+    # 本地磁盘读写（FilesystemBackend）+ OpenSandbox 执行（execute 工具）
+    # 本地磁盘根按用户隔离 → 会话/用户之间的文件与 Agent.md 互不可见
+    # 权限模式决定"执行层" —— 默认权限进沙箱，完全访问直接在本机跑。
     #      它同时决定 backend、permissions、interrupt_on 与系统提示词（见下），
     #      所以必须在构建 graph 之前解析出来（和模型一样是编译期输入）。
     mode = access.access_mode(session_key, owner)
@@ -212,7 +212,7 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
         mode=mode,
     )
 
-    # P11 自检：权限路径（主 Agent + 各子智能体）必须都落在 route 前缀内，
+    # 自检：权限路径（主 Agent + 各子智能体）必须都落在 route 前缀内，
     # 否则 deepagents 的 FilesystemMiddleware 会抛 NotImplementedError（且只在有
     # 子智能体时才暴露）。这里提前把问题说清楚，避免用户看到一句框架内部报错。
     problems = validate_permissions(backend, mode=mode)
@@ -221,16 +221,16 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
             "文件权限配置与沙箱执行后端不兼容：\n  - " + "\n  - ".join(problems)
         )
 
-    # P4: 编译 YAML 技能定义并播种进 backend 虚拟文件系统
+    # 编译 YAML 技能定义并播种进 backend 虚拟文件系统
     compile_all_skills()
     await seed_skills(backend)
 
-    # P5: 中间件管道 = 上下文压缩 + 技能 + 日志 + 审计 + 工具熔断 + 工具调用次数上限
+    # 中间件管道 = 上下文压缩 + 技能 + 日志 + 审计 + 工具熔断 + 工具调用次数上限
     # 工具熔断：每个工具独立计数，连续失败达阈值 → 冷却期短路 → 冷却后放一次探测自愈；
     # 同时产出"手动恢复"工具（模型可主动调用它重置本会话熔断）。
     failure_middlewares, recovery_tools = build_failure_limit_middlewares()
     middlewares = [
-        # P20：**必须排第一**。中间件的顺序 = 洋葱的顺序（第一个最外层，见
+        # **必须排第一**。中间件的顺序 = 洋葱的顺序（第一个最外层，见
         # langchain `_chain_tool_call_wrappers` 的注释），而这一层的职责是
         # "在执行任何工具之前摘掉 `_intent`"。放里面（比如放到 HITL 之后）会出现
         # "审批弹窗里带着 `_intent`"、甚至"熔断器看到的是没摘干净的参数"。
@@ -242,7 +242,7 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
         build_summary_middleware(model),
         LoggingMiddleware(),
         AuditMiddleware(),
-        # P22：硬护栏 —— 拦掉"按进程名杀 python"这类会把 harness 后端自己杀掉的
+        # 硬护栏 —— 拦掉"按进程名杀 python"这类会把 harness 后端自己杀掉的
         # 命令。放在日志/审计**之后**（这次尝试要留痕）、熔断之前。
         # 详见 middleware.py 里 `SelfKillGuardMiddleware` 的事故注释。
         build_self_kill_guard_middleware(),
@@ -252,7 +252,7 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
     ]
     skills_mw = build_skills_middleware(backend)
 
-    # P7/P19: 外部 MCP 工具（MCP_ENABLED=1 才加载）
+    # 外部 MCP 工具（MCP_ENABLED=1 才加载）
     # 配置来源 = 该用户数据库里的记录 + configs/mcp/*.yaml（运维预置，对所有人可见）。
     # ⚠️ 必须传 owner：MCP 工具是"能读内网/带密钥"的能力，按用户隔离是硬要求，
     #    传空就等于只加载 YAML 那份（老行为），用户自己配的一条都不会出现。
@@ -341,12 +341,12 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
     tools.extend(recovery_tools)
 
     agent = create_deep_agent(
-        # P18：模型来自「会话 → 用户默认 → 系统默认」解析出的供应商配置。
+        # 模型来自「会话 → 用户默认 → 系统默认」解析出的供应商配置。
         # 子智能体（subagents）**不传 model**，因此天然继承这一个实例 ——
         # 所以"主智能体、子智能体、摘要中间件"三者走的一定是同一个模型。
         model=model,
         # 框架级规则（稳定）：工具用法 / 委派规范 / 路径约定
-        # P21：完全访问模式下这一段会换成"本机 shell"版本（路径怎么写、
+        # 完全访问模式下这一段会换成"本机 shell"版本（路径怎么写、
         #      execute 不再进容器），见 prompt.full_access_prompt_section()。
         system_prompt=build_system_prompt(mode=mode),
         name="assistant",
@@ -357,13 +357,13 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
         tools=tools,
         # 长期记忆：Agent.md 每次运行开始时被读入并注入系统提示词，
         # 智能体可用 edit_file 自行更新它（记录用户偏好等），跨会话生效。
-        # P18：按用户隔离 —— 每个人读写的都是自己工作区里的那份。
+        # 按用户隔离 —— 每个人读写的都是自己工作区里的那份。
         memory=memory_sources(owner),
-        # P8: 访问本机真实文件 → 人工审批中断（deepagents HITL）
+        # 访问本机真实文件 → 人工审批中断（deepagents HITL）
         # 热插拔：开 = 返回 interrupt 权限（访问 /mnt/** 需人工同意）；关 = 空列表。
-        # P21：完全访问模式下一律返回空列表（用户已显式选择"不问了"）。
+        # 完全访问模式下一律返回空列表（用户已显式选择"不问了"）。
         # 权限是编译期输入，所以模式/开关变化时必须丢掉这个缓存的 agent 重建。
-        # P18: 开关按「会话 → 用户 → 全局」三级解析，所以这里要把 owner 传下去，
+        # 开关按「会话 → 用户 → 全局」三级解析，所以这里要把 owner 传下去，
         #      否则某个用户关掉审批后，他自己的会话依然会弹窗。
         permissions=agent_permissions(session_key, owner, mode),
         # 关闭人工介入（或完全访问）时给一个**永不匹配的占位键**，只为让 deepagents
@@ -371,7 +371,7 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
         # 中断会因为"图里没有 HITL 节点"而读不出来（点同意 → 409 无待审批项），
         # 再打开时又冒出来（弹窗复活）。详见 app/agent/permissions.py 模块注释。
         interrupt_on=hitl_interrupt_on(session_key, owner, mode),
-        # P6: 子智能体（YAML 注册表），同一模型；task 工具委派 + 隔离上下文
+        # 子智能体（YAML 注册表），同一模型；task 工具委派 + 隔离上下文
         subagents=load_all_subagents(),
     )
     # 给内建的 task 工具加超时上限：deepagents 的 task 是 `await subagent.ainvoke(...)`，
@@ -394,7 +394,7 @@ def invalidate_agents(session_key: str | None = None, user_id: str | None = None
 
     Args:
         session_key: 只丢该会话。
-        user_id: 只丢该用户的会话（P18）。用于"某个用户改了 HITL 默认值"这类
+        user_id: 只丢该用户的会话。用于"某个用户改了 HITL 默认值"这类
             只影响他本人的场景 —— 没必要把别人的 agent 也重建一遍。
         （两个都不传 = 丢全部，保持原有语义。）
 
@@ -432,7 +432,7 @@ def create_session(user_id: str, title: str | None = None) -> str:
     - 在 MySQL 业务库登记会话元信息（**绑定归属用户**）
     - 返回 session_id
 
-    P18：`user_id` 是必填。会话的归属是全部隔离判定的根 ——
+    `user_id` 是必填。会话的归属是全部隔离判定的根 ——
     允许它为空会立刻打开一个"谁都看不到"的缺口（或者是更糟的"谁都能看到"）。
     """
     session_id = uuid.uuid4().hex
@@ -510,15 +510,15 @@ def _log_tool_event(session_id: str, event: str, call_id: str, name: str,
     - event="call"：插入一条 running 记录
     - event="result"：按 call_id 回填结果并置 `status`
 
-    P22：`status` 允许是 `done` / `error`。以前无论成败一律写 `done`，于是
+    `status` 允许是 `done` / `error`。以前无论成败一律写 `done`，于是
     "哪一步失败了"在库里根本查不出来（前端也只能显示"已完成"），这是本次
     要解决的问题之一。写 `error` 同时也让熔断/看板拿到同一份事实。
 
-    P18：写入时一并落 `user_id`。**回填（result）不碰 user_id** ——
+    写入时一并落 `user_id`。**回填（result）不碰 user_id** ——
     那一列属于"这条记录归谁"，而回填是按 call_id 找既有行的结果更新，
     顺手改写归属只会引入风险而没有收益。
 
-    P20：`call` 事件带上 `intent_label` / `intent_source`，并**同步投影**到
+    `call` 事件带上 `intent_label` / `intent_source`，并**同步投影**到
     任务看板的读模型（`task_steps`）。投影和事件写在同一个事务里提交：
     看板读到"工具在跑"但事件存储里没有它，是那种最难查的不一致。
 
@@ -577,7 +577,7 @@ def _log_tool_event(session_id: str, event: str, call_id: str, name: str,
 def _load_tool_log(session_id: str) -> list[dict]:
     """读取会话的工具调用流水（按发生顺序）。表尚不存在等异常时返回空列表。
 
-    P18 说明：这里**只按 session_id 过滤，不加 user_id**。
+      说明：这里**只按 session_id 过滤，不加 user_id**。
     理由是 session_id 是不可猜的 uuid hex，而上游路由已经做过归属校验；
     更要紧的是存量数据里有几十条 user_id IS NULL 的孤儿流水（它们的会话已被删除），
     再加一层 `user_id = <我>` 会让管理员自己也看不到这些历史记录 ——
@@ -605,7 +605,7 @@ def _load_tool_log(session_id: str) -> list[dict]:
             "id": r.call_id or "", "name": r.name or "", "kind": r.kind or "tool",
             "args": args if isinstance(args, dict) else {},
             "result": r.result or "", "status": r.status or "done",
-            # P20：标签与来源一起带出来（回放/兜底重建都要用它们）
+            # 标签与来源一起带出来（回放/兜底重建都要用它们）
             "intent_label": r.intent_label, "intent_source": r.intent_source,
         })
     return out
@@ -619,11 +619,11 @@ def _merge_tool_log(history: list[dict], log_rows: list[dict]) -> list[dict]:
     - 兜底：回放完全没有工具痕迹（如 checkpoint 老消息被上下文压缩裁剪），
       用日志重建一条带完整工具调用面板的助手消息。
 
-    P20：同时补齐/带回 `intentLabel` / `intentSource`。**回放必须能确定性还原**，
+    同时补齐/带回 `intentLabel` / `intentSource`。**回放必须能确定性还原**，
     所以这里只搬运**已经落库的**标签，绝不重新推导 —— 重新推导会随着
     目录/规则变化而漂移，那就不是"重放同一条事件得到同一个标签"了。
 
-    P22：还要带上 `status`（`interrupted` / `error`）与 `ok`/`exitCode`/`reason`。
+    还要带上 `status`（`interrupted` / `error`）与 `ok`/`exitCode`/`reason`。
     以前回放一律按 `done` 渲染 —— 那一轮被强杀的工具，刷新页面后就"变成成功了"，
     这正是"明明没跑完却显示已完成/进行中"的来源。
     """
@@ -654,7 +654,7 @@ def _merge_tool_log(history: list[dict], log_rows: list[dict]) -> list[dict]:
             tc["status"] = "error"
         # 成败判定走同一个纯函数（实时/回放必须一致）
         outcome = classify_tool_result(str(tc.get("name") or ""), tc.get("result"))
-        # 老数据里 `status` 一律是 done（P22 之前不分成败），所以**判定结果说了算**：
+        # 老数据里 `status` 一律是 done（不分成败），所以**判定结果说了算**：
         # 只要判定为失败就标 error。否则会出现"结果写着 Error、徽标却说已完成"
         # 这种自相矛盾的卡片 —— 那比不显示更让人困惑。
         if outcome["ok"] is False:
@@ -729,7 +729,7 @@ async def load_history(session_id: str, user_id: str | None = None) -> list[dict
     """
     from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-    # P22：**刷新页面**才是用户遇到"卡在进行中"之后最自然的动作，而以前只有
+    # **刷新页面**才是用户遇到"卡在进行中"之后最自然的动作，而以前只有
     # "发下一条消息"才会收尾遗留的 `running` 流水 ⇒ 光刷新看到的还是旧假象
     # （徽标说"进行中"，而那一轮其实早就没了）。这里补上这条路径。
     _reap_stale_if_idle(session_id)
@@ -764,7 +764,7 @@ async def load_history(session_id: str, user_id: str | None = None) -> list[dict
                         tc_id = str(tc.get("id", ""))
                         tc_name = str(tc.get("name", ""))
                         tc_args = tc.get("args") or {}
-                        # P20：checkpoint 里存的是**模型原始输出**（args 里带
+                        # checkpoint 里存的是**模型原始输出**（args 里带
                         # `_intent`）。回放给前端的那份参数必须摘干净，标签则
                         # 用同一个纯函数重算 —— 同一份 args 一定得到同一句话，
                         # 所以"重放"与"实时"看到的一致（`_merge_tool_log` 只在
@@ -870,7 +870,7 @@ def mark_stale_tool_calls(session_id: str) -> int:
             r.status = "interrupted"
             if not (r.result or "").strip():
                 r.result = "（上一轮运行被中断，未返回结果）"
-        # P20：读模型跟着一起收尾，否则看板上那一步会永远停在"进行中"
+        # 读模型跟着一起收尾，否则看板上那一步会永远停在"进行中"
         from app.db.projections import project_session
 
         project_session(db, session_id)
@@ -1029,10 +1029,10 @@ async def agent_event_stream(session_id: str, agent_input, user_id: str | None =
       - "token":        data 为模型输出增量文本（**只含主智能体**）
       - "thinking":     data 为 {"scope","subagent_id","delta"} 推理增量（思考中，实时心跳）
       - "tool_call":    data 为 {"id","name","args"} 工具调用（含参数）
-        P20 追加 `intent_label` / `intent_source`：一句给用户看的说明（看板的
+          追加 `intent_label` / `intent_source`：一句给用户看的说明（看板的
         "当前步骤"用它）。`args` **一定是摘掉 `_intent` 的干净参数**。
       - "tool_result":  data 为 {"id","name","content", "ok","exit_code","reason","duration_ms"}
-        工具返回结果。P22 追加的四个字段是**后端判定好的事实**，前端不要自己从
+        工具返回结果。 追加的四个字段是**后端判定好的事实**，前端不要自己从
         `content` 里猜：`ok` = true/false/null（null = 判不出来，如空输出）、
         `exit_code` 只在命令有退出码时给、`reason` 是失败原因的人话、
         `duration_ms` = 从发出 `tool_call` 到收到结果的实测耗时。
@@ -1087,7 +1087,7 @@ async def agent_event_stream(session_id: str, agent_input, user_id: str | None =
     # 会对不上，正文被渲染成第二张幽灵卡片（详见 SubagentCallRegistry 注释）。
     subagent_calls = SubagentCallRegistry()
 
-    # P22：call_id → 发出 `tool_call` 的单调时钟。用来算"这一步到底跑了多久"。
+    # call_id → 发出 `tool_call` 的单调时钟。用来算"这一步到底跑了多久"。
     # 放在 `_call_event` 里打点，是**唯一**能覆盖全部发射点的位置（它是三个
     # 发射点的公共入口）；散到各处打点，迟早有路径漏掉，表现是部分卡片没有耗时。
     call_started: dict[str, float] = {}
@@ -1162,7 +1162,7 @@ async def agent_event_stream(session_id: str, agent_input, user_id: str | None =
             if name == "task":
                 subagent_calls.note_task_finished(tc_id)
                 yield ("subagent_end", {"id": tc_id, "reason": "done"})
-            # P22：这一步"成没成、跑了多久"必须由后端判定后随事件下发。
+            # 这一步"成没成、跑了多久"必须由后端判定后随事件下发。
             # 前端自己 grep 结果正文是行不通的：`execute` 的正文里照样可能有
             # "error" 字样，而真正的成败只写在末尾的 `[...]` 尾巴上。
             content = str(getattr(msg, "content", "") or "")

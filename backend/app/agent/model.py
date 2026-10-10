@@ -1,4 +1,4 @@
-"""LLM 工厂：按供应商配置构建模型实例（P18：OpenAI / Anthropic 双协议）。
+"""LLM 工厂：按供应商配置构建模型实例（OpenAI / Anthropic 双协议）。
 
 ## 这个模块负责什么
 
@@ -29,7 +29,7 @@ Anthropic 那一列是**最容易踩的坑**：它**没有** `api_key` / `base_u
 ## 为什么单独留一个 DeepSeek 分支
 
 `ChatDeepSeek` 会对 `additional_kwargs.reasoning_content` 做专门解析 —— 也就是
-"思考增量"。前端能实时看到模型在思考，全靠这个字段（P14 专门解决过"长推理期间黑屏"：
+"思考增量"。前端能实时看到模型在思考，全靠这个字段（ 专门解决过"长推理期间黑屏"：
 实测 31.8s 的回答里前 26.9s 只有 reasoning 在动）。
 
 换成裸 `ChatOpenAI` 有丢失该字段的风险，因此**按 base_url 命中 DeepSeek 官方域名时
@@ -111,7 +111,7 @@ class ProviderConfig:
 
 
 def env_bootstrap_config() -> ProviderConfig:
-    """`.env` 里那组 DeepSeek 配置对应的供应商（P18 起它是"系统级供应商的引导值"）。
+    """`.env` 里那组 DeepSeek 配置对应的供应商（它是"系统级供应商的引导值"）。
 
     刻意保留这个入口：升级前的老部署只有 `.env`，没有 `llm_providers` 表。
     启动引导会用它写出一条系统级供应商；而 `build_llm()` 无参调用时也用它兜底，

@@ -1,10 +1,10 @@
 """全局配置：从 .env / 环境变量读取（pydantic-settings）。
 
-P2 起新增：
+新增：
 - MYSQL_URL：业务数据持久化（MySQL 8.0）
 - SQLITE_PATH：langgraph checkpoint/store 消息历史（SQLite 单文件）
 
-P18 起新增：
+新增：
 - JWT_SECRET / JWT_ALGORITHM / ACCESS_TOKEN_EXPIRE_MINUTES：用户认证
 - FERNET_KEY：供应商 api_key 的对称加密主密钥
 - ALLOW_REGISTRATION / BOOTSTRAP_ADMIN_*：注册开关与引导管理员
@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     app_env: str = "development"
 
     # ===== DeepSeek / LLM =====
-    # P18 起语义变化：这组配置不再是"唯一的模型来源"，而是
+    # 语义变化：这组配置不再是"唯一的模型来源"，而是
     # **系统级供应商的引导配置** —— 启动时若库里没有任何系统级供应商
     # （llm_providers.user_id IS NULL），就用这里的值自动建一条，
     # 保证老部署升级后开箱可用。用户自己的供应商配置在「设置 → 模型供应商」里。
@@ -72,14 +72,14 @@ class Settings(BaseSettings):
     # 而不是让子智能体反复重试到熔断。
     tavily_api_key: str = ""
 
-    # ===== P2：持久化 =====
+    # ===== 持久化 =====
     # 业务数据（MySQL）。⚠️ 不要在代码里写真实口令：只保留一个"本机开发用的空模板"，
     # 实际连接串必须来自环境变量 MYSQL_URL（见 backend/.env，已 gitignore）。
     mysql_url: str = "mysql+pymysql://root:CHANGE_ME@127.0.0.1:3306/agent_harness?charset=utf8mb4"
     # langgraph 消息历史（SQLite 单文件）
     sqlite_path: str = str(_BACKEND_DIR / "data" / "harness.sqlite")
 
-    # ===== P2：上下文管理 =====
+    # ===== 上下文管理 =====
     # 触发截断/摘要的消息条数阈值（超过则处理）。
     # 注意：阈值按「消息条数」而非 token 计，一条带工具调用的用户轮次通常产生
     # 5~8 条消息（AI 工具调用 + ToolMessage），阈值过小会导致几乎每轮都触发压缩。
@@ -87,7 +87,7 @@ class Settings(BaseSettings):
     # 摘要后保留的最近消息条数（约 3~5 轮工具调用）；建议为 max 的 1/3 左右。
     context_keep_messages: int = 24
 
-    # ===== P5：工具调用次数上限（ToolCallLimitMiddleware，库自带）=====
+    # ===== 工具调用次数上限（ToolCallLimitMiddleware，库自带）=====
     # 语义提醒：统计的是【调用次数】（成功也算），不是失败次数。
     #   tool_call_thread_limit: 该工具在每个会话（thread）允许的总调用次数；0 = 关闭（默认关）
     #   tool_call_run_limit   : 该工具在每次运行（一轮对话）允许的调用次数；0 或留空 = 不设
@@ -98,7 +98,7 @@ class Settings(BaseSettings):
     tool_call_limit_tool: str = "tavily_search"
     tool_call_limit_exit_behavior: str = "continue"
 
-    # ===== P5：工具【连续失败】熔断降级（自研中间件，对所有工具各自生效）=====
+    # ===== 工具【连续失败】熔断降级（自研中间件，对所有工具各自生效）=====
     # 语义：每个工具独立计数，连续失败达到阈值 → 进入冷却期（调用被直接跳过、不执行），
     #       并把"换方法"提示回给模型；冷却期过后自动放一次"探测调用"：
     #       探测成功 → 该工具完全恢复；失败 → 重新进入冷却期。
@@ -111,7 +111,7 @@ class Settings(BaseSettings):
     # 兼容旧配置名（只统计某个工具）；留空 = 所有工具各自独立熔断（推荐）
     failure_limit_tool: str = ""
 
-    # ===== P7/P19：MCP =====
+    # ===== MCP =====
     # 总开关：是否加载外部 MCP 工具。关掉时数据库里的配置都留着，只是不连。
     mcp_enabled: bool = False
     # 单个 MCP server 的连接超时（秒）。
@@ -124,14 +124,14 @@ class Settings(BaseSettings):
     # 开头返回，让熔断器识别并冷却。0 = 关闭（不推荐）。
     mcp_tool_call_timeout_seconds: float = 120.0
 
-    # ===== P8：人工介入（HITL）热插拔默认值 =====
+    # ===== 人工介入（HITL）热插拔默认值 =====
     # True  = 访问本机真实文件（/mnt/**，见 HARNESS_MACHINE_ACCESS）会触发人工审批中断，
     #         需点"同意"才执行；工作区 /workspace/** 不受影响（沙箱内自由读写）。
     # False = 全程自动执行，不产生任何审批中断
     # 运行期可通过 PUT /api/v1/hitl/config 热切换（改这里是改重启后的默认值）
     hitl_enabled: bool = True
 
-    # ===== 权限模式（P21：沙箱内 / 完全访问）=====
+    # ===== 权限模式（沙箱内 / 完全访问）=====
     # 运行期可通过 PUT /api/v1/access/config 热切换；这里是**重启后的默认值**。
     # - "sandbox"（默认）：文件读写落本地工作区，execute 进 OpenSandbox 容器；
     #   访问本机真实文件（/mnt/**）需要人工审批（见 hitl_enabled）。
@@ -140,7 +140,7 @@ class Settings(BaseSettings):
     # 默认值刻意是 sandbox：完全访问必须由人显式选择，重启后自动回落到安全档。
     harness_access_mode: str = "sandbox"
 
-    # ===== P11：OpenSandbox 远程执行沙箱 =====
+    # ===== OpenSandbox 远程执行沙箱 =====
     # 是否启用 OpenSandbox 作为 execute 的执行后端
     # True  = 文件读写走本地磁盘（FilesystemBackend），execute 进 OpenSandbox 容器
     # False = 完全不碰沙箱；execute 工具仍存在但返回「未启用」提示
@@ -177,7 +177,7 @@ class Settings(BaseSettings):
     # 虚拟路径 → 沙箱真实路径的根（建议 /workspace，别用 /）
     sandbox_root: str = "/workspace"
 
-    # ===== P20：工具调用意图标签（纯展示层）=====
+    # ===== 工具调用意图标签（纯展示层）=====
     # 每次工具调用附带一句给用户看的说明（`_intent`），落到 tool_call 事件与
     # 任务看板的"当前步骤"上。关掉后：不追加提示词段落、不往工具 schema 里注入
     # `_intent`、事件里 intent_label / intent_source 恒为 null。
@@ -196,11 +196,11 @@ class Settings(BaseSettings):
     # 长循环或卡在某个慢工具里时，用户只能看到"一直转圈"，无法区分"在干活"和"挂了"。
     subagent_timeout_seconds: int = 900
 
-    # ===== P12：本机磁盘访问（默认环境 = 本机电脑，只有 execute 才进沙箱）=====
+    # ===== 本机磁盘访问（默认环境 = 本机电脑，只有 execute 才进沙箱）=====
     # True  = 文件工具除了工作区 /workspace 之外，还能**直接读写本机磁盘**：
     #         每个挂载点在模型侧是一个 `/mnt/<名称>/...` 目录（例如 /mnt/d/Deepseek_Harness/a.py
     #         就是 D:\Deepseek_Harness\a.py）。execute 仍然只在沙箱容器里跑。
-    # False = 只有工作区可见（P11 行为）。
+    # False = 只有工作区可见（行为）。
     harness_machine_access: bool = False
     # 挂载点定义：逗号分隔，支持 `名称=路径` 与裸路径两种写法。
     #   例：HARNESS_MACHINE_MOUNTS=d=D:/,home=C:/Users/Administrator,proj=D:/work/api
@@ -221,13 +221,13 @@ class Settings(BaseSettings):
     #         路径命名空间不一致的问题从根上消失，大文件也不受 32MB 同步上限约束。
     #         前提：OpenSandbox 服务端与目标文件**同机**（远端 ECS 上没有你的 D 盘）；
     #         且运行时（Docker/K8s）允许 host mount —— 不支持时创建容器会失败。
-    # False = 容器里没有 /mnt（P12 原行为）。
+    # False = 容器里没有 /mnt（原行为）。
     sandbox_mount_machine_dirs: bool = False
     # 挂载是否只读。**保持 True**：写本机文件仍然只能走宿主 FS 的 route + 人工审批；
     # 改成 False 会让容器绕过审批直接写本机文件，只在你明确接受该风险时才改。
     sandbox_mount_read_only: bool = True
 
-    # ===== P18：认证与多租户 =====
+    # ===== 认证与多租户 =====
     # JWT 签名密钥（HS256）。
     # - development：留空时自动落到 backend/data/.dev_secrets.json（首次生成后长期复用，
     #   所以重启不会把所有人登出）；该目录已在 .gitignore 里。

@@ -1,4 +1,4 @@
-"""P8 审批模块单元测试（不依赖真实模型/网络）。"""
+"""审批模块单元测试（不依赖真实模型/网络）。"""
 import asyncio
 
 import pytest
@@ -151,7 +151,7 @@ def test_read_pending_approval_pending_even_if_value_unrecognized():
     assert len(info["interrupts"]) == 1
 
 
-# ===== 陈旧中断必须被排除（P17：自动执行后仍弹窗 / 点同意说已审批过）=====
+# ===== 陈旧中断必须被排除（自动执行后仍弹窗 / 点同意说已审批过）=====
 
 
 def test_read_pending_approval_ignores_stale_interrupts_when_graph_finished():
@@ -193,7 +193,7 @@ def test_read_pending_approval_registers_and_forgets_session():
     assert sid not in approvals.known_pending_sessions()
 
 
-# ===== 图结构必须与开关无关（P17 修复的核心）=====
+# ===== 图结构必须与开关无关（修复的核心）=====
 
 
 def test_hitl_interrupt_on_keeps_middleware_when_disabled(monkeypatch, tmp_path):
@@ -201,7 +201,7 @@ def test_hitl_interrupt_on_keeps_middleware_when_disabled(monkeypatch, tmp_path)
     图少一个节点，已挂起的中断就会"隐身"（点同意 → 无待审批项），
     重新打开时又"复活"（弹窗再现）。
 
-    P21 补充：**"没有审批规则"也必须给占位表**。以前总有一条 `/workspace/**` 兜着，
+      补充：**"没有审批规则"也必须给占位表**。以前总有一条 `/workspace/**` 兜着，
     所以这条路径走不到；现在审批范围收窄到"本机挂载点"，没挂本机就是空规则
     （见本测试前半段），图结构依然必须保持一致。
     """
@@ -245,7 +245,7 @@ def test_hitl_interrupt_on_keeps_middleware_when_disabled(monkeypatch, tmp_path)
         permissions._session_hitl.pop(sid, None)
 
 
-# ===== 最终回复的兜底（P17：工具都跑完了却没有回复）=====
+# ===== 最终回复的兜底（工具都跑完了却没有回复）=====
 
 
 def _ai(text, tool_calls=None):
@@ -308,7 +308,7 @@ def test_clear_pending_interrupt_sweeps_registry(monkeypatch):
     saved = dict(approval_mod._pending_sessions)
     # 登记表是模块级的，前面的用例读过 pending 会往里塞东西 —— 先清干净再测
     approval_mod._pending_sessions.clear()
-    # P18：登记表由 set[str] 变成 dict[session_id, user_id]（user_id=None = 进程级/未知归属）
+    # 登记表由 set[str] 变成 dict[session_id, user_id]（user_id=None = 进程级/未知归属）
     approval_mod._pending_sessions.update({"s1": None, "s2": None})
     seen: list[str] = []
 
@@ -328,7 +328,7 @@ def test_clear_pending_interrupt_sweeps_registry(monkeypatch):
 
 
 def test_clear_pending_interrupt_scoped_by_user(monkeypatch):
-    """P18：按用户收尾 —— 我关自己的审批，不能顺手 reject 掉别人正在等的审批。"""
+    """按用户收尾 —— 我关自己的审批，不能顺手 reject 掉别人正在等的审批。"""
     from app.agent import approvals as approval_mod
     from app.api.routes import approvals as route
 
@@ -378,7 +378,7 @@ def test_clear_pending_interrupt_handles_errors(monkeypatch):
 
 
 def test_default_permissions_have_interrupt(monkeypatch, tmp_path):
-    """默认权限里的 interrupt 规则**只覆盖本机挂载点**（P21 的审批边界）。
+    """默认权限里的 interrupt 规则**只覆盖本机挂载点**（的审批边界）。
 
     - 没有本机访问 ⇒ 空列表（工作区不再需要审批）；
     - 有挂载点 ⇒ 每条规则都是 interrupt，且路径落在 `/mnt/...`。
@@ -420,7 +420,7 @@ def test_permission_matches_sensitive_path(monkeypatch, tmp_path):
     # 本机：读和写都要审批
     assert _check_fs_permission(perms, "write", "/mnt/tmp/x.txt") == "interrupt"
     assert _check_fs_permission(perms, "read", "/mnt/tmp/x.txt") == "interrupt"
-    # 工作区：完全放行（P21 起不再是审批范围）
+    # 工作区：完全放行（不再是审批范围）
     assert _check_fs_permission(perms, "write", "/workspace/config.txt") == "allow"
     # 其它虚拟 route：放行
     assert _check_fs_permission(perms, "write", "/memories/x.txt") == "allow"

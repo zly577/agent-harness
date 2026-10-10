@@ -1,4 +1,4 @@
-"""P20 测试：工具调用意图标签（`_intent` → `intent_label` / `intent_source`）。
+"""测试：工具调用意图标签（`_intent` → `intent_label` / `intent_source`）。
 
 覆盖范围（对应任务里的 6 条验收标准）：
 
@@ -624,7 +624,7 @@ def test_steps_endpoint_returns_intent_labels(auth_client, auth_user):
     sid = uuid.uuid4().hex
     db = SessionLocal()
     try:
-        db.add(DbSession(id=sid, user_id=auth_user["id"], title="P20 看板", status="active"))
+        db.add(DbSession(id=sid, user_id=auth_user["id"], title=" 看板", status="active"))
         db.add(ToolCallLog(session_id=sid, user_id=auth_user["id"], call_id="c1",
                            name="read_file", kind="tool", args="{}", status="done",
                            intent_label="读取 main.py", intent_source=SOURCE_MODEL))

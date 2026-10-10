@@ -1,20 +1,20 @@
 <template>
   <!--
-    登录门禁（P18）。没有引入 vue-router：这个应用只有"未登录/已登录"两种
+    登录门禁。没有引入 vue-router：这个应用只有"未登录/已登录"两种
     顶层形态，用 v-if 切换比引一个路由库更少活动部件，而且天然保证了
     "登录后主界面重新挂载" —— 不会残留上一个用户的会话列表与消息。
   -->
   <div v-if="authBootstrapping" class="auth-boot">正在检查登录状态…</div>
   <AuthView v-else-if="!user" :notice="authNotice" @authed="onAuthed" />
   <div v-else class="app" :class="{ resizing: resizing }">
-    <!-- 模型供应商管理弹层（P18）。放在最外层，避免被 .app 的布局/层级裁剪 -->
+    <!-- 模型供应商管理弹层。放在最外层，避免被 .app 的布局/层级裁剪 -->
     <ProvidersView
       v-if="showProviders"
       :is-admin="isAdmin"
       @close="showProviders = false"
       @changed="onProvidersChanged"
     />
-    <!-- MCP 工具源管理弹层（P19）。同样放最外层，避免被 .app 的布局/层级裁剪 -->
+    <!-- MCP 工具源管理弹层。同样放最外层，避免被 .app 的布局/层级裁剪 -->
     <McpView v-if="showMcp" @close="showMcp = false" />
     <!-- 轻量提示条 -->
     <div v-if="toast.text" class="toast" :class="toast.kind">{{ toast.text }}</div>
@@ -53,7 +53,7 @@
         </div>
         <p class="sb-tip">DeepAgents 通用智能体</p>
 
-        <!-- 当前用户 + 登出（P18） -->
+        <!-- 当前用户 + 登出 -->
         <div class="sb-user">
           <span class="sb-user-avatar">{{ userInitial }}</span>
           <span class="sb-user-meta">
@@ -92,7 +92,7 @@
         </div>
 
         <div class="topbar-actions">
-          <!-- P18：模型选择器。第一项"跟随默认"= 不绑供应商，按用户/系统默认解析 -->
+          <!-- 模型选择器。第一项"跟随默认"= 不绑供应商，按用户/系统默认解析 -->
           <select
             class="model-select"
             :class="{ unset: !chosenProvider }"
@@ -102,7 +102,7 @@
             @change="onProviderChange($event.target.value)"
           >
             <!--
-              不再有「跟随默认」这一项（P18 按使用方要求移除）。
+              不再有「跟随默认」这一项（按使用方要求移除）。
               必须**显式**选中一个模型 —— 没有选中时发消息会被拦下并引导去配置，
               而不是悄悄用一个"默认"跑起来。
               disabled 的占位项负责把"还没选"这个状态显示出来。
@@ -120,7 +120,7 @@
           </button>
           <button class="tbtn" @click="openFilePanel" title="浏览工作区文件">文件</button>
           <!--
-            P21：权限模式开关。
+            权限模式开关。
             · 「沙箱内」（默认）：文件读写落工作区，execute 进隔离沙箱，
               访问本机真实文件（/mnt/...）会先弹审批。
             · 「完全访问」：execute 直接在这台电脑上跑（deepagents LocalShellBackend），
@@ -178,7 +178,7 @@
           <p class="empty-sub">可以读写本机文件、跑代码、查资料，也能委派子智能体。</p>
 
           <!--
-            P18：一个模型供应商都没有时给出**明确的下一步**。
+            一个模型供应商都没有时给出**明确的下一步**。
             没有这个提示，用户看到的是"发消息没反应/报错"，而真正的原因是
             "还没配模型" —— 这类问题最容易被误判成"服务坏了"。
           -->
@@ -308,7 +308,7 @@
                 <div v-if="activityLatest(m)" class="act-block">
                   <div class="act" :class="activityLatest(m).status">
                     <span class="act-mark"></span>
-                    <!-- P20：优先显示模型给的"人话"意图（看板的"当前步骤"）。
+                    <!-- 优先显示模型给的"人话"意图（看板的"当前步骤"）。
                          没有（功能关闭/历史数据）时回落到原来的动作文案。
                          ⚠️ intent 是**模型生成的文本**，只能用插值（Vue 自动转义），
                          绝不能接 v-html / renderMarkdown —— 一句
@@ -323,7 +323,7 @@
                     <span class="act-badge" :class="activityLatest(m).status">{{ activityLatest(m).badge }}</span>
                   </div>
 
-                  <!-- P22：跑完之后把"结果"贴在卡片上。
+                  <!-- 跑完之后把"结果"贴在卡片上。
                        用户问的是"到底做了什么、成功没有"，不该只能靠展开详情才发现。 -->
                   <p v-if="activityLatest(m).failHead" class="act-note bad">
                     ✕ {{ activityLatest(m).failHead }}
@@ -332,7 +332,7 @@
                     ↳ {{ activityLatest(m).resultHead }}
                   </p>
 
-                  <!-- P22：回答"它到底还在不在跑"。判据是静默时长，不是卡片状态 ——
+                  <!-- 回答"它到底还在不在跑"。判据是静默时长，不是卡片状态 ——
                        后端被杀时 SSE 只是安静地断掉，卡片状态不会自己变。 -->
                   <p v-if="runLiveness(m)" class="act-note" :class="runLiveness(m).level">
                     <span>{{ runLiveness(m).level === 'hard' ? '⚠️ ' : '⏳ ' }}</span>
@@ -344,7 +344,7 @@
                     >重新连接</button>
                   </p>
 
-                  <!-- P22：具体执行了什么 —— 命令/参数 + 完整输出，一次点击就能核对 -->
+                  <!-- 具体执行了什么 —— 命令/参数 + 完整输出，一次点击就能核对 -->
                   <details class="act-call-wrap">
                     <summary>
                       这一步的具体操作（{{ activityLatest(m).items.length }} 次调用）
@@ -432,7 +432,7 @@
                         <span class="act-detail">{{ g.detail }}</span>
                         <span class="tool-badge" :class="g.status">{{ g.badge }}</span>
                       </div>
-                      <!-- P22：归档里也要能一眼看出"哪一步没成" -->
+                      <!-- 归档里也要能一眼看出"哪一步没成" -->
                       <p v-if="g.failHead" class="act-note bad">✕ {{ g.failHead }}</p>
                       <p v-else-if="g.resultHead" class="act-note">↳ {{ g.resultHead }}</p>
                       <details v-for="it in g.items" :key="it.id || it.name" class="tool">
@@ -590,7 +590,7 @@
       </div>
 
       <!--
-        退出登录确认（P18）。
+        退出登录确认。
         为什么要确认：退出会清掉本地的会话列表、消息与审批弹窗，误点是"页面突然空了"，
         用户第一反应往往是"数据没了"。用与删除文件同一套确认框样式，保持观感一致。
       -->
@@ -699,7 +699,7 @@ function formatTime() {
 export default {
   components: { AuthView, ProvidersView, McpView },
   setup() {
-    // ===== 登录态（P18）=====
+    // ===== 登录态=====
     // 未登录时整个主界面不挂载（模板里 v-if / v-else），登录后重新挂载，
     // 所以这里不需要"清理上一任用户残留状态"的逻辑 —— 那是最容易出 bug 的做法。
     // 初始值直接取本地缓存：有效的话首屏无闪烁；无效则由 /auth/me 探测清掉。
@@ -720,22 +720,22 @@ export default {
       return name ? name[0].toUpperCase() : '?'
     })
 
-    // ===== 模型供应商（P18）=====
+    // ===== 模型供应商=====
     // `providers`：当前用户**可用**的供应商（系统级 + 自己的，只要启用的）。
     // `chosenProvider`：本会话要用的那个（'' = 跟随默认）。
     const providers = ref([])
     const providersLoading = ref(true)
     const showProviders = ref(false)
-    // P19：MCP 工具源弹层。与供应商弹层一样是"点开才挂载"——
+    // MCP 工具源弹层。与供应商弹层一样是"点开才挂载"——
     // 挂载时才去拉列表，切账号/登出时组件整个卸载，不会残留上一个用户的数据。
     const showMcp = ref(false)
     const chosenProvider = ref('')
-    // 退出登录确认框是否显示（P18）
+    // 退出登录确认框是否显示
     const logoutConfirm = ref(false)
 
     const isAdmin = computed(() => (user.value?.role || '') === 'admin')
 
-    /** 选择器 hover 提示（P18：不再有"跟随默认"，所以只在"未选/已选"两种状态间区分）。 */
+    /** 选择器 hover 提示（不再有"跟随默认"，所以只在"未选/已选"两种状态间区分）。 */
     const modelSelectTitle = computed(() => {
       if (!providers.value.length) {
         return '还没有配置模型，点右侧「模型」添加一个 —— 不配置就没有模型可用'
@@ -836,7 +836,7 @@ export default {
     // 人工介入（HITL）热插拔开关：后端为准，这里只做镜像
     const hitlOn = ref(true)
     const hitlBusy = ref(false)
-    // P21：权限模式。'sandbox' = 默认权限（沙箱内）；'full' = 完全访问（本机 shell）。
+    // 权限模式。'sandbox' = 默认权限（沙箱内）；'full' = 完全访问（本机 shell）。
     // 同样是后端为准、这里只做镜像；后端存的是内存态，所以每次进入界面都要重新拉。
     const accessMode = ref('sandbox')
     const accessBusy = ref(false)
@@ -871,7 +871,7 @@ export default {
     // ===== 记住"上次在看的会话" =====
     // 刷新/重新打开后回到原处（而不是掉到欢迎页），也才有可能接回仍在跑的那一轮。
     //
-    // P18：key 必须**按用户分区**。否则换个账号登录会去 openSession 上一个用户
+    // key 必须**按用户分区**。否则换个账号登录会去 openSession 上一个用户
     // 留下的 session_id —— 现在后端归属校验会返回 404，用户看到的就是
     // "一进来就报错、会话打不开"，而且很难联想到"这是上一个人的残留"。
     const LAST_SESSION_KEY = 'ah.lastSessionId'
@@ -974,7 +974,7 @@ export default {
     }
 
     /**
-     * 取一条工具调用的意图标签（P20）。
+     * 取一条工具调用的意图标签。
      *
      * 两条来源的字段名不同，所以取值集中在这里：
      * - 实时事件（SSE）= `intent_label`（后端契约里的 snake_case）；
@@ -987,7 +987,7 @@ export default {
     }
 
     /**
-     * 一条工具调用的"成败"文案（P22）。
+     * 一条工具调用的"成败"文案。
      *
      * 数据来源是**后端判定好的** `ok` / `exit_code` / `reason` / `duration_ms`
      * （实时来自 `tool_result` 事件，回放来自历史里同名的 camelCase 字段），
@@ -1064,7 +1064,7 @@ export default {
       // ⚠️ `generating` 优先于 `running`：那张卡连参数都还没拿到，说"进行中"会让人
       // 以为工具已经在执行了（实际还在生成参数，两者对用户是完全不同的等待）。
       //
-      // P22：失败/中断也是**终态**，必须能从组状态上看出来 —— 以前不管是跑完了、
+      // 失败/中断也是**终态**，必须能从组状态上看出来 —— 以前不管是跑完了、
       // 报错了还是被杀了，右列一律显示"已完成"，用户根本不知道哪一步没成。
       for (const g of feed) {
         if (g.items.some((it) => it.status === 'generating')) g.status = 'generating'
@@ -1076,11 +1076,11 @@ export default {
       feed.forEach((g) => {
         // 左列：跑完显示工具本身，正在跑才显示动作文案（见 toolLabel）
         g.verb = toolLabel(g)
-        // P20：看板的"当前步骤"优先显示意图（模型给的人话）；取不到就回落到 verb。
+        // 看板的"当前步骤"优先显示意图（模型给的人话）；取不到就回落到 verb。
         // 合并只读工具时取**最新一项**的意图 —— 用户关心的是我刚碰的那个文件。
         g.intent = toolIntent(g.items[g.items.length - 1]) || ''
         g.title = g.items[g.items.length - 1]?.name || g.name || ''
-        // P22：整组的最早开始时刻（用于"已 Ns"）与实测耗时合计
+        // 整组的最早开始时刻（用于"已 Ns"）与实测耗时合计
         g.startedAt = g.items.reduce(
           (acc, it) => (it.startedAt && (!acc || it.startedAt < acc) ? it.startedAt : acc), 0)
         g.tookMs = g.items.reduce(
@@ -1105,7 +1105,7 @@ export default {
         } else if (g.status === 'interrupted') {
           g.badge = '已中断'
         } else {
-          // P22：跑完的组直接说"成功 / 已完成"。
+          // 跑完的组直接说"成功 / 已完成"。
           // 两者都不是废话：「成功」= 每一项都被判定为成功（有退出码或正常返回）；
           // 「已完成」= 跑完了但判不出成败（比如工具只回了一句确认、没有退出码），
           // 这种情况**不能**替它说成功 —— 用户要的是真话。
@@ -1128,7 +1128,7 @@ export default {
         } else {
           g.detail = shortTarget(g.full)
         }
-        // P22：跑完之后，把"结果"的**第一行**贴在卡片上 —— 用户要的
+        // 跑完之后，把"结果"的**第一行**贴在卡片上 —— 用户要的
         // "操作了什么、成没成"，不应该只能靠展开详情才看得到。
         const lastItem = g.items[g.items.length - 1]
         g.resultHead = g.status === 'running' || g.status === 'generating' || g.status === 'error'
@@ -1157,7 +1157,7 @@ export default {
     }
 
     /**
-     * 卡片下方那一行"它到底还在不在跑"的提示（P22）。
+     * 卡片下方那一行"它到底还在不在跑"的提示。
      *
      * 判据是**距最近一次后端事件的静默时长**，不是"卡片状态"：
      * 后端被杀时 SSE 只是安静地断掉，卡片状态不会自己变，只有静默时长会一路涨上去。
@@ -1379,7 +1379,7 @@ export default {
     const nowTick = ref(Date.now())
 
     /**
-     * 最近一次收到**任何**后端事件的时刻（P22）。
+     * 最近一次收到**任何**后端事件的时刻。
      *
      * 用途是回答那个被反复问的问题："它到底还在不在跑？"
      * 只靠"卡片显示进行中"是回答不了的 —— 后端被杀掉时，SSE 只是安静地断掉，
@@ -1647,7 +1647,7 @@ export default {
 
     function applyToolEvent(msg, evt) {
       const args = evt.args || {}
-      // P20：意图标签随 tool_call 事件到达（`intent_label`），存成 camelCase 与
+      // 意图标签随 tool_call 事件到达（`intent_label`），存成 camelCase 与
       // 历史回放的字段名统一。**只做存储，不做渲染** —— 渲染一律走插值转义。
       const intentLabel = typeof evt.intent_label === 'string' ? evt.intent_label : ''
       if (evt.type === 'tool_call') {
@@ -1682,7 +1682,7 @@ export default {
           result: '',
           status: 'running',
           intentLabel,
-          // P22：记下"这一步什么时候开始的"，工具卡上就能一直显示实时耗时。
+          // 记下"这一步什么时候开始的"，工具卡上就能一直显示实时耗时。
           // 用前端收到的时刻（而不是后端时间戳）：跨机器时钟差会让计时器出现负数。
           startedAt: Date.now(),
         })
@@ -1729,7 +1729,7 @@ export default {
     }
 
     /**
-     * 把 `tool_result` 事件写进一条工具调用（P22）。
+     * 把 `tool_result` 事件写进一条工具调用。
      *
      * 为什么要**原样采信后端的判定**（`ok` / `exit_code` / `reason` / `duration_ms`）：
      * 成败只写在 `execute` 输出的尾巴上（`[Command failed with exit code N]`），
@@ -1749,7 +1749,7 @@ export default {
     }
 
     /**
-     * 收尾本轮所有**还挂在 running** 的工具调用（P22）。
+     * 收尾本轮所有**还挂在 running** 的工具调用。
      *
      * 🔥 这是"界面永远停在进行中"的**前端那一半**成因：流因任何原因结束时
      * （后端被杀、网络断、用户停止），后端不可能再补发 `tool_result`，而这些
@@ -1849,7 +1849,7 @@ export default {
      *   （session / approval / error / stopped / done），由各调用方自己决定怎么反应。
      */
     function applyDataEvent(msg, evt) {
-      // P22：任何一个后端事件都算"它还活着"的证据（见 lastEventAt 的注释）
+      // 任何一个后端事件都算"它还活着"的证据（见 lastEventAt 的注释）
       lastEventAt.value = Date.now()
       switch (evt.type) {
         case 'token':
@@ -2118,7 +2118,7 @@ export default {
       target.push(fresh)
       syncDisplay()
       startTicker()
-      // P22：起一段新的等待 —— 静默计时从这里重新算（见 lastEventAt）
+      // 起一段新的等待 —— 静默计时从这里重新算（见 lastEventAt）
       sentAt.value = Date.now()
       lastEventAt.value = 0
 
@@ -2152,7 +2152,7 @@ export default {
 
       fresh.streaming = false
       fresh.time = formatTime()
-      // P22：与 send() 同一套收尾（工具调用也必须收尾，见 finishTurn 的注释）
+      // 与 send() 同一套收尾（工具调用也必须收尾，见 finishTurn 的注释）
       finishTurn(fresh)
       if (sessionStates[sid]) {
         sessionStates[sid].streaming = false
@@ -2164,7 +2164,7 @@ export default {
     }
 
     /**
-     * 失联后的「重新连接」（P22）。
+     * 失联后的「重新连接」。
      *
      * 为什么不能直接再开一条 `streamRunAttach`：后端被杀掉时，运行已经不存在了，
      * 硬接只会再断一次，用户看到的是"点了没用"。所以顺序是**先问后端事实**：
@@ -2228,7 +2228,7 @@ export default {
       stickToBottom.value = true
       hasNewBelow.value = false
 
-      // P18：把该会话绑定的模型同步到选择器上。
+      // 把该会话绑定的模型同步到选择器上。
       // 不这么做的话，切到一个绑了 B 模型的会话、而选择器还显示着 A，
       // 用户会以为"这个会话用的是 A"——界面必须反映真实状态。
       syncProviderFromSession(id)
@@ -2272,7 +2272,7 @@ export default {
         // 同上面的理由：弹窗只认后端，不认上一次留下的内存状态
         approval.value = null
       } catch (e) {
-        // P18：**"还没配置模型"不该在对话区留一条红字**。
+        // **"还没配置模型"不该在对话区留一条红字**。
         //
         // 它不是一个"对话出了错"，而是一个"你还没做某件事"的前置条件 ——
         // 把它写成一条助手消息，会让每次打开会话都刷出一句
@@ -2335,7 +2335,7 @@ export default {
       const text = input.value.trim()
       if (!text || streaming.value) return
 
-      // P18：没有可用的模型就**不要发出去**。
+      // 没有可用的模型就**不要发出去**。
       // 以前会把请求发上去、由后端回一句"尚未配置供应商"，用户还得自己猜去哪儿配；
       // 现在在本地就拦住，并直接把人带到配置界面 —— 输入框内容保持不动，不白打一遍。
       if (!chosenProvider.value) {
@@ -2394,7 +2394,7 @@ export default {
         outputTokens: 0,
       })
       startTicker()
-      // P22：静默计时从这里起算 —— 有了它，"后端一声不响"才可能被识别出来
+      // 静默计时从这里起算 —— 有了它，"后端一声不响"才可能被识别出来
       sentAt.value = Date.now()
       lastEventAt.value = 0
 
@@ -2466,7 +2466,7 @@ export default {
 
       assistantMsg.streaming = false
       assistantMsg.time = formatTime()
-      // P22 收尾：仍在"运行中"的**工具调用**与委派都要标记为结束。
+      // 收尾：仍在"运行中"的**工具调用**与委派都要标记为结束。
       // 🔥 以前这里只收尾了 delegations，toolCalls 被漏掉 ⇒ 流一旦异常结束
       // （后端被杀、网络断），工具卡就永远停在"进行中"，看起来像还在跑。
       finishTurn(assistantMsg)
@@ -2511,7 +2511,7 @@ export default {
         target.streaming = true
         if (!target.startedAt) target.startedAt = Date.now()
         startTicker()
-        // P22：审批恢复也是一段新的等待，静默计时重算
+        // 审批恢复也是一段新的等待，静默计时重算
         sentAt.value = Date.now()
         lastEventAt.value = 0
 
@@ -2537,7 +2537,7 @@ export default {
 
         target.streaming = false
         target.time = formatTime()
-        // P22：与 send() 同一套收尾
+        // 与 send() 同一套收尾
         finishTurn(target)
         if (sessionStates[sid]) {
           sessionStates[sid].streaming = false
@@ -2628,7 +2628,7 @@ export default {
     }
 
     /**
-     * P21：读取权限模式。
+     * 读取权限模式。
      *
      * 读取失败时**保持默认（沙箱内）**而不是显示"完全访问" —— 界面上的显示会直接
      * 影响用户对"命令跑在哪、会不会弹审批"的判断，宁可显示保守值。
@@ -2643,7 +2643,7 @@ export default {
     }
 
     /**
-     * P21：切换权限模式。
+     * 切换权限模式。
      *
      * 切到「完全访问」**必须二次确认**：它意味着之后所有 shell 命令都会直接在这台电脑上
      * 执行、并且不再有任何审批弹窗，误触的代价是"下一轮对话就开始动真格"。
@@ -2825,7 +2825,7 @@ export default {
     }
 
     async function downloadFile(path) {
-      // ⚠️ P18：**不能**再写成 `<a href="/api/v1/files/download?...">` 直接跳转。
+      // ⚠️ **不能**再写成 `<a href="/api/v1/files/download?...">` 直接跳转。
       // 浏览器对 <a> 的导航是"裸请求"，不会带上我们注入的 Authorization 头 ——
       // 认证上线后这种写法必定 401，而表现是"点了下载什么也没发生"（最难查的一类）。
       // 改成先带凭证把字节流取回来，再用 blob URL 触发保存；顺带能给出真实失败原因。
@@ -2874,7 +2874,7 @@ export default {
       }
     }
 
-    // ===== 登录态生命周期（P18）=====
+    // ===== 登录态生命周期=====
 
     /**
      * 进入已登录状态后要做的事。
@@ -2885,10 +2885,10 @@ export default {
     async function startAuthedSession() {
       useLastSessionKeyFor(user.value)
       await loadHitlConfig()
-      // P21：权限模式也要在进入界面时拉一次（后端是内存态，重启后回到沙箱内；
+      // 权限模式也要在进入界面时拉一次（后端是内存态，重启后回到沙箱内；
       // 不拉的话界面会继续显示上一次的"完全访问"，与后端实际状态不符）。
       await loadAccessConfig()
-      // P18：先把可用供应商拉出来 —— 会话列表里要显示/恢复各自的模型绑定，
+      // 先把可用供应商拉出来 —— 会话列表里要显示/恢复各自的模型绑定，
       // 而且"一个都没有"时欢迎页要给引导。
       await loadProviders()
       // 刷新 / 关掉再打开：回到上次在看的会话。
@@ -2928,7 +2928,7 @@ export default {
 
     /** 退出登录：清凭证 → 回到登录视图。 */
     function doLogout() {
-      // 停掉本地所有流（后端的运行不受影响，这是 P15 的语义：连接断了它继续跑）
+      // 停掉本地所有流（后端的运行不受影响，这是的语义：连接断了它继续跑）
       stopAllStreams()
       sessionId.value = null
       sessions.value = []
@@ -2950,7 +2950,7 @@ export default {
       providers.value = []
       chosenProvider.value = ''
       showProviders.value = false
-      // P19：MCP 工具源弹层也要一起关（同供应商，换账号后不能留着上一个用户的界面）
+      // MCP 工具源弹层也要一起关（同供应商，换账号后不能留着上一个用户的界面）
       showMcp.value = false
     }
 
@@ -3006,7 +3006,7 @@ export default {
     })
 
     return {
-      // 登录态（P18）
+      // 登录态
       user,
       authBootstrapping,
       authNotice,
@@ -3018,7 +3018,7 @@ export default {
       userDisplayName,
       userInitial,
       isAdmin,
-      // 模型供应商（P18）
+      // 模型供应商
       providers,
       providersLoading,
       showProviders,
@@ -3062,7 +3062,7 @@ export default {
       activeDelegations,
       doneDelegations,
       elapsedLabel,
-      // P22：运行可见性（成败 / 实时耗时 / 失联判定 / 重新连接）
+      // 运行可见性（成败 / 实时耗时 / 失联判定 / 重新连接）
       toolOutcomeText,
       runLiveness,
       reconnect,
@@ -3078,7 +3078,7 @@ export default {
       autoGrow,
       useSuggestion,
       toggleHitlBtn,
-      // P21：权限模式（沙箱内 / 完全访问）
+      // 权限模式（沙箱内 / 完全访问）
       accessFull,
       accessBusy,
       toggleAccessMode,
@@ -3385,7 +3385,7 @@ button { font-family: inherit; }
 .sb-name { font-size: 13px; font-weight: 600; color: var(--text); }
 .sb-tip { margin: 4px 0 0 33px; font-size: 11.5px; color: var(--text-3); }
 
-/* ===== 当前用户 + 登出（P18）===== */
+/*===== 当前用户 + 登出===== */
 .sb-user {
   display: flex;
   align-items: center;
@@ -3436,7 +3436,7 @@ button { font-family: inherit; }
   color: var(--text-3);
 }
 
-/* ===== 模型选择器（P18）===== */
+/*===== 模型选择器===== */
 .model-select {
   max-width: 210px;
   padding: 5px 8px;
@@ -3524,7 +3524,7 @@ button { font-family: inherit; }
 }
 .tbtn.switchable.off { color: var(--text-3); }
 .tbtn.switchable.off .tbtn-dot { background: var(--text-3); }
-/* P21：完全访问是危险档位 —— 用警示色常亮，别让它看起来和普通开关一样。 */
+/*完全访问是危险档位 —— 用警示色常亮，别让它看起来和普通开关一样。 */
 .tbtn.switchable.danger { color: var(--danger); border-color: var(--danger); }
 .tbtn.switchable.danger .tbtn-dot { background: var(--danger); }
 .tbtn.switchable.danger:hover { background: var(--danger); color: #fff; }
@@ -3855,7 +3855,7 @@ button { font-family: inherit; }
   animation: breathe 1.3s ease-in-out infinite;
 }
 .act-verb { flex: 0 0 auto; font-family: var(--mono); font-size: 12.5px; color: var(--text); }
-/* P20：「当前步骤」显示的是模型写的自然语言意图，用正文字体更像一句话；
+/*「当前步骤」显示的是模型写的自然语言意图，用正文字体更像一句话；
    工具名回落到 .act-verb 时保持等宽（那是标识符）。 */
 .act-verb.act-intent { font-family: var(--font); max-width: 46%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .act.running .act-verb { color: var(--text); }
@@ -3870,13 +3870,13 @@ button { font-family: inherit; }
   font-size: 12px;
 }
 .act-badge { flex: 0 0 auto; font-size: 11.5px; color: var(--text-3); }
-/* P22：右列徽标要说清"成没成"，失败必须一眼可见 */
+/*右列徽标要说清"成没成"，失败必须一眼可见 */
 .act-badge.error { color: var(--danger); }
 .act-badge.interrupted { color: var(--text-2); }
 .act.error .act-mark { background: var(--danger); }
 .act.interrupted .act-mark { background: var(--text-3); }
 
-/* ===== P22：工具卡的"成果 / 具体操作 / 失联"三段附属信息 ===== */
+/*===== 工具卡的"成果 / 具体操作 / 失联"三段附属信息 ===== */
 .act-block { display: flex; flex-direction: column; gap: 6px; width: 100%; }
 .act-note {
   display: flex; align-items: center; gap: 8px;
@@ -4007,7 +4007,7 @@ button { font-family: inherit; }
   animation: breathe 1.3s ease-in-out infinite;
 }
 .tool-status.done { background: var(--ok); }
-/* P22：失败 / 被中断是两种要能被眼睛立刻分出来的终态 */
+/*失败 / 被中断是两种要能被眼睛立刻分出来的终态 */
 .tool-status.error { background: var(--danger); }
 .tool-status.interrupted { background: var(--text-3); }
 

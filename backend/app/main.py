@@ -1,6 +1,6 @@
-"""FastAPI 应用入口（P0：骨架 + 健康检查；P2：启动建表；P18：迁移 + 认证）。
+"""FastAPI 应用入口（骨架 + 健康检查；启动建表；迁移 + 认证）。
 
-## P18 的三处变化
+## 三处变化
 
 1. **建表方式从 `create_all` 换成 `alembic upgrade head`。**
    `create_all` 只能"建缺失的表"，**加不了列** —— 本次要给三张老表加 `user_id`，
@@ -127,11 +127,11 @@ async def lifespan(app: FastAPI):
     # ---- 启动：迁移 → 引导管理员 + 存量归属回填 ----
     try:
         _run_migrations()
-        logger.info("[P18] 数据库已迁移到最新版本")
+        logger.info("数据库已迁移到最新版本")
     except Exception as e:  # noqa: BLE001
         # 迁移失败**绝不**降级为"先跑起来再说"：表结构不对会让之后每个请求
         # 以各种离奇方式失败（列不存在、500），排查成本远高于现在起不来。
-        logger.exception("[P18] 数据库迁移失败，拒绝启动")
+        logger.exception("数据库迁移失败，拒绝启动")
         raise RuntimeError(f"数据库迁移失败：{type(e).__name__}: {e}") from e
 
     from app.db.bootstrap import run_bootstrap

@@ -1,4 +1,4 @@
-"""P18 认证流程测试。
+"""认证流程测试。
 
 覆盖：未登录 401（含"所有业务端点都受保护"的结构性断言）、注册、登录、
 当前用户、口令校验、token 过期/伪造、禁用账号、注册开关、改口令，
@@ -41,7 +41,7 @@ PROTECTED_ENDPOINTS = [
     ("POST", "/api/v1/approvals/bogus", {"decision": "approve"}),
     ("GET", "/api/v1/hitl/config", None),
     ("PUT", "/api/v1/hitl/config", {"enabled": True}),
-    # P21：权限模式（默认权限（沙箱内）/ 完全访问）
+    # 权限模式（默认权限（沙箱内）/ 完全访问）
     ("GET", "/api/v1/access/config", None),
     ("PUT", "/api/v1/access/config", {"mode": "full"}),
     ("POST", "/api/v1/chat", {"message": "hi"}),

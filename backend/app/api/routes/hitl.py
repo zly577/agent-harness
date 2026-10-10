@@ -8,7 +8,7 @@
 - GET  /api/v1/hitl/config[?session_id=]   查看开关
 - PUT  /api/v1/hitl/config                 热插拔：{"enabled": true|false, "session_id": 可选}
 
-## P18：开关有三个作用域，默认只动自己那一层
+## 开关有三个作用域，默认只动自己那一层
 
 | 请求 | 作用域 | 谁能用 |
 |------|--------|--------|
@@ -86,7 +86,7 @@ async def set_hitl_config(
     cleared: list[str] = []
     if not req.enabled:
         # 关闭前先把悬着的中断收尾，否则那半轮工具调用会一直挂在中断态。
-        # P18：只收尾**自己的**会话 —— 不带这个限制就是"我关自己的审批，
+        # 只收尾**自己的**会话 —— 不带这个限制就是"我关自己的审批，
         # 顺手把别人正在等的审批全 reject 了"。
         cleared = await clear_pending_interrupt(req.session_id, user_id=user.id)
 

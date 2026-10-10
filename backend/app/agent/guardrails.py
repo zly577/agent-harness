@@ -1,4 +1,4 @@
-"""三层 Guardrail（P8）——安全边界。
+"""三层 Guardrail——安全边界。
 
 三层：
 1. **输入 Guardrail**（`check_input`）：审查用户/上游输入，拦截越权或恶意指令。
