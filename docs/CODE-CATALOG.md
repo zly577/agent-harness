@@ -43,8 +43,8 @@ class Settings(BaseSettings):
     sqlite_path: str = str(_BACKEND_DIR / "data" / "harness.sqlite")
 
     # 上下文管理
-    context_max_messages: int = 12
-    context_keep_messages: int = 6
+    context_max_messages: int = 80
+    context_keep_messages: int = 24
 
     # MCP 开关
     mcp_enabled: bool = False
@@ -131,8 +131,8 @@ DEEPSEEK_API_KEY=sk-your-key-here
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_MODEL=deepseek-v4-flash
 MYSQL_URL=mysql+pymysql://root:CHANGE_ME@127.0.0.1:3306/agent_harness?charset=utf8mb4
-CONTEXT_MAX_MESSAGES=12
-CONTEXT_KEEP_MESSAGES=6
+CONTEXT_MAX_MESSAGES=80
+CONTEXT_KEEP_MESSAGES=24
 MCP_ENABLED=false
 APP_ENV=development
 ```
@@ -327,51 +327,55 @@ async def run_chat(session_id, user_message):
 
 ---
 
-## 五、P3 虚拟文件系统沙箱与执行路由
+## 五、P3 虚拟文件系统与执行路由（P11 已演进，见第十三章）
 
-### 沙箱后端：app/agent/sandbox.py
+> **状态说明**：P3 时期的 `build_main_backend()` 返回 `StoreBackend`（纯内存虚拟 FS，
+> 不可执行）。P11 起它返回「本地磁盘读写 + OpenSandbox 执行」的 `CompositeBackend`；
+> 原 `StoreBackend` 形态保留为 `build_store_backend()` 备用。
+
+### 沙箱后端：app/agent/sandbox.py（P11 现状）
 
 ```python
-def _namespace_factory():
-    """StoreBackend 命名空间：per-assistant 虚拟文件系统。"""
-    def ns(runtime):
-        return ("assistant", "filesystem")
-    return ns
+def build_main_backend(session_key="default", workspace=None):
+    """本地磁盘读写（FilesystemBackend）+ OpenSandbox 执行（execute 工具）。"""
+    backend = build_hybrid_backend(
+        session_key=session_key, root_dir=workspace,
+        sync_before_execute=settings.sandbox_sync_enabled,
+        sync_after_execute=settings.sandbox_sync_enabled,
+    )
+    # 占位 route：让 HITL 审批的权限路径通过 deepagents 的 route 校验（读写位置不变）
+    backend.routes[PERMISSION_ROUTE_PREFIX] = backend.default
+    backend.sorted_routes = sorted(backend.routes.items(), key=lambda x: len(x[0]), reverse=True)
+    return backend
 
 
-def build_main_backend():
-    """默认 backend：StoreBackend + InMemoryStore（虚拟文件系统，可写、不可执行）。"""
+def build_store_backend():
+    """备用：StoreBackend + InMemoryStore（内存虚拟 FS，可写、不可执行）。"""
     from deepagents.backends import StoreBackend
     from langgraph.store.memory import InMemoryStore
-    store = InMemoryStore()
-    return StoreBackend(namespace=_namespace_factory(), store=store)
-
-
-def build_exec_backend():
-    """受控执行后端（默认关闭）。deepagents 的 execute 是 unrestricted，默认不暴露。"""
-    return None
+    return StoreBackend(namespace=_namespace_factory(), store=InMemoryStore())
 
 
 def execute_allowed() -> bool:
-    return False
+    """执行总开关：跟随 SANDBOX_ENABLED。"""
+    return bool(settings.sandbox_enabled)
 
 
 def default_permissions():
-    """P8 审批用：敏感目录写操作触发人工审批（mode='interrupt'）。
-    注意：路径用 glob 通配（/system/**）才能匹配子路径。"""
+    """P8 审批用：写 /workspace/** 触发人工审批（mode='interrupt'）。"""
     from deepagents.middleware.filesystem import FilesystemPermission
     return [
         FilesystemPermission(operations=["write"],
-                             paths=["/system/**", "/admin/**", "/root/**"],
+                             paths=[WORKSPACE_PREFIX + "/**"],
                              mode="interrupt"),
     ]
 ```
 
-### P3 关键技术结论（StoreBackend async+sync 适配）
+### P3 关键技术结论（StoreBackend async+sync 适配，仍然有效）
 
-- StoreBackend 内部 `awrite/aread` 用 async store，`ls/glob` 用同步 store.search；
+- StoreBackend 内部 `awrite/aread` 用 async store API，`ls/glob` 用同步 store.search；
   需给一个**同时支持 async+sync** 的 store → 采用 `InMemoryStore`（实测全兼容）。
-- 权限路径须用 **glob 通配**（`/system/**`），`/system/` 目录结尾不匹配子孙路径。
+- 权限路径须用 **glob 通配**（`/workspace/**`），目录结尾（`/workspace/`）不匹配子孙路径。
 
 ---
 
@@ -1076,8 +1080,8 @@ DEEPSEEK_API_KEY=sk-***
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_MODEL=deepseek-v4-flash
 MYSQL_URL=mysql+pymysql://root:CHANGE_ME@127.0.0.1:3306/agent_harness?charset=utf8mb4
-CONTEXT_MAX_MESSAGES=12
-CONTEXT_KEEP_MESSAGES=6
+CONTEXT_MAX_MESSAGES=80
+CONTEXT_KEEP_MESSAGES=24
 MCP_ENABLED=false
 APP_ENV=development
 ```
@@ -1099,7 +1103,122 @@ C:\Users\Administrator\anaconda3\envs\agent_env\python.exe -m pytest -c pytest.i
 
 ---
 
-## 十三、链路图（最终版）
+## 十三、P11 本地磁盘读写 + OpenSandbox 执行（判断路由）
+
+> 详细设计见 `docs/P11-opensandbox-hybrid-design.md`。核心：**不需要执行代码时用本地磁盘
+> 读写；需要执行代码时进 OpenSandbox 沙箱，结果回给大模型**。
+
+### 混合后端：app/agent/opensandbox_backend.py
+
+```python
+class PathMapper:
+    """虚拟路径(/workspace/a.txt) <-> 沙箱真实路径(/workspace/a.txt)。"""
+    def to_sandbox(self, virtual_path: str) -> str: ...
+    def to_virtual(self, sandbox_path: str) -> str: ...
+
+
+def translate_command(command: str, root: str) -> str:
+    """把命令里的虚拟绝对路径改写成容器路径（/usr、/bin 等系统目录不动）。"""
+
+
+class SandboxRegistry:
+    """每会话一个沙箱容器；懒创建、is_healthy() 探活、TTL 到期自动重建、atexit 统一销毁。"""
+    def get(self, session_key: str, path_prefix: str | None = None) -> _SandboxEntry: ...
+    def destroy(self, session_key: str) -> None: ...
+
+
+class OpenSandboxBackend(SandboxBackendProtocol):
+    """OpenSandbox 容器 → deepagents 执行后端。只实现必需的四个方法。"""
+    @property
+    def id(self) -> str: ...
+    def execute(self, command, *, timeout=None) -> ExecuteResponse: ...   # SDK commands.run
+    def upload_files(self, files) -> list[FileUploadResponse]: ...        # SDK files.write_file
+    def download_files(self, paths) -> list[FileDownloadResponse]: ...    # SDK files.read_bytes
+    def list_files(self) -> dict[str, tuple[float, int]]: ...             # find 出整树清单
+
+
+class HybridDefaultBackend(FilesystemBackend, SandboxBackendProtocol):
+    """CompositeBackend 的 default：文件→本地磁盘，execute→沙箱，执行前后自动同步。"""
+    def execute(self, command, *, timeout=None) -> ExecuteResponse:
+        # 1) push 本地改动 → 容器   2) 拍容器快照
+        # 3) 沙箱执行               4) pull 容器产出 → 本地磁盘
+        ...
+    def push_local_changes(self) -> list[str]: ...     # 本地指纹增量推送
+    def pull_sandbox_changes(self, remote_before=None) -> list[str]: ...
+
+
+def build_hybrid_backend(*, session_key, root_dir=None, routes=None,
+                         prefix=DEFAULT_PREFIX, sync_before_execute=True,
+                         sync_after_execute=True) -> CompositeBackend: ...
+```
+
+### 对外组装：app/agent/sandbox.py（P3 起沿用同一组函数名）
+
+```python
+def build_main_backend(session_key="default", workspace=None):
+    """CompositeBackend(default=混合后端, routes={"/workspace/": default})。
+    routes 仅用于通过权限 route 校验，读写位置不变。"""
+    ...
+
+def default_permissions():
+    """写 /workspace/** 需人工审批（mode="interrupt"）。"""
+    ...
+
+def execute_allowed() -> bool:      # 跟随 SANDBOX_ENABLED
+def build_store_backend():          # 备用：纯内存虚拟 FS（P3 语义）
+def build_exec_backend(session_key, path_prefix=None)   # 单独拿沙箱连接做诊断
+```
+
+### runtime.py：按会话缓存 agent
+
+```python
+_agents: dict[str, tuple[agent, backend]] = {}
+
+async def get_agent(session_key="default"):   # 每个会话一个 agent + 一个沙箱容器
+def get_main_backend(session_key="default")   # 供文件浏览/下载 API 使用
+```
+
+### 三个决定性的框架事实（deepagents 0.7.1）
+
+- `CompositeBackend` 的**文件操作按路径前缀路由**，未命中走 `default`；
+- `CompositeBackend.execute()` **不按路径路由，永远委托给 `default`**；
+- `supports_execution()` 对 `CompositeBackend` 判断 `isinstance(backend.default, SandboxBackendProtocol)`
+  —— 为真才注册 `execute` 工具。
+
+因此 `default` 必须**同时**是「本地磁盘文件后端」和「可执行后端」，
+继承顺序为 `class HybridDefaultBackend(FilesystemBackend, SandboxBackendProtocol)`。
+
+### 权限约束（实测，两个坑）
+
+1. backend 一具备执行能力，`FilesystemMiddleware` 就要求 `permissions` 里**所有路径**都落在
+   某个 route 前缀内（`_all_paths_scoped_to_routes`），否则 `NotImplementedError`。
+   故 `build_main_backend()` 声明一条指向自身实例的占位 route `"/workspace/"`。
+2. **子智能体同样受这条约束**：`create_deep_agent` 会为每个 subagent 单独构造
+   `FilesystemMiddleware`，用的是**父级 backend**（`graph.py:668`），权限没写就继承父级。
+   所以 `configs/subagents/*.yaml` 里的路径必须 route 化 —— `build_subagent()` 用
+   `_to_route_path()` 把工作区相对路径补成带前缀的 glob：
+   `/` → `/workspace/**`，`/notes/` → `/workspace/notes/**`。
+   否则报："FilesystemMiddleware does not yet support permissions with backends that
+   provide command execution"，且**只在有子智能体时才暴露**。
+
+另外 `runtime.get_agent()` 会先跑 `sandbox.validate_permissions()`：把主 Agent 与全部子智能体
+的权限路径一起核一遍，有问题抛一条人能看懂的错误。
+
+### 验证
+
+```bash
+cd D:\Deepseek_Harness\agent-harness\backend
+python -m pytest tests/test_p11_hybrid_backend.py -o addopts="" -p no:cacheprovider -q   # 11 passed
+python ..\_probe\hybrid_backend_probe.py        # 独立探针（路由 + 同步闭环）
+python ..\_probe\agent_wiring_probe.py          # create_deep_agent 工具注册（含 execute）
+```
+
+`create_deep_agent` 实测注册的工具：
+`['delete','edit_file','execute','glob','grep','ls','read_file','task','write_file']`
+
+---
+
+## 十四、链路图（最终版）
 
 ```
 用户请求（前端 Vue3 对话界面）
@@ -1111,10 +1230,12 @@ FastAPI  chat_stream 路由
 DeepAgents 主 Agent（LangGraph）
    ├─ 中间件管道：Summarization(上下文压缩) / Logging / Audit→MySQL / RateLimit
    ├─ SkillsMiddleware：/skills/ 技能（YAML→SKILL.md 播种）
-   ├─ FilesystemMiddleware：StoreBackend(InMemoryStore) 虚拟文件系统（execute 禁用）
-   ├─ permissions(mode=interrupt)：敏感路径写 → 人工审批中断
+   ├─ FilesystemMiddleware：8 个工具按能力分流
+   │    ├─ ls/read_file/write_file/edit_file/delete/glob/grep → FilesystemBackend → 本地磁盘
+   │    └─ execute → OpenSandboxBackend → OpenSandbox 容器（执行前后自动同步文件）
+   ├─ permissions(mode=interrupt)：写 /workspace/** → 人工审批中断
    ├─ subagents：task 工具委派子智能体（隔离上下文，同一模型）
-   └─ tools：MCP 工具（MCP_ENABLED 时，可插拔）
+   └─ tools：MCP 工具（MCP_ENABLED 时，可插拔）+ tavily_search
    │
    ├─ checkpointer(AsyncSqliteSaver) → SQLite 消息历史（跨进程持久）
    ├─ store(AsyncSqliteStore) → SQLite 短期记忆
@@ -1132,5 +1253,7 @@ SSE 事件流（token/tool/approval/result）→ 前端逐字显示 + 审批交�
 | 消息历史 | SQLite checkpoint | 会话级、跨进程持久 | BaseMessage 全量 |
 | 短期记忆 | SQLite store | 会话级 | 当前任务进度/临时上下文 |
 | 业务数据 | MySQL | 持久 | sessions / audit_logs（后续 skills/subagents/mcp/长期记忆）|
-| 虚拟文件系统 | InMemoryStore（backend） | 进程内 | 模型读写文件（execute 禁用）|
+| 工作区文件 | **本地磁盘** `<repo>/workspace` | 持久（用户可见、可下载）| read_file/write_file/edit_file 读写的文件 |
+| 执行环境 | **OpenSandbox 容器** | 会话级（TTL 到期回收）| execute 跑命令的算力，产出同步回本地磁盘 |
+| 备用虚拟 FS | InMemoryStore（`build_store_backend()`）| 进程内 | 不碰宿主磁盘的部署形态 |
 

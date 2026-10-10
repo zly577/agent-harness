@@ -28,6 +28,52 @@ _sid.txt
 _dbcheck.py
 _piptest/
 
+# 运行时工作区（P11）：模型文件工具读写、沙箱产出同步落地的本地目录
+workspace/
+
+# 工作区布局升级备份（P18）：搬迁旧工作区前的整目录副本，**含用户真实文件**
+# 注意：必须放在 backend/ 之外 —— 放里面会被 `uvicorn --reload` 监听到，
+# 形成"备份 → reload → 再备份"的死循环（实测 4 分钟 41 份备份）。
+workspace_backups/
+
+# 测试临时目录（P11：覆写了 pytest tmp_path，避免受限沙箱里 rmtree 失败）
+backend/tests/_tmp_hybrid/
+
+# 探针脚本产物（2026-09-22 清理后补齐）
+# 约定：_probe/ 只留 *.py / *.mjs / *.ps1 这些**可复用脚本**，其余一律是产物。
+_probe/tmp/
+_probe/pytest-tmp/
+_probe/verify_dbs/
+_probe/_mcpwhl/
+_probe/edge-profile*/
+_probe/*.txt
+_probe/*.jsonl
+_probe/*.out
+_probe/*.log
+_probe/*.png
+_probe/*.bat
+
+# 探针/排障脚本整目录（2026-10-10 开源清理）
+# 说明：_probe/ 是本地一次性排障脚本（含本机绝对路径、DB 直连、会话快照），
+# 对外开源无价值且易夹带环境信息，**整目录不入库**。
+_probe/
+
+# 前端验证脚手架产物（截图/JSON/日志）
+# 脚本（*.mjs）保留可入库，产物一律忽略
+frontend/_verify/*.png
+frontend/_verify/*.json
+frontend/_verify/*.log
+frontend/_probe/
+
+# 工作区记忆（2026-10-10 开源清理）
+# 说明：.workbuddy/ 记录开发过程、含本机路径与历史密钥线索，属**私有工作笔记**，
+# 公开仓库不应包含。
+.workbuddy/
+
+# 部署脚本（含服务器信息，按需入库）
+# 如需开源部署脚本，删掉下面这行；否则保持忽略。
+# deploy/
+
 # IDE / 系统
 .idea/
 .vscode/
@@ -38,3 +84,18 @@ Thumbs.db
 # 日志
 *.log
 logs/
+
+# 测试产物（P12：conftest 的 os._exit 会吞掉 pytest 失败汇总，故用插件把失败落盘）
+backend/tests/_pytest_failures.txt
+
+# git 历史重写备份（2026-10-10）
+*.bundle
+
+# 个人求职材料（2026-10-10 开源清理）
+# 说明：简历素材/标准格式/面试故事库/模拟面试记分卡属**个人隐私内容**，
+# 公开仓库不应包含（文件仍留在本地）。
+docs/RESUME-*.md
+docs/INTERVIEW-*.md
+
+# 内部代码审查报告（含历史安全问题讨论，不进公开仓库）
+docs/CODE-REVIEW-*.md
