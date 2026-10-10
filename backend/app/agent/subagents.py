@@ -4,7 +4,25 @@
 
 关键：**子智能体不传 model → 继承主 Agent 的模型**（官方确认），因此这里用同一个 DeepSeek。
 隔离：deepagents 的 `task` 工具让子任务运行在 **isolated context window**（上下文隔离）；
-工具/权限隔离通过 `permissions` + 不开放 execute 实现。
+工具/权限隔离通过 `permissions` 实现。
+
+## P11 起的重要约束：子智能体的权限路径必须落在 route 前缀内
+
+`create_deep_agent` 会为**每个子智能体**单独构造一个 `FilesystemMiddleware`，用的是
+**父级的 backend**（`graph.py:668`）。P11 起父级 backend 具备执行能力
+（`SandboxBackendProtocol`），于是 deepagents 的这条校验对子智能体同样生效：
+
+    所有权限路径（paths）都必须以某个 route 前缀开头，否则 NotImplementedError
+
+所以子智能体配置里写的都是**工作区内的相对路径**（如 `/notes/`），
+由 `build_subagent()` 统一加上 `/workspace` 前缀 + 递归通配 `**`
+（`/notes/` → `/workspace/notes/**`，`/` → `/workspace/**`），
+与主 Agent 的 `PERMISSION_ROUTE_PREFIX = "/workspace/"` 对齐。
+
+P12 起，本机磁盘挂载点（`/mnt/<名称>/...`）也是合法 route 前缀：配置里直接写
+`/mnt/d/proj` 即可授权该目录（`_to_route_path()` 会识别已带前缀的写法，不再叠
+`/workspace`）。注意它只在 `HARNESS_MACHINE_ACCESS=true` 时才存在 route —— 否则
+这条校验会失败，`validate_permissions()` 会在启动期把问题说清楚。
 """
 from functools import lru_cache
 from pathlib import Path
@@ -12,7 +30,12 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, Field, field_validator
 
+from app.core.config import settings
+
 _CONFIG_DIR = Path(__file__).resolve().parent.parent.parent / "configs" / "subagents"
+
+#: 工作区前缀（= 容器内工作目录 = 模型看到的路径前缀），与 sandbox.py 保持一致。
+WORKSPACE_PREFIX: str = (settings.sandbox_root or "/workspace").rstrip("/") or "/workspace"
 
 
 class SubAgentConfig(BaseModel):
@@ -23,7 +46,7 @@ class SubAgentConfig(BaseModel):
     system_prompt: str
     # 可选：指定工具。为空则继承主 Agent 的默认工具（文件工具等）。
     tools: list[str] = Field(default_factory=list, description="工具名白名单，空=继承默认")
-    # 可选：文件权限（objects -> allow/deny/interrupt）
+    # 可选：文件权限（**工作区内相对路径**，如 /notes/；会在构建时补上 /workspace 前缀）
     permissions_allow_read: list[str] = Field(default_factory=list, description="允许读的路径前缀")
     permissions_allow_write: list[str] = Field(default_factory=list, description="允许写的路径前缀")
 
@@ -41,6 +64,51 @@ class SubAgentConfig(BaseModel):
         if not v.strip():
             raise ValueError("system_prompt 不能为空")
         return v
+
+
+def _route_prefixes() -> list[str]:
+    """当前所有可用的 route 前缀（权限路径必须落在其中之一，否则 deepagents 报错）。
+
+    - `/workspace/` = 工作区（本地磁盘 + 沙箱镜像）
+    - `/mnt/<名>/` = 本机磁盘挂载点（P12；HARNESS_MACHINE_ACCESS=false 时为空）
+    """
+    from app.agent.opensandbox_backend import machine_mount_prefix, machine_mounts
+
+    return [WORKSPACE_PREFIX + "/"] + [machine_mount_prefix(n) for n, _ in machine_mounts()]
+
+
+def _to_route_path(raw: str) -> str:
+    """工作区内相对路径 → 落在 route 前缀内的 glob 路径。
+
+    | 配置里写的 | 实际权限路径        | 含义                     |
+    |-----------|--------------------|--------------------------|
+    | `/`       | `/workspace/**`    | 整个工作区                |
+    | `/notes/` | `/workspace/notes/**` | 工作区下的 notes 子目录 |
+    | `/workspace/x` | `/workspace/x/**` | 已带前缀，只补通配     |
+    | `/mnt/d/proj`  | `/mnt/d/proj/**`  | 本机 D 盘的 proj 目录（P12） |
+
+    判据：**是否已经以某个 route 前缀开头**（工作区 / 本机挂载点）；都不是就当成
+    工作区相对路径。带 `/mnt/...` 的写法只在 `HARNESS_MACHINE_ACCESS=true` 时才有对应
+    route —— 否则 deepagents 会因"权限路径不在任何 route 内"抛 NotImplementedError。
+    """
+    path = (raw or "").strip()
+    if not path:
+        return path
+    if path == "/":
+        return WORKSPACE_PREFIX + "/**"
+
+    for prefix in _route_prefixes():
+        base = prefix.rstrip("/")
+        if path == base or path.startswith(prefix):
+            inner = path[len(base):].strip("/")
+            if not inner:
+                return prefix + "**"
+            # 目录式路径补 `**` 递归匹配（deepagents 的 glob 语义：目录结尾不匹配子孙）
+            return prefix + (inner if inner.endswith("**") else inner + "/**")
+
+    inner = path.strip("/")
+    # 目录式路径补 `**` 递归匹配；已带通配的不重复叠加
+    return f"{WORKSPACE_PREFIX}/{inner}" + ("" if inner.endswith("**") else "/**")
 
 
 def load_all_subagents_cfg() -> list[SubAgentConfig]:
@@ -63,18 +131,33 @@ def load_all_subagents_cfg() -> list[SubAgentConfig]:
 
 
 def build_subagent(cfg: SubAgentConfig):
-    """把配置构建为 deepagents SubAgent（省略 model 以继承主 Agent 模型）。"""
+    """把配置构建为 deepagents SubAgent（省略 model 以继承主 Agent 模型）。
+
+    权限路径会经 `_to_route_path()` 统一到 `/workspace` 前缀内 —— 这是硬性要求：
+    子智能体的 `FilesystemMiddleware` 用的是父级（可执行）backend，deepagents 要求
+    所有权限路径都落在某个 route 前缀内，否则直接抛 NotImplementedError。
+    """
     from deepagents import SubAgent
     from deepagents.middleware.filesystem import FilesystemPermission
+
+    from app.agent.middleware import build_intent_strip_middleware, build_self_kill_guard_middleware
 
     permissions = []
     if cfg.permissions_allow_read:
         permissions.append(
-            FilesystemPermission(operations=["read"], paths=cfg.permissions_allow_read, mode="allow")
+            FilesystemPermission(
+                operations=["read"],
+                paths=[_to_route_path(p) for p in cfg.permissions_allow_read],
+                mode="allow",
+            )
         )
     if cfg.permissions_allow_write:
         permissions.append(
-            FilesystemPermission(operations=["write"], paths=cfg.permissions_allow_write, mode="allow")
+            FilesystemPermission(
+                operations=["write"],
+                paths=[_to_route_path(p) for p in cfg.permissions_allow_write],
+                mode="allow",
+            )
         )
 
     return SubAgent(
@@ -82,6 +165,16 @@ def build_subagent(cfg: SubAgentConfig):
         description=cfg.description,
         system_prompt=cfg.system_prompt,
         permissions=permissions or None,
+        # P20：只剥离 `_intent`，不注入 schema。
+        # 子智能体的工具调用走 `subagent_tool` 事件（不在这期的契约里），所以
+        # 不需要它们产标签；但**剥离必须生效** —— 模型见过 `_intent` 这个字段后
+        # 完全可能自作主张带上它，工具收到意外关键字参数会直接报错，那就破坏了
+        # "展示层增强不许影响执行"这条底线。
+        #
+        # P22：护栏必须**单独挂**（子智能体不继承主 Agent 的中间件栈）。少了这一行，
+        # 子智能体照样能跑 `Stop-Process -Name python -Force` 把后端杀掉 ——
+        # 而"调用者是谁"对后果毫无影响：死的是同一个进程。
+        middleware=[build_intent_strip_middleware(), build_self_kill_guard_middleware()],
     )
 
 
@@ -99,3 +192,14 @@ def available_subagents() -> list[str]:
 def reload_subagent_cache() -> None:
     """使 available_subagents 缓存失效（改配置后调用）。"""
     available_subagents.cache_clear()
+
+
+__all__ = [
+    "WORKSPACE_PREFIX",
+    "SubAgentConfig",
+    "available_subagents",
+    "build_subagent",
+    "load_all_subagents",
+    "load_all_subagents_cfg",
+    "reload_subagent_cache",
+]
