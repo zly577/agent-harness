@@ -61,6 +61,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\start-windows.ps1 -
 
 - Windows 直接运行后端：打开这台电脑的资源管理器。
 - Windows Docker 个人入口：工作区绑定到仓库的 `workspace/<user_id>`，入口为当前 Windows 用户注册 `agent-harness-workspace` 协议；点击后允许浏览器打开对应目录。
+- 目录协议通过 Windows Script Host 隐藏启动路径校验，只显示资源管理器，不弹 PowerShell 窗口。更新旧版本后重新运行 `deploy/register-workspace.ps1` 刷新协议注册即可，无需重建容器。
 - 远程服务器或另一台访问电脑：不会打开服务器桌面或把服务器磁盘变成访问者本机目录，继续使用下载功能。
 
 启动入口首次切换到本机工作区时，停止旧后端写入，把默认项目名 `agent-harness` 下旧 `workspace_data` 卷的数据复制进本机 `workspace`，不覆盖已有文件、不删除旧卷。使用了其他 Compose 项目名时请先手动迁移对应工作区卷。个人入口以后备份 `workspace/` 目录；不要只备份旧卷。
