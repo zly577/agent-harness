@@ -82,8 +82,20 @@ function Write-HostDriveConfig {
 
 function Invoke-TaskDocker {
     param([string[]]$DockerArgs)
-    & docker @DockerArgs
-    if ($LASTEXITCODE -ne 0) { throw "Docker command failed (exit $LASTEXITCODE)." }
+    # docker compose 会把 "Image ... Building" / "Container ... Healthy" 这类**正常**
+    # 状态行写到 stderr。Windows PowerShell 5.1 在 $ErrorActionPreference='Stop' 下会把
+    # 原生命令的 stderr 当作终止性错误抛出（NativeCommandError），脚本遂在构建途中中断
+    # ——容器可能仍被守护进程补齐，但退出码为 1、日志丢失，后续 --wait 也不再等待。
+    # 这里只在调用 docker 期间放宽错误策略，成功与否一律以退出码为准。
+    $taskPrevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & docker @DockerArgs
+        $taskDockerExit = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $taskPrevEap
+    }
+    if ($taskDockerExit -ne 0) { throw "Docker command failed (exit $taskDockerExit)." }
 }
 
 Push-Location $taskRoot
