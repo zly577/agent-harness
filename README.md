@@ -17,7 +17,7 @@ docker compose up -d --build
 
 Windows 上若 Python 命令为 `py`，第三步用 `py deploy/init-env.py`。没有 Python 也可用 Docker 生成配置，见 [部署手册](deploy/README-docker.md)。
 
-浏览器打开 **http://localhost:8088**。用根目录 `.env` 中的 `BOOTSTRAP_ADMIN_EMAIL` 和 `BOOTSTRAP_ADMIN_PASSWORD` 登录，再在界面「模型」里添加自己的供应商、API Key 和模型名称。模型 Key 不需要写进镜像，也不要求每个人使用 DeepSeek。
+浏览器打开 **http://localhost:8088**。用根目录 `.env` 中的 `BOOTSTRAP_ADMIN_EMAIL` 和 `BOOTSTRAP_ADMIN_PASSWORD` 登录，再在界面「模型」里添加自己的供应商、API Key 和模型名称。
 
 基础部署包含前端、后端、MySQL，支持聊天与文件读写；**代码执行还需 OpenSandbox**：
 
@@ -72,7 +72,7 @@ Docker 中的文件工作区位于持久化卷，**不是访问网页那个人�
 - **密钥备份**：务必保存根目录 `.env`；丢失 `FERNET_KEY` 会无法解密已有供应商 Key。
 - **注册**：Docker 默认关闭自助注册；需要时将 `ALLOW_REGISTRATION=true`，重新运行启动命令。
 
-## 本机开发（不使用 .bat）
+## 本机开发
 
 Python 3.12、Node.js 22、MySQL 8.0。先创建 `agent_harness` 数据库，按实际账户填写 `backend/.env` 的 `MYSQL_URL`。
 
