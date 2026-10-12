@@ -66,6 +66,8 @@ def normalize_mode(value: str | None) -> str:
     里（配置值非法 → sandbox），而 API 入参非法 → 400。
     """
     text = (value or "").strip().lower()
+    if text == MODE_FULL and not settings.harness_allow_full_access:
+        raise ValueError("此部署已禁用完全访问模式，请使用 OpenSandbox 执行代码。")
     if text in VALID_MODES:
         return text
     raise ValueError(f"未知的权限模式：{value!r}（可选：{' / '.join(VALID_MODES)}）")
@@ -85,6 +87,8 @@ _session_mode: dict[str, str] = {}
 
 def access_mode(session_id: str | None = None, user_id: str | None = None) -> str:
     """该会话/该用户当前的权限模式。优先级：会话 → 用户 → 全局默认。"""
+    if not settings.harness_allow_full_access:
+        return MODE_SANDBOX
     if session_id and session_id in _session_mode:
         return _session_mode[session_id]
     if user_id and user_id in _user_mode:

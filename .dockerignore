@@ -1,0 +1,24 @@
+# 只允许应用源码进入构建上下文，排除密钥、用户数据和私有工作笔记。
+**
+!backend/
+!backend/Dockerfile
+!backend/requirements.txt
+!backend/alembic.ini
+!backend/app/**
+!backend/configs/**
+!backend/scripts/**
+!backend/alembic/**
+!frontend/
+!frontend/Dockerfile
+!frontend/package.json
+!frontend/package-lock.json
+!frontend/index.html
+!frontend/vite.config.js
+!frontend/src/**
+!deploy/
+!deploy/docker/
+!deploy/docker/nginx.conf
+**/__pycache__/**
+**/*.pyc
+**/.env
+**/.env.*

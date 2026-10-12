@@ -1,0 +1,32 @@
+name: Docker smoke
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  basic-deployment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate deployment config
+        run: python3 deploy/init-env.py
+      - name: Validate base and sandbox configuration
+        run: |
+          docker compose config --quiet
+          docker compose -f docker-compose.yml -f docker-compose.sandbox.yml config --quiet
+      - name: Build and start basic deployment
+        run: docker compose up -d --build --wait --wait-timeout 300
+      - name: Check web, authentication and deployment policy
+        run: python3 deploy/smoke-test.py
+      - name: Show service logs on failure
+        if: failure()
+        run: docker compose logs --tail 100
+      - name: Stop test services
+        if: always()
+        run: docker compose down

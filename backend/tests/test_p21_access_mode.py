@@ -78,6 +78,39 @@ def test_normalize_mode_rejects_unknown():
         access.normalize_mode("")
 
 
+def test_deployment_can_disable_full_access(monkeypatch):
+    """即使有旧的 full 覆盖，部署禁用开关也必须生效。"""
+    access.set_access_mode(access.MODE_FULL, user_id="docker-user")
+    monkeypatch.setattr(access.settings, "harness_allow_full_access", False)
+    assert access.access_mode(user_id="docker-user") == access.MODE_SANDBOX
+    with pytest.raises(ValueError, match="禁用完全访问"):
+        access.set_access_mode(access.MODE_FULL, user_id="docker-user")
+
+
+def test_disabled_full_access_rejected_by_api(monkeypatch):
+    """已登录的用户也不能通过 HTTP 绕过部署策略；无需数据库连接。"""
+    from fastapi.testclient import TestClient
+    from app.api.deps import get_current_user
+    from app.db.models import User
+    from app.db.session import get_db
+    from app.main import app
+
+    monkeypatch.setattr(access.settings, "harness_allow_full_access", False)
+    overrides = dict(app.dependency_overrides)
+    app.dependency_overrides[get_current_user] = lambda: User(
+        id="docker-user", email="docker@example.com", role="user"
+    )
+    app.dependency_overrides[get_db] = lambda: None
+    try:
+        response = TestClient(app).put("/api/v1/access/config", json={"mode": "full"})
+        assert response.status_code == 400
+        assert "禁用完全访问" in response.json()["detail"]
+        assert access.access_mode(user_id="docker-user") == access.MODE_SANDBOX
+    finally:
+        app.dependency_overrides.clear()
+        app.dependency_overrides.update(overrides)
+
+
 def test_mode_scope_precedence():
     """优先级：会话 → 用户 → 全局默认。"""
     access.set_access_mode(access.MODE_SANDBOX)  # 全局

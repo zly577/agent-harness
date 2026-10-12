@@ -1,129 +1,121 @@
 # Agent Harness
 
-基于 **DeepAgents（LangChain + LangGraph）** 的自有 Harness 架构通用智能体系统。
+基于 DeepAgents、LangChain 和 LangGraph 的通用智能体应用，提供 Vue 3 网页界面与 FastAPI 后端。
 
-默认环境是**用户这台电脑**：读写文件直接落在本机磁盘，只有执行代码才进隔离沙箱。
-前端顶栏一个开关决定 `execute` 跑在沙箱里还是直接在本机 shell；默认档位下，
-访问本机真实文件会弹人工审批。
+支持多轮对话、SSE 流式输出、消息持久化、文件读写、子智能体、Skills、MCP 工具源、人工审批，以及按用户配置模型供应商。模型支持 DeepSeek、OpenAI 兼容接口和 Anthropic 协议。
 
-## 技术栈
+## Docker 快速开始（推荐）
 
-- Agent 框架：deepagents（LangChain + LangGraph）
-- 后端：FastAPI + Pydantic v2
-- 消息历史/短期记忆：SQLite（langgraph `AsyncSqliteSaver`/`AsyncSqliteStore`）
-- 业务数据：MySQL 8.0（会话、后续 Skills/子智能体/审计）
-- 模型：DeepSeek（deepseek-v4-flash，OpenAI 兼容接口）
-- 文件读写：本地磁盘（`FilesystemBackend`，根目录 `<repo>/workspace`）
-- 代码执行：OpenSandbox 沙箱容器（`opensandbox` SDK，每会话一个容器）
-- 运行环境：conda `agent_env`（Python 3.12.13，deepagents 生态已预装）
-- 前端：Vue3
+安装 Docker Engine + Compose v2，或 Docker Desktop（使用 Linux 容器），然后：
 
-## 工具分流
-
-前端顶栏有一个**权限模式**开关，决定 `execute` 跑在哪：
-
-| 模式 | 文件工具（ls/read_file/write_file/edit_file/delete/glob/grep） | `execute` | 本机 `/mnt/**` 访问 |
-|------|------|------|------|
-| **默认权限（沙箱内）** | 本地磁盘：工作区 `/workspace` + 本机 `/mnt/<盘符>/` | **OpenSandbox 容器**（工作目录 `/workspace`） | 读 / 写都**弹人工审批** |
-| **完全访问**（LocalShellBackend） | 同上（完全一致） | **本机 shell**（直接在你电脑上跑） | 不审批 |
-
-一句话：**默认权限 = 在沙箱里干活，要碰你电脑上的东西先问我；完全访问 = 就在你这台电脑上干活，不问了。**
-完全访问是危险档位：默认关闭、切换要二次确认、后端重启自动回落。详见
-[docs/P21-access-mode-design.md](docs/P21-access-mode-design.md)。
-
-**默认环境是这台电脑**：文件工具直接在用户本机上读写，不经过沙箱；`execute` 才进容器
-（默认权限模式下）。执行前后对 **工作区** 做文件同步：本地改动推送到容器（命令能读到），
-容器产出拉回本地磁盘（用户能直接看到、下载）。注意**挂载点（`/mnt/...`）不进沙箱**——
-要让代码在沙箱里跑，先把脚本/数据写到 `/workspace/` 下。
-
-机制与取舍见 [docs/P11-opensandbox-hybrid-design.md](docs/P11-opensandbox-hybrid-design.md)、
-[docs/P12-machine-access-design.md](docs/P12-machine-access-design.md) 与
-[docs/P21-access-mode-design.md](docs/P21-access-mode-design.md)。
-
-## 目录
-
-```
-agent-harness/
-├── backend/
-│   ├── app/            # FastAPI 应用
-│   │   ├── main.py     # 入口 + /health
-│   │   ├── core/       # 全局配置（.env 驱动）
-│   │   ├── db/         # SQLAlchemy（MySQL 业务库）
-│   │   ├── agent/      # Agent 核心层（runtime/context/model）
-│   │   ├── api/        # 路由（会话）
-│   │   └── schemas/    # Pydantic 模型
-│   ├── configs/        # skills / subagents / mcp 的 YAML 配置
-│   └── tests/
-├── docs/               # PLAN.md / P2-storage-design.md
-└── docker-compose.yml  # （可选）未来若恢复 Docker 可托管 PG
+```sh
+git clone https://github.com/zly577/agent-harness.git
+cd agent-harness
+python deploy/init-env.py
+docker compose up -d --build
 ```
 
-## 快速开始
+Windows 上若 Python 命令为 `py`，第三步用 `py deploy/init-env.py`。没有 Python 也可用 Docker 生成配置，见 [部署手册](deploy/README-docker.md)。
 
-```powershell
-# 1. 安装依赖（agent_env，Python 3.12.13）
-cd D:\Deepseek_Harness\agent-harness\backend
-C:\Users\Administrator\anaconda3\envs\agent_env\python.exe -m pip install -r requirements-dev.txt
+浏览器打开 **http://localhost:8088**。用根目录 `.env` 中的 `BOOTSTRAP_ADMIN_EMAIL` 和 `BOOTSTRAP_ADMIN_PASSWORD` 登录，再在界面「模型」里添加自己的供应商、API Key 和模型名称。模型 Key 不需要写进镜像，也不要求每个人使用 DeepSeek。
 
-# 2. 配置环境变量（.env 已就绪；确认 MYSQL_URL 与你的 MySQL 一致）
-#    所需：MySQL 8.0 运行中，agent_harness 库存在，root 可连
+基础部署包含前端、后端、MySQL，支持聊天与文件读写；**代码执行还需 OpenSandbox**：
 
-# 3. 启动（自动建 MySQL 表 + SQLite checkpoint）
-C:\Users\Administrator\anaconda3\envs\agent_env\python.exe -m uvicorn app.main:app --reload
-
-# 4. 对话与健康检查
-Invoke-RestMethod http://127.0.0.1:8000/health
-Invoke-RestMethod -Uri http://127.0.0.1:8000/api/v1/chat -Method Post `
-  -Body (@{ message = "你好" } | ConvertTo-Json) -ContentType "application/json; charset=utf-8"
+```sh
+docker compose -f docker-compose.yml -f docker-compose.sandbox.yml up -d --build
 ```
 
-> 存储说明：**SQLite**（`backend/data/harness.sqlite`）存消息历史/短期记忆（langgraph checkpoint/store，跨进程重启不丢）；**MySQL**（`agent_harness.sessions`）存业务会话元信息；**本地磁盘**（`workspace/`）存模型读写的文件。详见 [docs/P2-storage-design.md](docs/P2-storage-design.md)。
+OpenSandbox 服务通过 Docker socket 创建临时执行容器，建议在专用机器部署。沙箱镜像、网络与公网部署注意事项见 [部署手册](deploy/README-docker.md)。Docker 部署默认禁用「完全访问」模式，避免命令接触后端密钥和其他用户的数据。
 
-## 沙箱配置
+> 本仓库已提供源码构建部署文件。预构建镜像尚未发布到镜像仓库，首次启动会下载基础镜像并安装依赖。构建需要可访问 Docker Hub、PyPI 和 npm。
 
-```powershell
-# backend/.env
-SANDBOX_ENABLED=true              # false = 文件工具仍可用本地磁盘，execute 返回"未启用"
-SANDBOX_SYNC_ENABLED=true         # 执行前后是否同步本地↔容器文件
-SANDBOX_DOMAIN=127.0.0.1:8080     # OpenSandbox 服务地址
-SANDBOX_IMAGE=python:3.11
-SANDBOX_ROOT=/workspace           # 容器工作目录 = 模型看到的路径前缀
-# HARNESS_WORKSPACE=D:/Deepseek_Harness/agent-harness/workspace   # 本地磁盘根目录
+## 架构与数据流
+
+```text
+浏览器
+  └─ Web / Nginx :8088
+      ├─ Vue 静态页面
+      └─ /api/* → FastAPI（内部 :8000，单 worker）
+          ├─ MySQL：用户、会话元信息、供应商、MCP、审计与工具日志
+          ├─ SQLite：LangGraph 消息历史、checkpoint 与 store
+          ├─ workspace/<user_id>：用户文件与 Agent.md 长期记忆
+          └─ OpenSandbox（可选）：每会话执行容器，执行前后同步工作区
 ```
 
-OpenSandbox 服务没起也不影响文件读写：`execute` 会返回一句可读的错误而不是抛异常。
+Docker 中的文件工作区位于持久化卷，**不是访问网页那个人的电脑磁盘**。Windows 本机运行时的 `/mnt/c`、`/mnt/d` 不会自动出现在 Docker 部署中。
 
-## 本机磁盘访问：默认环境 = 这台电脑
+后端目前有进程内的 Agent、审批和运行状态缓存，并使用 SQLite；部署保持一个后端实例、一个 worker。多实例扩容需要先改造共享状态与存储。
 
-```powershell
-# backend/.env
-HARNESS_MACHINE_ACCESS=true       # 文件工具可直接读写本机真实文件
-HARNESS_MACHINE_MOUNTS=           # 留空 = 自动挂载本机所有存在的盘符（c=C:/、d=D:/ …）
-# 也可以只挂需要的目录（更收敛）：
-# HARNESS_MACHINE_MOUNTS=proj=D:/Deepseek_Harness,home=C:/Users/Administrator
+## 目录与职责
+
+| 路径 | 职责 |
+|---|---|
+| `frontend/src/` | Vue 界面、登录、模型/MCP 管理、流式事件展示 |
+| `backend/app/main.py` | 应用入口、生命周期、自动迁移、健康检查 |
+| `backend/app/api/` | 认证、会话、聊天、文件、审批等 HTTP 接口 |
+| `backend/app/agent/` | Agent 构建、模型调用、上下文、执行、权限、Skills/子智能体/MCP |
+| `backend/app/core/` | 配置、密码/JWT、密钥加密、工作区路径 |
+| `backend/app/db/` | MySQL 模型、连接、管理员引导与存量回填 |
+| `backend/app/schemas/` | 请求、响应和配置校验 |
+| `backend/configs/` | Skills、子智能体、MCP 的 YAML/Markdown 配置 |
+| `backend/alembic/` | 数据库结构迁移 |
+| `backend/tests/` | 后端功能与回归测试 |
+| `deploy/` | Docker 部署说明、配置生成、Nginx/OpenSandbox 配置；历史裸机脚本 |
+| `docs/` | 架构说明与历史阶段设计 |
+
+## 配置与数据
+
+- **根目录 `.env`**：Docker Compose 部署配置，由 `deploy/init-env.py` 生成。
+- **`backend/.env`**：本机开发配置，从 `backend/.env.example` 复制；不进入 Docker 镜像。
+- **用户模型 Key**：通过网页配置，Fernet 加密后保存到 MySQL。
+- **持久化卷**：MySQL、SQLite、工作区、后端日志；重建容器保留数据。
+- **密钥备份**：务必保存根目录 `.env`；丢失 `FERNET_KEY` 会无法解密已有供应商 Key。
+- **注册**：Docker 默认关闭自助注册；需要时将 `ALLOW_REGISTRATION=true`，重新运行启动命令。
+
+## 本机开发（不使用 .bat）
+
+Python 3.12、Node.js 22、MySQL 8.0。先创建 `agent_harness` 数据库，按实际账户填写 `backend/.env` 的 `MYSQL_URL`。
+
+```sh
+cd backend
+python -m venv .venv
+# 激活虚拟环境后：
+python -m pip install -r requirements-dev.txt
+# 复制 .env.example 为 .env，填写数据库连接
+python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-- 模型侧路径：`/mnt/<盘符>/...`（`ls /mnt` 能看到挂了哪些盘）；写操作默认走人工审批；
-- `execute` 仍然只在沙箱容器里跑，**容器只镜像 `/workspace`**，看不到 `/mnt/*` 的真实文件；
-- 想让某段代码在沙箱里跑：先用文件工具把内容写到 `/workspace/` 下，再 `execute`；
-关掉它就回到只有 `/workspace` 的行为。
+另开终端：
 
-设计与坑详见 [docs/P12-machine-access-design.md](docs/P12-machine-access-design.md)。
+```sh
+cd frontend
+npm ci
+npm run dev
+```
 
-## 安全约定
+开发界面为 http://localhost:5173。开发环境可自动生成本地密钥；生产环境必须显式配置 `JWT_SECRET`、`FERNET_KEY` 与管理员密码。
 
-- 所有密钥只放 `.env`（已被 .gitignore 排除），绝不进代码/文档。
-- 子智能体、Skill、MCP 的 YAML 配置一律经 Pydantic 校验后加载。
-- 工作区文件被限制在 `HARNESS_WORKSPACE` 内（`virtual_mode=True` 拒绝 `..` 与越界绝对路径）；
-  本机磁盘挂载点（`/mnt/<盘符>/`）同样各自关在该盘/该目录内，写操作默认需人工审批；
-  代码执行只在一次性沙箱容器内进行，产出才同步回本地磁盘。
+## 执行与权限
 
-## 功能概览
+| 部署方式 | 文件工具 | execute |
+|---|---|---|
+| Docker 基础部署 | 用户持久化工作区 | 未启用 |
+| Docker + OpenSandbox | 用户持久化工作区 | 临时沙箱容器，工作区双向同步 |
+| 本机开发，sandbox 模式 | 工作区；按配置可额外挂载本机目录 | OpenSandbox |
+| 本机开发，full 模式 | 同上 | 后端所在机器的 shell |
 
-- **对话与记忆**：多轮对话、消息历史持久化、上下文管理与摘要
-- **文件与执行**：虚拟文件系统、本地磁盘读写、OpenSandbox 沙箱执行、本机 shell 执行
-- **智能体编排**：子智能体注册与任务委派、Skills 技能加载、MCP 外部工具源接入
-- **安全与治理**：人工审批中断与恢复、权限模式切换、账号认证与多租户隔离
-- **可观测性**：SSE 流式输出、工具调用事件流、运行状态投影、意图标签
+`HARNESS_MACHINE_ACCESS` 控制文件挂载，`HARNESS_ALLOW_FULL_ACCESS` 控制能否切换 full 模式；二者控制不同能力。Docker 默认关闭两者。人工审批的当前边界是访问 `/mnt/**`，工作区内读写不弹审批。
 
-详细设计见 [docs/](docs/) 目录。
+## 文档导航
+
+- [Docker 部署、升级、备份与排障](deploy/README-docker.md)
+- [项目结构与后续整理建议](docs/PROJECT-OVERVIEW.md)
+- [存储设计](docs/P2-storage-design.md)
+- [OpenSandbox 混合后端](docs/P11-opensandbox-hybrid-design.md)
+- [认证与多租户](docs/P18-auth-multitenant-multiprovider-plan.md)
+- [迁移与启动](docs/P18-migration-and-startup.md)
+- [MCP](docs/P19-mcp.md)
+- [权限模式](docs/P21-access-mode-design.md)
+- [运行状态展示](docs/P22-run-visibility-design.md)
+
+`docs/P*.md` 与 `CODE-CATALOG.md` 记录历史设计，部分描述早于当前实现；启动与部署以本 README 和 Docker 手册为准。`deploy/deploy.sh`、systemd 配置和 `一键启动.bat` 保留给历史环境，不是 Docker 部署入口。

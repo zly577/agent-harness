@@ -85,6 +85,9 @@ Thumbs.db
 *.log
 logs/
 
+# Docker 卷与配置备份（包含用户数据和密钥）
+backups/
+
 # 测试产物（P12：conftest 的 os._exit 会吞掉 pytest 失败汇总，故用插件把失败落盘）
 backend/tests/_pytest_failures.txt
 

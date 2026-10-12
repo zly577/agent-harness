@@ -1,5 +1,7 @@
 # Agent Harness 部署到 Linux 云服务器・操作手册
 
+> 历史裸机部署记录，部分配置与当前认证/模型机制不同。新部署请使用 [Docker 部署手册](README-docker.md)，无需执行本文的 systemd 安装脚本。
+
 > 适用：Ubuntu 24.04 / Debian 12 云服务器。技术栈：FastAPI + Vue3 + MySQL 8.0 + SQLite + Nginx + systemd。
 
 ## 0. 前置

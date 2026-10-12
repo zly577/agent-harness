@@ -139,6 +139,8 @@ class Settings(BaseSettings):
     #   本机文件读写不再需要审批。**没有任何隔离**，只应在你信任这台机器上跑的东西时打开。
     # 默认值刻意是 sandbox：完全访问必须由人显式选择，重启后自动回落到安全档。
     harness_access_mode: str = "sandbox"
+    # 对外部署关闭：full 会在后端进程内执行，能接触配置与其他用户的数据。
+    harness_allow_full_access: bool = True
 
     # ===== OpenSandbox 远程执行沙箱 =====
     # 是否启用 OpenSandbox 作为 execute 的执行后端
