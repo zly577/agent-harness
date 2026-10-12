@@ -46,6 +46,17 @@ function Write-HostDriveConfig {
         target = '/app/workspace'
         bind = @{ create_host_path = $false }
     }
+    # 自助注册开关改由根目录 .env 驱动（缺省 false）。本函数每次运行都会重写生成文件，
+    # 直接改生成文件会被覆盖，所以把开关放在 .env 里统一管理。
+    $taskAllowRegistration = 'false'
+    $taskEnvFile = Join-Path $taskRoot '.env'
+    if (Test-Path -LiteralPath $taskEnvFile) {
+        foreach ($taskLine in [System.IO.File]::ReadAllLines($taskEnvFile)) {
+            if ($taskLine -match '^\s*ALLOW_REGISTRATION\s*=\s*(\S+)\s*$') {
+                if ($Matches[1] -match '^(?i:true)$') { $taskAllowRegistration = 'true' }
+            }
+        }
+    }
     $taskConfig = [ordered]@{
         services = @{
             backend = @{
@@ -58,7 +69,7 @@ function Write-HostDriveConfig {
                     WORKSPACE_OPEN_PROTOCOL = $(if ($SkipDesktopIntegration) { 'false' } else { 'true' })
                     MCP_ENABLED = 'true'
                     SANDBOX_MOUNT_MACHINE_DIRS = 'false'
-                    ALLOW_REGISTRATION = 'false'
+                    ALLOW_REGISTRATION = $taskAllowRegistration
                 }
             }
         }
