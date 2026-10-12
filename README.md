@@ -45,8 +45,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\start-windows.ps1
 - 为支持运行时切换，Docker 挂载本身可写，默认只读由应用文件后端强制实施；不能把该模式当作操作系统级只读隔离。Windows 系统权限仍然有效。
 - 该目录对已有应用账户共享，适合个人部署。此入口关闭自助注册；不要给不信任的人登录或把入口公开到公网。
 - 自动挂载的是**运行脚本那台电脑**的磁盘，不是远程网页访问者的电脑。网络盘、光驱和未就绪设备不自动挂载。
-- 新增/移除磁盘后重新运行入口更新配置；生成的 `docker-compose.host.generated.yml` 已被 Git 忽略，不要提交。
-
+- 新增/移除磁盘后重新运行入口更新配置
 需要同时启用沙箱代码执行，追加 `-Sandbox`：
 
 ```powershell
