@@ -178,7 +178,7 @@ npm run dev
 
 注册时填写邮箱、8–128 位密码和 6 位邮箱验证码，昵称选填。验证码 10 分钟有效，每个邮箱发送间隔 60 秒，输错 5 次后需要重新获取；注册成功后验证码立即失效，并自动登录。已有账号（包括 `admin@local`）仍可用原密码登录。
 
-部署前设置 `ALLOW_REGISTRATION=true`，并配置 `SMTP_HOST`、`SMTP_PORT`、`SMTP_USERNAME`、`SMTP_PASSWORD`（邮箱服务的授权码）和 `SMTP_FROM`（允许发信的邮箱地址）。587 端口默认启用 STARTTLS；使用 465 端口时设置 `SMTP_SSL=true`。本地运行填写 `backend/.env`，Docker 部署填写根目录 `.env` 后重建后端容器。不要把真实密码提交到仓库。
+部署前设置 `ALLOW_REGISTRATION=true`，并配置 `SMTP_HOST`、`SMTP_PORT`、`SMTP_USERNAME`、`SMTP_PASSWORD`（邮箱服务的授权码）和 `SMTP_FROM`（允许发信的邮箱地址）。587 端口默认启用 STARTTLS；使用 465 端口时设置 `SMTP_SSL=true`。本地运行填写 `backend/.env`，Docker 部署填写根目录 `.env` 后重建后端容器。
 
 启动时 Alembic 自动创建 `registration_codes` 表；手动部署也可在 backend 目录执行 `alembic upgrade head`。未配置邮件服务时发送验证码会提示暂不可用，不会绕过邮箱验证。上线前需使用自己的 SMTP 账号完成一次真实收信验证。
 
