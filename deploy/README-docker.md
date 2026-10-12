@@ -52,6 +52,8 @@ docker run --rm --user "$(id -u):$(id -g)" --mount "type=bind,source=$(pwd),targ
 
 ## 3. 启动基础服务
 
+Windows 个人电脑如果需要自动读取全部当前可用的本地硬盘/移动盘，可改用 `powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\start-windows.ps1`。完整行为、只读限制与管理命令见 [README 的 Windows 个人部署](../README.md#windows-个人部署自动读取本机磁盘)。其他平台及多人部署使用本节的基础命令。
+
 ```sh
 docker compose up -d --build
 docker compose ps

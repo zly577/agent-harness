@@ -29,6 +29,40 @@ OpenSandbox 服务通过 Docker socket 创建临时执行容器，建议在专�
 
 > 本仓库已提供源码构建部署文件。预构建镜像尚未发布到镜像仓库，首次启动会下载基础镜像并安装依赖。构建需要可访问 Docker Hub、PyPI 和 npm。
 
+## Windows 个人部署：自动读取本机磁盘
+
+如果部署者希望智能体读取自己电脑上的磁盘，安装并启动 Docker Desktop（Linux 容器），在仓库根目录执行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\start-windows.ps1
+```
+
+此入口不使用 `.bat`，也不要求宿主机安装 Python。它自动识别当前可用的本地硬盘和移动盘，生成只读挂载配置；首次启动用 Docker 生成 `.env`，然后构建并启动应用。已有 `.env` 不会被覆盖。
+
+- C、D 等盘在模型侧对应 `/mnt/c`、`/mnt/d`；可让智能体「查看 `/mnt/d/资料`」。
+- 挂载只读，不能修改电脑文件或绕过 Windows 文件权限；挂载不意味着自动扫描全部内容。
+- 该目录对已有应用账户共享，适合个人部署。此入口关闭自助注册；不要给不信任的人登录或把入口公开到公网。
+- 自动挂载的是**运行脚本那台电脑**的磁盘，不是远程网页访问者的电脑。网络盘、光驱和未就绪设备不自动挂载。
+- 新增/移除磁盘后重新运行入口更新配置；生成的 `docker-compose.host.generated.yml` 已被 Git 忽略，不要提交。
+
+需要同时启用沙箱代码执行，追加 `-Sandbox`：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\start-windows.ps1 -Sandbox
+```
+
+文件工具可读取挂载盘；沙箱仍只同步 `/workspace`，需先把执行所需脚本/数据复制到工作区。此入口不会开启后端的 full 执行模式。
+
+后续查看状态、日志或关闭，使用相同入口；启用了沙箱时同样保留 `-Sandbox`：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\start-windows.ps1 -Action Status
+powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\start-windows.ps1 -Action Logs
+powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\start-windows.ps1 -Action Down
+```
+
+只想预览挂载目录、不启动容器，用 `-ConfigureOnly`。普通服务器/多人部署继续使用上面的基础 Compose 命令，只开放用户工作区。
+
 ## 架构与数据流
 
 ```text
@@ -42,7 +76,7 @@ OpenSandbox 服务通过 Docker socket 创建临时执行容器，建议在专�
           └─ OpenSandbox（可选）：每会话执行容器，执行前后同步工作区
 ```
 
-Docker 中的文件工作区位于持久化卷，**不是访问网页那个人的电脑磁盘**。Windows 本机运行时的 `/mnt/c`、`/mnt/d` 不会自动出现在 Docker 部署中。
+默认 Docker 部署的文件工作区位于持久化卷，**不是访问网页那个人的电脑磁盘**。Windows 个人部署可使用上面的 PowerShell 入口，额外把部署者的本机磁盘只读挂载为 `/mnt/c`、`/mnt/d`；普通 Compose 启动不会自动挂载磁盘。
 
 后端目前有进程内的 Agent、审批和运行状态缓存，并使用 SQLite；部署保持一个后端实例、一个 worker。多实例扩容需要先改造共享状态与存储。
 

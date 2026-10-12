@@ -9,6 +9,15 @@ permissions:
   contents: read
 
 jobs:
+  windows-launcher:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Windows launcher without starting Docker
+        shell: powershell
+        run: .\deploy\tests\test-start-windows.ps1
+
   basic-deployment:
     runs-on: ubuntu-latest
     timeout-minutes: 20
