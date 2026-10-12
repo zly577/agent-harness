@@ -138,7 +138,7 @@ def test_machine_routes_wired(workspace, machine):
 
 def test_file_tools_write_real_host_files(workspace, machine):
     """write/read/edit 落在**本机真实文件**上，而不是工作区、也不是沙箱。"""
-    be = sandbox.build_main_backend(session_key="t", workspace=str(workspace))
+    be = sandbox.build_main_backend(session_key="t", workspace=str(workspace), mode="full")
 
     res = be.write("/mnt/tmp/proj/gen.py", "print(1)\n")
     assert res.error is None
@@ -157,20 +157,21 @@ def test_file_tools_write_real_host_files(workspace, machine):
 
 
 def test_mount_read_write_works_without_sandbox(workspace, machine, monkeypatch):
-    """本机读写不依赖沙箱：沙箱关掉也照常（只有 execute 报未启用）。"""
+    """完全访问模式的本机读写和 LocalShell 执行不依赖沙箱。"""
     monkeypatch.setattr(settings, "sandbox_enabled", False)
-    be = sandbox.build_main_backend(session_key="t", workspace=str(workspace))
+    be = sandbox.build_main_backend(session_key="t", workspace=str(workspace), mode="full")
 
     assert be.write("/mnt/tmp/note.txt", "local").error is None
     assert (machine / "note.txt").read_text(encoding="utf-8") == "local"
-    assert be.execute("echo hi").exit_code == 1
+    assert be.execute("echo hi").exit_code == 0
 
 
 def test_workspace_and_mount_are_parallel_worlds(workspace, machine, fake_sandbox):
     """同一个 backend 上：/workspace 落工作区，/mnt 落本机 —— 互不影响。"""
     be = sandbox.build_main_backend(session_key="t", workspace=str(workspace))
     be.write("/workspace/a.txt", "A")
-    be.write("/mnt/tmp/b.txt", "B")
+    assert be.write("/mnt/tmp/b.txt", "B").error
+    (machine / "b.txt").write_text("B", encoding="utf-8")
 
     assert (workspace / "a.txt").read_text(encoding="utf-8") == "A"
     assert (machine / "b.txt").read_text(encoding="utf-8") == "B"
@@ -204,7 +205,7 @@ def test_mount_escape_is_rejected(workspace, machine):
     注意行为是**抛 ValueError**（FilesystemBackend 的安全检查），不是返回 error 结果 ——
     与工作区 `/workspace/../x` 的表现一致；deepagents 的工具层会把它转成工具错误。
     """
-    be = sandbox.build_main_backend(session_key="t", workspace=str(workspace))
+    be = sandbox.build_main_backend(session_key="t", workspace=str(workspace), mode="full")
     with pytest.raises(ValueError):
         be.write("/mnt/tmp/../escape.txt", "nope")
     assert not (machine.parent / "escape.txt").exists()

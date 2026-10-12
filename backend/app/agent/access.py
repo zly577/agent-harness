@@ -140,7 +140,7 @@ def access_state(session_id: str | None = None, user_id: str | None = None) -> d
         "global_default": _global_mode,
         "user_overrides": dict(_user_mode),
         "session_overrides": dict(_session_mode),
-        "valid_modes": list(VALID_MODES),
+        "valid_modes": list(VALID_MODES) if settings.harness_allow_full_access else [MODE_SANDBOX],
     }
 
 

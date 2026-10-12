@@ -17,7 +17,7 @@ r"""沙箱与执行路由（本地磁盘读写 + OpenSandbox 执行）。
 
 ## 权限模式（本模块的第二个入口）
 
-`build_main_backend(mode=...)` 有两个分支，**文件层完全相同，只有执行层不同**：
+    `build_main_backend(mode=...)` 有两个分支，工作区路由相同；默认磁盘只读，full 可写：
 
 | mode | default | execute | 谁决定 |
 |------|---------|---------|--------|
@@ -190,7 +190,7 @@ def build_main_backend(
         # 不需要同步（文件本来就在本机），也不需要 session_key。
         backend = build_full_access_backend(
             root_dir=workspace,
-            routes=build_machine_routes(),
+            routes=build_machine_routes(read_only=False),
             prefix=WORKSPACE_PREFIX,
         )
     else:

@@ -44,7 +44,7 @@ docker run --rm --user "$(id -u):$(id -g)" --mount "type=bind,source=$(pwd),targ
 | `WEB_BIND_IP` | 默认 127.0.0.1，仅本机访问 |
 | `ALLOW_REGISTRATION` | 默认 false，需要公开自助注册时改 true |
 | `TAVILY_API_KEY` | 可选，启用联网搜索 |
-| `MCP_ENABLED` | 可选，开启 MCP 工具源加载 |
+| `MCP_ENABLED` | 默认 true，用户自行添加 MCP 工具源；不预置已启用服务器 |
 
 保持自动生成的 `MYSQL_PASSWORD` 使用十六进制字母数字。它会拼入连接 URL，手动设置包含 `@ / : % # $` 等字符的密码需要额外 URL 编码和 Compose 转义，不建议直接替换。
 
@@ -52,7 +52,7 @@ docker run --rm --user "$(id -u):$(id -g)" --mount "type=bind,source=$(pwd),targ
 
 ## 3. 启动基础服务
 
-Windows 个人电脑如果需要自动读取全部当前可用的本地硬盘/移动盘，可改用 `powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\start-windows.ps1`。完整行为、只读限制与管理命令见 [README 的 Windows 个人部署](../README.md#windows-个人部署自动读取本机磁盘)。其他平台及多人部署使用本节的基础命令。
+Windows 个人电脑如果需要自动读取全部当前可用的本地硬盘/移动盘、切换完全访问、打开本机工作区，可改用 `powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\start-windows.ps1`。默认文件工具只读磁盘，完全访问可写并使用后端容器的 LocalShell；详细说明见 [README 的 Windows 个人部署](../README.md#windows-个人部署自动读取本机磁盘)。其他平台及多人部署使用本节的基础命令。
 
 ```sh
 docker compose up -d --build
@@ -66,7 +66,7 @@ docker compose ps
 1. 在「模型」中添加供应商、Base URL、API Key、模型名称并设为默认。
 2. 发一条消息验证模型连接。
 3. 需要联网搜索时填写 `TAVILY_API_KEY`，再运行 `docker compose up -d`。
-4. 需要 MCP 时开启 `MCP_ENABLED`，再通过界面添加自己的工具源。stdio MCP 所需命令/依赖必须装在后端镜像内；访问远端 HTTP MCP 不需要把对方服务装进镜像。
+4. MCP 默认启用，在界面添加自己的工具源即可。旧 `.env` 若仍为 `MCP_ENABLED=false`，需改为 true 并重建容器。stdio MCP 所需命令/依赖必须装在后端镜像内；访问远端 HTTP MCP 不需要把对方服务装进镜像。
 
 运行自动冒烟检查（无需模型 Key）：
 
@@ -106,7 +106,7 @@ docker pull opensandbox/execd:v1.1.0
 - OpenSandbox 默认 bridge 运行时可能在宿主机动态发布沙箱端口。公网部署需按官方配置收窄 `[docker].publish_host` 到容器可达的宿主机网关 IP，并验证防火墙规则；具体 IP 依目标 Docker 网络而定。不要把执行端点直接暴露到公网。
 - 文件同步仅覆盖用户工作区；不会自动挂载宿主机所有目录或网页访问者的本地硬盘。
 - `python:3.11` 沙箱只带基础 Python。需要 pandas、文档工具等时构建自己的沙箱镜像，把根目录 `.env` 的 `SANDBOX_IMAGE` 改为该镜像名。沙箱 Python 和后端 Python 是两套环境。
-- 默认不启用后端容器内的「完全访问」模式。该模式会绕过沙箱，在共享后端里执行命令，不能当作多人部署的隔离方案。
+- 普通服务器 Compose 不启用「完全访问」；Windows 个人入口允许切换。该模式绕过 OpenSandbox，在后端容器里执行命令，不能当作多人部署的隔离方案。
 
 也可以使用**已有或独立机器上的 OpenSandbox**：只启动基础 Compose，把根目录 `.env` 设置为：
 
@@ -156,6 +156,8 @@ docker compose up -d --build
 | `backend_logs` | 后端滚动日志 |
 | `sandbox_data`（可选） | OpenSandbox 服务状态；不替代用户工作区备份 |
 
+Windows 个人入口把 `/app/workspace` 改为绑定仓库的 `workspace/`；此时需备份本机整个 `workspace` 目录，旧 `workspace_data` 卷只保留切换前的数据。首次切换会停止旧后端并从默认项目名的旧卷复制数据，不覆盖已有文件，也不删除旧卷。
+
 默认项目名为 `agent-harness`，实际卷名通常带此前缀；换项目名会使用另一组卷，不会自动迁移原数据。
 
 最简单的一致性备份：先停止服务，再归档所需卷和根目录 `.env`。下面为 Linux/macOS 示例：
@@ -199,4 +201,4 @@ docker compose start
 
 GitHub 的 `Docker smoke` workflow 验证基础镜像构建、服务启动、健康检查与登录，并静态校验沙箱叠加配置。它不调用真实模型，也不宣称验证 OpenSandbox 端到端执行。
 
-本次本地检查已通过 Compose 校验、前端生产构建和权限相关测试；Docker Hub 下载超时阻断了实际镜像构建，因此整套 Docker 启动与沙箱执行仍需在网络可用的机器或 CI 中验证。
+GitHub CI 已验证基础 Docker 构建、启动与登录。Windows 入口在 CI 中使用替身 Docker 检查配置、升级命令和协议路径校验，不会挂载 CI 磁盘或打开资源管理器；真实桌面协议打开与 OpenSandbox 端到端执行需要在部署者电脑上验证。

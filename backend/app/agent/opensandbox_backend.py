@@ -1115,9 +1115,33 @@ class MountedDiskBackend(FilesystemBackend):
     （与 `HybridDefaultBackend` 对 `/workspace` 前缀做的是同一件事）。
     """
 
-    def __init__(self, *, root_dir: str | Path, mount_prefix: str) -> None:
+    def __init__(self, *, root_dir: str | Path, mount_prefix: str, read_only: bool = False) -> None:
         super().__init__(root_dir=root_dir, virtual_mode=True)
         self._mount_prefix = "/" + mount_prefix.strip("/")
+        self._read_only = read_only
+
+    def _write_error(self) -> str:
+        return "默认模式下本机磁盘只读；请切换完全访问模式后修改，或将产出写到 /workspace。"
+
+    def write(self, file_path: str, content: str) -> WriteResult:
+        if self._read_only:
+            return WriteResult(error=self._write_error())
+        return super().write(file_path, content)
+
+    def edit(self, file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> EditResult:
+        if self._read_only:
+            return EditResult(error=self._write_error())
+        return super().edit(file_path, old_string, new_string, replace_all)
+
+    def delete(self, file_path: str) -> DeleteResult:
+        if self._read_only:
+            return DeleteResult(error=self._write_error())
+        return super().delete(file_path)
+
+    def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
+        if self._read_only:
+            return [FileUploadResponse(path=path, error="permission_denied") for path, _ in files]
+        return super().upload_files(files)
 
     def _strip_mount_prefix(self, value: str | None) -> str | None:
         """`/mnt/tmp/proj/*.py` → `/proj/*.py`；`/mnt/tmp` → `/`；其余原样。"""
@@ -1189,19 +1213,19 @@ class MachineRootsBackend(FilesystemBackend):
         return GrepResult(matches=[], error=None)
 
 
-def build_machine_routes() -> dict[str, BackendProtocol]:
+def build_machine_routes(*, read_only: bool = True) -> dict[str, BackendProtocol]:
     """构造本机磁盘的 route 表：`/mnt/<名>/` → 该目录的本地磁盘后端。
 
     `CompositeBackend` 命中 route 后会**剥掉前缀**，所以 `/mnt/d/proj/a.py` 交给
     `MountedDiskBackend(root_dir="D:/")` 时变成 `/proj/a.py` → 真实路径 `D:/proj/a.py`。
-    每个挂载点仍用 `virtual_mode=True`，即被关在该盘/该目录内（`..` 与越界绝对路径被拒）。
+    每个挂载点用 virtual_mode 限制在该目录内；默认只读，full 模式传 read_only=False。
     """
     mounts = machine_mounts()
     if not mounts:
         return {}
     routes: dict[str, BackendProtocol] = {
         machine_mount_prefix(name): MountedDiskBackend(
-            root_dir=path, mount_prefix=machine_mount_prefix(name)
+            root_dir=path, mount_prefix=machine_mount_prefix(name), read_only=read_only
         )
         for name, path in mounts
     }

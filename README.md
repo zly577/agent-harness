@@ -25,7 +25,7 @@ Windows 上若 Python 命令为 `py`，第三步用 `py deploy/init-env.py`。�
 docker compose -f docker-compose.yml -f docker-compose.sandbox.yml up -d --build
 ```
 
-OpenSandbox 服务通过 Docker socket 创建临时执行容器，建议在专用机器部署。沙箱镜像、网络与公网部署注意事项见 [部署手册](deploy/README-docker.md)。Docker 部署默认禁用「完全访问」模式，避免命令接触后端密钥和其他用户的数据。
+OpenSandbox 服务通过 Docker socket 创建临时执行容器。普通服务器 Compose 部署禁用「完全访问」；下面的 Windows 个人部署入口允许用户手动切换。网络与公网部署注意事项见 [部署手册](deploy/README-docker.md)。
 
 > 本仓库已提供源码构建部署文件。预构建镜像尚未发布到镜像仓库，首次启动会下载基础镜像并安装依赖。构建需要可访问 Docker Hub、PyPI 和 npm。
 
@@ -37,10 +37,12 @@ OpenSandbox 服务通过 Docker socket 创建临时执行容器，建议在专�
 powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\start-windows.ps1
 ```
 
-此入口不使用 `.bat`，也不要求宿主机安装 Python。它自动识别当前可用的本地硬盘和移动盘，生成只读挂载配置；首次启动用 Docker 生成 `.env`，然后构建并启动应用。已有 `.env` 不会被覆盖。
+此入口不使用 `.bat`，也不要求宿主机安装 Python。它自动识别当前可用的本地硬盘和移动盘，生成支持双模式的挂载配置；首次启动用 Docker 生成 `.env`，然后构建并启动应用。已有 `.env` 不会被覆盖。
 
 - C、D 等盘在模型侧对应 `/mnt/c`、`/mnt/d`；可让智能体「查看 `/mnt/d/资料`」。
-- 挂载只读，不能修改电脑文件或绕过 Windows 文件权限；挂载不意味着自动扫描全部内容。
+- **默认模式**：工作区可读写，文件工具只读磁盘；即使 OpenSandbox 关闭也能读取磁盘。
+- **完全访问**：在顶栏确认后启用，文件工具可修改/删除已挂载磁盘中的文件，命令由 LocalShell 执行；不依赖 OpenSandbox 是否启用。重启回到默认模式。
+- 为支持运行时切换，Docker 挂载本身可写，默认只读由应用文件后端强制实施；不能把该模式当作操作系统级只读隔离。Windows 系统权限仍然有效。
 - 该目录对已有应用账户共享，适合个人部署。此入口关闭自助注册；不要给不信任的人登录或把入口公开到公网。
 - 自动挂载的是**运行脚本那台电脑**的磁盘，不是远程网页访问者的电脑。网络盘、光驱和未就绪设备不自动挂载。
 - 新增/移除磁盘后重新运行入口更新配置；生成的 `docker-compose.host.generated.yml` 已被 Git 忽略，不要提交。
@@ -51,7 +53,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\start-windows.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\start-windows.ps1 -Sandbox
 ```
 
-文件工具可读取挂载盘；沙箱仍只同步 `/workspace`，需先把执行所需脚本/数据复制到工作区。此入口不会开启后端的 full 执行模式。
+默认模式的执行工具进入本机 Docker 上的 OpenSandbox，沙箱只同步 `/workspace`，需先把执行所需脚本/数据复制到工作区。完全访问模式的 LocalShell 则运行在后端 Linux 容器里，可通过 `/host/c`、`/host/d` 等真实挂载路径处理宿主机文件；它不执行 Windows 系统的 cmd/PowerShell 命令。仅浏览器切换权限才启用 full，不会在启动时自动切换。
+
+### 打开工作区目录
+
+「文件」面板新增 **打开目录** 按钮，打开当前登录用户的工作区：
+
+- Windows 直接运行后端：打开这台电脑的资源管理器。
+- Windows Docker 个人入口：工作区绑定到仓库的 `workspace/<user_id>`，入口为当前 Windows 用户注册 `agent-harness-workspace` 协议；点击后允许浏览器打开对应目录。
+- 远程服务器或另一台访问电脑：不会打开服务器桌面或把服务器磁盘变成访问者本机目录，继续使用下载功能。
+
+启动入口首次切换到本机工作区时，停止旧后端写入，把默认项目名 `agent-harness` 下旧 `workspace_data` 卷的数据复制进本机 `workspace`，不覆盖已有文件、不删除旧卷。使用了其他 Compose 项目名时请先手动迁移对应工作区卷。个人入口以后备份 `workspace/` 目录；不要只备份旧卷。
+
+如果不需要桌面协议注册，启动时加 `-SkipDesktopIntegration`。协议注册指向当前仓库目录；移动仓库后重新运行入口。恢复为普通服务器部署可用基础 Compose；那会重新使用原工作区卷，新产生的本机工作区文件不会自动复制回原卷。
 
 后续查看状态、日志或关闭，使用相同入口；启用了沙箱时同样保留 `-Sandbox`：
 
@@ -76,7 +90,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\start-windows.ps1 -
           └─ OpenSandbox（可选）：每会话执行容器，执行前后同步工作区
 ```
 
-默认 Docker 部署的文件工作区位于持久化卷，**不是访问网页那个人的电脑磁盘**。Windows 个人部署可使用上面的 PowerShell 入口，额外把部署者的本机磁盘只读挂载为 `/mnt/c`、`/mnt/d`；普通 Compose 启动不会自动挂载磁盘。
+普通 Docker 部署的工作区位于持久化卷，**不是访问网页那个人的电脑磁盘**。Windows 个人入口把工作区绑定到本机目录，同时把部署者的磁盘映射为 `/mnt/c`、`/mnt/d`，按当前权限模式控制文件修改；普通 Compose 启动不会自动挂载磁盘。
 
 后端目前有进程内的 Agent、审批和运行状态缓存，并使用 SQLite；部署保持一个后端实例、一个 worker。多实例扩容需要先改造共享状态与存储。
 
@@ -105,6 +119,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\start-windows.ps1 -
 - **持久化卷**：MySQL、SQLite、工作区、后端日志；重建容器保留数据。
 - **密钥备份**：务必保存根目录 `.env`；丢失 `FERNET_KEY` 会无法解密已有供应商 Key。
 - **注册**：Docker 默认关闭自助注册；需要时将 `ALLOW_REGISTRATION=true`，重新运行启动命令。
+- **MCP**：默认启用接入能力，但不预置可用工具；用户在「MCP」界面添加自己的服务器。已有 `.env` 的 `MCP_ENABLED=false` 会保留，请手动改为 true；Windows 个人入口已强制启用。
 
 ## 本机开发
 
@@ -135,10 +150,12 @@ npm run dev
 |---|---|---|
 | Docker 基础部署 | 用户持久化工作区 | 未启用 |
 | Docker + OpenSandbox | 用户持久化工作区 | 临时沙箱容器，工作区双向同步 |
+| Windows Docker 个人入口，默认模式 | 工作区可写，宿主磁盘只读 | OpenSandbox；未开启时不可执行 |
+| Windows Docker 个人入口，完全访问 | 工作区与宿主磁盘可写 | 后端 Linux 容器内 LocalShell，不依赖 OpenSandbox |
 | 本机开发，sandbox 模式 | 工作区；按配置可额外挂载本机目录 | OpenSandbox |
 | 本机开发，full 模式 | 同上 | 后端所在机器的 shell |
 
-`HARNESS_MACHINE_ACCESS` 控制文件挂载，`HARNESS_ALLOW_FULL_ACCESS` 控制能否切换 full 模式；二者控制不同能力。Docker 默认关闭两者。人工审批的当前边界是访问 `/mnt/**`，工作区内读写不弹审批。
+`HARNESS_MACHINE_ACCESS` 控制文件挂载，`HARNESS_ALLOW_FULL_ACCESS` 控制能否切换 full 模式。普通服务器 Compose 关闭两者，Windows 个人入口开启两者并以 sandbox 模式启动。默认模式中挂载盘的写入会被文件后端拒绝，读操作保留人工审批；工作区内读写不弹审批。完全访问不弹审批。
 
 ## 文档导航
 

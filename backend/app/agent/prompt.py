@@ -106,7 +106,7 @@ _FS_TOOLS_SANDBOX = (
     "## 文件与命令工具（两种执行位置，务必分清）\n"
     "- 读文件：read_file；搜文件：glob；搜内容：grep；列目录：ls\n"
     "- 写文件：write_file；改文件：edit_file\n"
-    "- 上述文件工具直接读写**用户电脑上的真实文件**（不经过沙箱、不需要沙箱在线）：\n"
+    "- 文件工具读写工作区，并只读已挂载磁盘中的真实文件（不经过沙箱、不需要沙箱在线）：\n"
     "  · 用户本机的真实位置 → 用 `/mnt/<盘符>/...`（转换规则见下文「运行环境」）\n"
     "  · 交付物、临时脚本 → 用 `/workspace/...`（持久保存，用户能直接看到并一键下载）\n"
     "- 执行 shell 命令：execute。命令在**隔离沙箱容器**内运行，容器工作目录同样是 /workspace，"
@@ -120,23 +120,15 @@ _FS_TOOLS_SANDBOX = (
 #:
 #: 与沙箱段的三处关键差异（都不能省，每一处都对应一类实际踩过的坑）：
 #: 1. `execute` **不再进容器**，就在这台电脑上跑；
-#: 2. 文件工具用**虚拟路径**（`/mnt/...`），而 execute 用 **Windows 真实路径** ——
-#:    混淆这两者正是历史上"空转几十次"的主因，必须写死；
-#: 3. 系统是 Windows / cmd，Unix 惯用命令（`ls -la`、`cat`、`python3`）会直接报错。
+#: 2. 文件工具用虚拟路径，execute 用后端环境的真实路径；
+#: 3. 运行环境可能是 Windows 或 Linux 容器，必须按实际平台说明 shell。
 _FS_TOOLS_FULL = (
-    "## 文件与命令工具（完全访问模式：你就是跑在这台电脑上，没有沙箱）\n"
-    "- 读文件：read_file；搜文件：glob；搜内容：grep；列目录：ls\n"
-    "- 写文件：write_file；改文件：edit_file\n"
-    "- ⚠️ 文件工具的路径是**虚拟路径**，不是 Windows 真实路径：\n"
-    "  · 用户本机的位置 → `/mnt/<盘符>/...`（`D:\\proj\\a.py` → `/mnt/d/proj/a.py`）\n"
-    "  · 交付物、临时脚本 → `/workspace/...`（持久保存，用户能直接看到并一键下载）\n"
-    "- 执行 shell 命令：execute。**命令直接在这台电脑上运行**（没有容器、没有隔离），"
-    "工作目录就是你的工作区目录，可以直接用相对路径跑脚本。\n"
-    "- ⚠️ execute 的命令里用 **Windows 真实路径**（`D:\\proj\\a.py` 或 `D:/proj/a.py`），"
-    "不要写 `/mnt/d/...` 或 `/workspace/...` —— 那两个是给文件工具的虚拟路径，命令行不认。\n"
-    "- ⚠️ 系统是 Windows、shell 是 cmd：用 `dir` / `type` / `python xx.py`，"
-    "不要用 `ls -la`、`cat`、`python3`、用单引号包住整条命令这些 Unix 惯用法。\n"
-    "- 命令输出会原样返回；失败时末尾会带 `Exit code: N`，据此判断是否成功。\n\n"
+    "## 文件与命令工具（完全访问模式，没有沙箱）\n"
+    "- 文件工具可读写工作区与已挂载磁盘，路径使用 /workspace/... 和 /mnt/<名称>/...。\n"
+    "- execute 使用 deepagents LocalShellBackend，在后端进程所在环境执行，不依赖 OpenSandbox 是否启用。\n"
+    "- 文件工具使用虚拟路径；shell 使用真实路径或工作区相对路径。\n"
+    "- 具体操作系统、shell 和路径对照见下文运行环境，不能假设永远是 Windows。\n"
+    "- 失败时根据退出码和错误输出判断结果，不要把未成功的动作报告成成功。\n\n"
 )
 
 #: 长期记忆段 —— 两种模式共用。
@@ -240,7 +232,7 @@ def machine_mount_prompt_section() -> str:
     lines = [
         "\n## 运行环境：你的默认工作目录就是用户这台电脑（不是沙箱）\n",
         "文件工具（read_file / ls / glob / grep / write_file / edit_file / delete）"
-        "**直接读写用户电脑上的真实文件**，不经过沙箱、不需要同步。"
+        "**直接读取部署环境可见的磁盘文件**，不需要 OpenSandbox 在线；默认模式禁止修改磁盘，写入产出请使用 /workspace。"
         "**只有 `execute`（跑命令/代码）才叫「进沙箱」** —— 那时才会进入隔离容器。\n\n",
         "### 路径对照（用户说的 → 你调用工具时写的）\n",
     ]
@@ -264,7 +256,7 @@ def machine_mount_prompt_section() -> str:
         "不带 path 会扫全盘，又慢又容易被 5 秒超时砍成空结果。\n"
         "5. 只有真正要**执行代码 / 装依赖 / 跑脚本**时才用 `execute`；"
         "要执行的脚本先写到 `/workspace/` 下再 execute（容器只看得到那里）。\n"
-        "6. 改本机文件属于敏感操作（默认需要用户审批）；不要碰系统目录（如 C:/Windows），"
+        "6. 默认模式不能修改本机磁盘；需要修改时提示用户切换完全访问，或先复制到工作区。不要碰系统目录，"
         "不要把密钥文件的内容复制到别处。\n"
     )
     return "".join(lines)
@@ -302,63 +294,32 @@ def build_system_prompt(locale: str | None = None, mode: str = "sandbox") -> str
         )
     else:
         prompt = BASE_SYSTEM_PROMPT + machine_mount_prompt_section()
+        if not settings.sandbox_enabled:
+            prompt += "\n当前 OpenSandbox 未启用，默认模式的 execute 不可用。文件工具仍可用；需要执行代码时提示用户启用沙箱或切换完全访问。\n"
     if getattr(settings, "intent_label_enabled", True):
         prompt += render_intent_prompt_section(locale or getattr(settings, "intent_locale", "zh"))
     return prompt
 
 
 def full_access_prompt_section() -> str:
-    """「完全访问模式」的运行环境段落。
-
-    与 `machine_mount_prompt_section()` 是**互为替代**的两段（同一位置、不同模式）：
-    后者讲"默认工作环境是本机磁盘，但 execute 仍进沙箱"，这一段讲"连 execute 都在本机"。
-
-    必须交代清楚的四件事（少一件模型就会跑去试）：
-    1. `execute` 不做任何隔离 —— 不要再假设"命令在容器里、看不到本机"；
-    2. 文件工具用虚拟路径 `/mnt/<盘>/...`，execute 用 Windows 真实路径 —— **两套别混**；
-    3. 工作目录就是工作区目录，相对路径直接可用；
-    4. 没有审批兜底，破坏性命令要自己避免（这是用户显式选择的模式，但模型不该趁人之危）。
-    """
+    """按后端实际操作系统说明 LocalShell 的执行位置与真实路径。"""
+    import os
     from app.agent.opensandbox_backend import machine_mounts
 
-    mounts = machine_mounts()
-
+    docker = Path("/.dockerenv").exists()
+    location = "后端 Linux 容器" if docker else "后端所在电脑"
+    shell = "Windows cmd（dir/type/python）" if os.name == "nt" else "POSIX shell（ls/cat/python）"
     lines = [
-        "\n## 运行环境：完全访问模式（命令直接在本机执行）\n",
-        "用户已把权限模式切到**完全访问**：`execute` 的 shell 命令**直接在这台电脑上运行**，"
-        "不存在沙箱容器、不存在文件同步、也没有审批弹窗。"
-        "换句话说，你说的每一句命令都会立刻在这台机器上生效。\n\n",
+        f"\n## 运行环境：完全访问模式（LocalShell，{location}）\n",
+        f"execute 在{location}内通过 {shell} 执行，没有 OpenSandbox 沙箱、不做文件同步，也不弹审批。\n",
+        "工作目录是当前用户工作区；用相对路径执行工作区脚本。文件工具使用 /workspace 和 /mnt 虚拟路径，命令使用下列真实路径。\n",
     ]
-    if mounts:
-        lines.append("### 路径对照（用户说的 → 你调用工具时写的）\n")
-        for name, path in mounts:
-            lines.append(
-                f"- 文件工具：`/mnt/{name}/` = `{path}`\n"
-                f"- execute ：`{path}`（真实路径，如 `{path}a\\b.py`）\n"
-            )
-        lines.append(
-            "- 用户说「D 盘 / 我的项目 / 桌面」时：文件工具写 `/mnt/<小写盘符>/...`，"
-            "execute 写真盘符 `D:\\...`；反斜杠在文件工具里一律写成 `/`。\n"
-            "- 没有明确路径、或者说「帮我做个报告」时，用 `/workspace/...`"
-            "（工作区；交付物落这里，用户能一键下载）。\n\n"
-        )
-    else:
-        lines.append(
-            "### 路径说明\n"
-            "- 文件工具目前**只能访问工作区** `/workspace/...`"
-            "（本机磁盘挂载未开启，见 `HARNESS_MACHINE_ACCESS`）。\n"
-            "- 需要读写工作区之外的文件时，用 `execute` 走本机 shell（那里可以用任意真实路径）。\n\n"
-        )
+    if docker:
+        lines.append("宿主机是 Windows 也不能在这里执行 Windows cmd/PowerShell 命令；可通过挂载目录修改宿主机文件。\n")
+    for name, path in machine_mounts():
+        lines.append(f"- 文件工具 /mnt/{name}/ 对应命令真实目录 {path}；例如文件工具 /mnt/{name}/a.py，execute 使用 {path / 'a.py'}。\n")
     lines.append(
-        "### 硬性要求\n"
-        "1. 用户提到本机文件，文件工具用 `/mnt/...`、execute 用真实盘符路径，**一步到位**，"
-        "不要在两种写法之间来回试。\n"
-        "2. **不要**再假设命令在容器里：容器专用的说法（如「沙箱里看不到 /mnt」）在此模式下不成立。\n"
-        "3. 破坏性命令（删除、覆盖、`git reset --hard`、安装全局包）先确认影响范围；"
-        "本模式下没有审批兜底，你自己就是最后一道防线。\n"
-        "4. 用 `glob` / `grep` 搜索**必须带 `path=`**（如 `path=/mnt/d/proj`）；"
-        "不带 path 会扫全盘，又慢又容易被 5 秒超时砍成空结果。\n"
-        "5. 不要把密钥文件（`.env`、私钥、凭据）的内容复制到别处或写进回复里。\n"
+        "搜索必须带 path，避免扫描全部磁盘。删除/覆盖前核实影响范围，不复制或泄漏密钥文件。\n"
     )
     return "".join(lines)
 

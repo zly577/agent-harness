@@ -131,10 +131,10 @@
           <button
             class="tbtn switchable"
             :class="{ danger: accessFull }"
-            :disabled="accessBusy"
+            :disabled="accessBusy || (!accessFull && !accessAllowFull)"
             :title="accessFull
-              ? '完全访问：execute 直接在这台电脑上运行，不再弹审批。点一下切回沙箱内。'
-              : '默认权限：文件落工作区、execute 进隔离沙箱；访问本机文件会先弹审批。点一下切到完全访问。'"
+              ? '完全访问：可修改已挂载磁盘，命令由后端 LocalShell 执行；不依赖 OpenSandbox。'
+              : '默认模式：工作区可读写，已挂载磁盘只读；代码执行需要 OpenSandbox。'"
             @click="toggleAccessMode"
           >
             <span class="tbtn-dot"></span>
@@ -513,6 +513,7 @@
           <div class="modal-head row-head">
             <h3>工作区文件</h3>
             <div class="modal-head-actions">
+              <button class="btn-ghost sm" @click="openWorkspaceFolder">打开目录</button>
               <button class="btn-ghost sm" @click="loadFiles" :disabled="loadingFiles">
                 {{ loadingFiles ? '载入中…' : '刷新' }}
               </button>
@@ -562,7 +563,7 @@
           </div>
 
           <div class="modal-foot tip-only">
-            智能体生成的文件存放于此（= 容器里的 /workspace，会与沙箱自动同步）。
+            智能体文件位于当前用户的 /workspace；「打开目录」用于部署者本机，远程访问请下载文件。
           </div>
         </div>
       </div>
@@ -654,8 +655,8 @@
           </button>
         </div>
         <p class="disclaimer">{{ accessFull
-          ? '完全访问模式：命令直接在本机执行，不会弹审批 —— 请确认你在做什么。'
-          : 'Agent 会读写工作区文件；访问本机路径前会请求你确认。' }}</p>
+          ? '完全访问：可修改已挂载磁盘；LocalShell 在后端所在环境执行命令。'
+          : '默认模式：工作区可读写，已挂载磁盘只读；读磁盘时按审批设置确认。' }}</p>
       </footer>
     </div>
   </div>
@@ -683,6 +684,7 @@ import {
   apiDelete,
   apiFetchRaw,
   apiGet,
+  apiPost,
   fetchAvailableProviders,
   fetchMe,
   getUser,
@@ -840,6 +842,7 @@ export default {
     // 同样是后端为准、这里只做镜像；后端存的是内存态，所以每次进入界面都要重新拉。
     const accessMode = ref('sandbox')
     const accessBusy = ref(false)
+    const accessAllowFull = ref(true)
     const accessFull = computed(() => accessMode.value === 'full')
     // 轻量提示条（不往对话里塞消息，避免污染会话气泡）
     const toast = reactive({ text: '', kind: 'info' })
@@ -2637,6 +2640,7 @@ export default {
       try {
         const cfg = await fetchAccessConfig()
         accessMode.value = cfg.mode === 'full' ? 'full' : 'sandbox'
+        accessAllowFull.value = (cfg.valid_modes || []).includes('full')
       } catch {
         // 读取失败就保持默认（沙箱内）
       }
@@ -2657,8 +2661,9 @@ export default {
       if (next === 'full') {
         const ok = window.confirm(
           '切换到「完全访问」后：\n' +
-          '· execute 的命令直接在这台电脑上运行（不再进隔离沙箱）\n' +
-          '· 访问本机文件也不再弹审批窗\n' +
+          '· 可以修改和删除所有已挂载磁盘中的文件，不再弹审批\n' +
+          '· 命令在后端 LocalShell 执行，不需要 OpenSandbox\n' +
+          '· Docker 部署使用容器里的 Linux shell，并非 Windows 系统 shell\n' +
           '· 后端重启会自动切回「沙箱内」\n' +
           '· 新模式从下一轮对话开始生效\n\n确定切换吗？',
         )
@@ -2675,8 +2680,8 @@ export default {
         }
         notify(
           accessMode.value === 'full'
-            ? '已切换到完全访问：命令直接在本机执行，不再弹审批'
-            : '已切回默认权限：命令进沙箱，访问本机文件需确认',
+            ? '已切换到完全访问：磁盘可修改，LocalShell 执行命令'
+            : '已切回默认模式：磁盘只读，工作区可读写',
           accessMode.value === 'full' ? 'error' : 'info',
         )
       } catch (e) {
@@ -2770,6 +2775,20 @@ export default {
         fileList.value = []
       }
       loadingFiles.value = false
+    }
+
+    async function openWorkspaceFolder() {
+      try {
+        const result = await apiPost('/api/v1/files/open-workspace', {})
+        if (result.open_url) {
+          window.location.href = result.open_url
+          notify('请允许浏览器打开工作区目录；此入口用于部署者本机。', 'info')
+        } else {
+          notify('已打开当前用户的工作区目录', 'info')
+        }
+      } catch (e) {
+        notify(`无法打开目录：${e.message}`, 'error')
+      }
     }
 
     // 用户视角的工作区根。虚拟根 '/' 只是文件系统顶层（内容与 /workspace 同一份，
@@ -3096,6 +3115,8 @@ export default {
       fileList,
       loadingFiles,
       openFilePanel,
+      openWorkspaceFolder,
+      accessAllowFull,
       loadFiles,
       downloadFile,
       // 删除（文件面板）

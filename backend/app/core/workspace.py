@@ -114,7 +114,7 @@ def legacy_entries() -> list[Path]:
     out: list[Path] = []
     for entry in sorted(base.iterdir()):
         name = entry.name
-        if name == ANONYMOUS_DIR or name.startswith("workspace_backup_"):
+        if name in (ANONYMOUS_DIR, ".docker-import-complete") or name.startswith("workspace_backup_"):
             continue
         # 32 位十六进制 = uuid4().hex，正是我们的 user_id / 已搬迁目录
         if entry.is_dir() and len(name) == 32 and all(c in "0123456789abcdef" for c in name):

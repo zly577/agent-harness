@@ -113,7 +113,9 @@ class Settings(BaseSettings):
 
     # ===== MCP =====
     # 总开关：是否加载外部 MCP 工具。关掉时数据库里的配置都留着，只是不连。
-    mcp_enabled: bool = False
+    mcp_enabled: bool = True
+    # Windows Docker 个人部署注册的工作区打开协议；普通服务器留空。
+    workspace_open_protocol: bool = False
     # 单个 MCP server 的连接超时（秒）。
     # ⚠️ 这不是"越小越好"的调参项：build_mcp_tools 跑在 get_agent() 里、也就是在
     # **请求路径上**，一个不可达的端点会把"建 agent"整段卡住。所以必须有上限。
@@ -203,7 +205,7 @@ class Settings(BaseSettings):
     #         每个挂载点在模型侧是一个 `/mnt/<名称>/...` 目录（例如 /mnt/d/Deepseek_Harness/a.py
     #         就是 D:\Deepseek_Harness\a.py）。execute 仍然只在沙箱容器里跑。
     # False = 只有工作区可见（行为）。
-    harness_machine_access: bool = False
+    harness_machine_access: bool = True
     # 挂载点定义：逗号分隔，支持 `名称=路径` 与裸路径两种写法。
     #   例：HARNESS_MACHINE_MOUNTS=d=D:/,home=C:/Users/Administrator,proj=D:/work/api
     # 留空 = 自动挂载本机所有存在的盘符（c=C:/、d=D:/ ……）。

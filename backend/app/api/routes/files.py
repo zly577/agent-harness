@@ -27,6 +27,8 @@
 不走智能体的 HITL 审批流。
 """
 from urllib.parse import quote
+import os
+import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
@@ -38,6 +40,29 @@ from app.api.deps import get_current_user
 from app.db.models import User
 
 router = APIRouter(prefix="/api/v1/files", tags=["files"])
+
+
+@router.post("/open-workspace")
+def open_workspace(user: User = Depends(get_current_user)):
+    """打开当前用户的根工作区；不接受任意路径或其他用户 id。"""
+    from app.core.config import settings
+    from app.core.workspace import ensure_workspace
+
+    if not re.fullmatch(r"[0-9a-f]{32}", user.id):
+        raise HTTPException(status_code=400, detail="用户工作区标识无效")
+    root = ensure_workspace(user.id)
+    if os.name == "nt":
+        try:
+            os.startfile(str(root))
+        except OSError as exc:
+            raise HTTPException(status_code=503, detail="当前 Windows 会话无法打开资源管理器") from exc
+        return {"opened": True, "open_url": None}
+    if settings.workspace_open_protocol:
+        return {"opened": False, "open_url": f"agent-harness-workspace://open/{user.id}"}
+    raise HTTPException(
+        status_code=409,
+        detail="此部署没有本机文件夹打开入口。Windows Docker 请通过 start-windows.ps1 启动；远程服务器请使用下载功能。",
+    )
 
 
 def _user_backend(user: User):

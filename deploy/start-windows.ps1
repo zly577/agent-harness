@@ -3,6 +3,7 @@
 param(
     [switch]$Sandbox,
     [switch]$ConfigureOnly,
+    [switch]$SkipDesktopIntegration,
     [ValidateSet('Up', 'Down', 'Status', 'Logs')]
     [string]$Action = 'Up'
 )
@@ -11,6 +12,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $taskRoot = Split-Path -Parent $PSScriptRoot
 $taskOverride = Join-Path $taskRoot 'docker-compose.host.generated.yml'
+$taskWorkspace = Join-Path $taskRoot 'workspace'
 
 function Write-HostDriveConfig {
     $taskVolumes = @()
@@ -26,17 +28,23 @@ function Write-HostDriveConfig {
                 type = 'bind'
                 source = $taskSource
                 target = "/host/$taskLetter"
-                read_only = $true
+                read_only = $false
                 bind = @{ create_host_path = $false }
             }
             $taskMounts += "$taskLetter=/host/$taskLetter"
-            Write-Host "Read-only drive: $taskSource -> /mnt/$taskLetter"
+            Write-Host "Mode-controlled drive: $taskSource -> /mnt/$taskLetter"
         } catch {
             Write-Warning "Skipping an unavailable drive: $($_.Exception.Message)"
         }
     }
     if ($taskVolumes.Count -eq 0) {
         throw 'No ready local fixed/removable drives found. Run this entry point on Windows.'
+    }
+    $taskVolumes += [ordered]@{
+        type = 'bind'
+        source = $taskWorkspace.Replace('\', '/')
+        target = '/app/workspace'
+        bind = @{ create_host_path = $false }
     }
     $taskConfig = [ordered]@{
         services = @{
@@ -45,7 +53,10 @@ function Write-HostDriveConfig {
                 environment = @{
                     HARNESS_MACHINE_ACCESS = 'true'
                     HARNESS_MACHINE_MOUNTS = ($taskMounts -join ',')
-                    HARNESS_ALLOW_FULL_ACCESS = 'false'
+                    HARNESS_ALLOW_FULL_ACCESS = 'true'
+                    HARNESS_ACCESS_MODE = 'sandbox'
+                    WORKSPACE_OPEN_PROTOCOL = $(if ($SkipDesktopIntegration) { 'false' } else { 'true' })
+                    MCP_ENABLED = 'true'
                     SANDBOX_MOUNT_MACHINE_DIRS = 'false'
                     ALLOW_REGISTRATION = 'false'
                 }
@@ -55,7 +66,7 @@ function Write-HostDriveConfig {
     # JSON is valid YAML; avoid path quoting differences across PowerShell versions.
     $taskText = ConvertTo-Json -InputObject $taskConfig -Depth 8
     [System.IO.File]::WriteAllText($taskOverride, $taskText + "`n", [System.Text.UTF8Encoding]::new($false))
-    Write-Host 'Host disks are shared across existing application accounts. Use this mode for personal deployment.'
+    Write-Host 'Default mode reads disks; full mode can modify disks and run LocalShell. Personal deployment only.'
 }
 
 function Invoke-TaskDocker {
@@ -88,6 +99,26 @@ try {
                 'run', '--rm', '--mount', "type=bind,source=$taskRoot,target=/project",
                 '-w', '/project', 'python:3.12-slim', 'python', 'deploy/init-env.py'
             )
+        }
+        New-Item -ItemType Directory -Path $taskWorkspace -Force | Out-Null
+        # One-time import of the previous named workspace volume. Stop writers
+        # and preserve any existing host files; never delete the old volume.
+        $taskMigrationMarker = Join-Path $taskWorkspace '.docker-import-complete'
+        if (-not (Test-Path -LiteralPath $taskMigrationMarker)) {
+            $taskLegacyVolume = & docker volume ls --filter 'name=^agent-harness_workspace_data$' --format '{{.Name}}'
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect existing workspace volume.' }
+            if ($taskLegacyVolume -contains 'agent-harness_workspace_data') {
+                Invoke-TaskDocker -DockerArgs @('compose', '-f', 'docker-compose.yml', 'stop', 'backend')
+                Invoke-TaskDocker -DockerArgs @(
+                    'run', '--rm', '--mount', 'type=volume,source=agent-harness_workspace_data,target=/old,readonly',
+                    '--mount', "type=bind,source=$taskWorkspace,target=/new", 'alpine:3.22',
+                    'sh', '-c', 'cp -an /old/. /new/'
+                )
+            }
+            [System.IO.File]::WriteAllText($taskMigrationMarker, 'Imported without replacing existing files.')
+        }
+        if (-not $SkipDesktopIntegration) {
+            & (Join-Path $PSScriptRoot 'register-workspace.ps1')
         }
     }
     $taskComposeArgs = @('compose', '-f', 'docker-compose.yml')
