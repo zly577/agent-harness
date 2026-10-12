@@ -1,160 +1,88 @@
 <template>
-  <!--
-    登录 / 注册视图。
-
-    为什么做成一个独立组件而不是塞进 App.vue：App.vue 已经 3400+ 行，
-    而"未登录"和"已登录"两套界面之间**没有共享状态**（登录成功后整个主界面
-    重新挂载），拆开能让 App.vue 的改动收敛到"一行 v-if + 一个回调"。
-  -->
   <div class="auth-wrap">
     <div class="auth-card">
-      <div class="auth-brand">
-        <span class="auth-mark">AH</span>
-        <div>
-          <h1>Agent Harness</h1>
-          <p>DeepAgents 通用智能体</p>
-        </div>
-      </div>
-
+      <div class="auth-brand"><span class="auth-mark">AH</span><div><h1>Agent Harness</h1><p>你的 AI 工作助手</p></div></div>
       <div class="auth-tabs">
-        <button
-          type="button"
-          class="auth-tab"
-          :class="{ active: mode === 'login' }"
-          @click="switchMode('login')"
-        >登录</button>
-        <button
-          type="button"
-          class="auth-tab"
-          :class="{ active: mode === 'register' }"
-          @click="switchMode('register')"
-        >注册</button>
+        <button v-for="item in [{key: 'login', label: '登录'}, {key: 'register', label: '注册'}]" :key="item.key" type="button" class="auth-tab" :class="{ active: mode === item.key }" :disabled="busy || sending" @click="switchMode(item.key)">{{ item.label }}</button>
       </div>
-
       <form class="auth-form" @submit.prevent="submit">
-        <label class="auth-field">
-          <span>邮箱</span>
-          <input
-            v-model="email"
-            type="text"
-            autocomplete="username"
-            placeholder="admin@local"
-            :disabled="busy"
-            autofocus
-          />
-        </label>
-
-        <label class="auth-field">
-          <span>口令</span>
-          <input
-            v-model="password"
-            type="password"
-            :autocomplete="mode === 'login' ? 'current-password' : 'new-password'"
-            :placeholder="mode === 'register' ? '至少 8 位' : '请输入口令'"
-            :disabled="busy"
-          />
-        </label>
-
-        <label v-if="mode === 'register'" class="auth-field">
-          <span>昵称<em>（可空）</em></span>
-          <input v-model="displayName" type="text" placeholder="怎么称呼你" :disabled="busy" />
-        </label>
-
-        <!-- 错误提示：中文、就地展示（不用 alert，不打断输入） -->
-        <p v-if="error" class="auth-error">{{ error }}</p>
-        <p v-else-if="hintText" class="auth-hint">{{ hintText }}</p>
-
-        <button class="auth-submit" type="submit" :disabled="busy || !canSubmit">
-          {{ busy ? '请稍候…' : (mode === 'login' ? '登录' : '注册并登录') }}
-        </button>
+        <label class="auth-field"><span>邮箱</span><input v-model="email" type="text" inputmode="email" autocomplete="username" placeholder="请输入邮箱地址" maxlength="255" required :disabled="busy || sending" autofocus /></label>
+        <label class="auth-field"><span>密码</span><input v-model="password" type="password" :autocomplete="mode === 'login' ? 'current-password' : 'new-password'" :placeholder="mode === 'register' ? '请设置 8–128 位密码' : '请输入密码'" :minlength="mode === 'register' ? 8 : 1" maxlength="128" required :disabled="busy" /></label>
+        <template v-if="mode === 'register'">
+          <div class="auth-field">
+            <label for="registration-code">邮箱验证码</label>
+            <div class="auth-code-row">
+              <input id="registration-code" v-model="code" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="6 位数字验证码" pattern="[0-9]{6}" maxlength="6" required :disabled="busy" />
+              <button type="button" class="auth-code-button" :disabled="busy || sending || cooldown > 0 || !validEmail" @click="sendCode">{{ sending ? '发送中…' : cooldown > 0 ? `${cooldown} 秒后重发` : '获取验证码' }}</button>
+            </div>
+            <span>验证码 10 分钟内有效，未收到时请检查垃圾邮件。</span>
+          </div>
+          <label class="auth-field"><span>昵称<em>（选填）</em></span><input v-model="displayName" type="text" autocomplete="nickname" maxlength="128" placeholder="希望我们怎么称呼你" :disabled="busy" /></label>
+        </template>
+        <p v-if="error" class="auth-error" role="alert">{{ error }}</p>
+        <p v-else-if="hintText" class="auth-hint" role="status">{{ hintText }}</p>
+        <button class="auth-submit" type="submit" :disabled="busy || sending || !canSubmit">{{ busy ? (mode === 'login' ? '正在登录…' : '正在注册…') : (mode === 'login' ? '登录' : '注册并登录') }}</button>
       </form>
-
-      <p class="auth-foot">
-        <template v-if="mode === 'login'">
-          还没有账号？<a href="#" @click.prevent="switchMode('register')">注册一个</a>
-        </template>
-        <template v-else>
-          已有账号？<a href="#" @click.prevent="switchMode('login')">去登录</a>
-        </template>
-      </p>
+      <p class="auth-foot"><template v-if="mode === 'login'">还没有账号？<a href="#" @click.prevent="switchMode('register')">立即注册</a></template><template v-else>已有账号？<a href="#" @click.prevent="switchMode('login')">去登录</a></template></p>
     </div>
   </div>
 </template>
 
 <script>
-import { computed, ref } from 'vue'
-import { ApiError, login as apiLogin, register as apiRegister } from './api'
+import { computed, onUnmounted, ref, watch } from 'vue'
+import { ApiError, login as apiLogin, register as apiRegister, sendRegistrationCode } from './api'
 
 export default {
   name: 'AuthView',
   emits: ['authed'],
-  props: {
-    /**
-     * 由主界面传入的说明文字（如"登录已失效，请重新登录"）。
-     * 为什么不用 alert：那是"打断式"提示，用户点掉之后就没有任何上下文了；
-     * 就地显示在表单上方，用户一眼能明白刚才发生了什么。
-     */
-    notice: { type: String, default: '' },
-  },
+  props: { notice: { type: String, default: '' } },
   setup(props, { emit }) {
-    const mode = ref('login')
-    const email = ref('')
-    const password = ref('')
-    const displayName = ref('')
-    const busy = ref(false)
-    const error = ref('')
-    const hint = ref('')
-
-    // 本地提示优先；没有就显示主界面传进来的原因（例如被踢回登录页）
+    const mode = ref('login'), email = ref(''), password = ref(''), displayName = ref(''), code = ref('')
+    const busy = ref(false), sending = ref(false), error = ref(''), hint = ref(''), now = ref(Date.now())
+    const resendAt = ref({})
+    const normalizedEmail = computed(() => email.value.trim().toLowerCase())
+    const cooldown = computed(() => Math.max(0, Math.ceil(((resendAt.value[normalizedEmail.value] || 0) - now.value) / 1000)))
+    const timer = setInterval(() => { now.value = Date.now() }, 500)
+    onUnmounted(() => clearInterval(timer))
+    watch(email, () => { code.value = ''; error.value = ''; hint.value = '' })
+    const validEmail = computed(() => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalizedEmail.value))
     const hintText = computed(() => hint.value || props.notice || '')
-
-    const canSubmit = computed(() => email.value.trim().length > 0 && password.value.length > 0)
-
+    const canSubmit = computed(() => normalizedEmail.value && password.value.length > 0 && (mode.value === 'login' || (validEmail.value && password.value.length >= 8 && /^[0-9]{6}$/.test(code.value))))
+    const errorMessage = e => e instanceof ApiError ? e.message : '暂时无法连接服务，请检查网络后重试'
     function switchMode(next) {
-      if (mode.value === next) return
+      if (busy.value || sending.value || mode.value === next) return
       mode.value = next
-      error.value = ''
-      hint.value = ''
+      error.value = ''; hint.value = ''; code.value = ''
     }
-
-    /**
-     * 注册成功后**顺手登录**。
-     *
-     * 后端把注册与登录做成两个语义清晰的接口（注册只回用户信息），
-     * 但用户不该为这个设计多付一次操作 —— 所以这里自动串起来；
-     * 万一自动登录失败（比如注册后立刻被禁用），退化成"请手动登录"的提示。
-     */
+    async function sendCode() {
+      if (busy.value || sending.value || cooldown.value || !validEmail.value) return
+      sending.value = true; error.value = ''; hint.value = ''
+      try {
+        const result = await sendRegistrationCode(normalizedEmail.value)
+        resendAt.value[normalizedEmail.value] = Date.now() + result.retry_after * 1000
+        now.value = Date.now()
+        hint.value = result.detail
+      } catch (e) { error.value = errorMessage(e) }
+      finally { sending.value = false }
+    }
     async function submit() {
-      if (busy.value || !canSubmit.value) return
-      busy.value = true
-      error.value = ''
-      hint.value = ''
-
+      if (busy.value || sending.value || !canSubmit.value) return
+      busy.value = true; error.value = ''; hint.value = ''
+      let registered = false
       try {
         if (mode.value === 'register') {
-          await apiRegister(email.value.trim(), password.value, displayName.value.trim())
+          await apiRegister(normalizedEmail.value, password.value, displayName.value.trim(), code.value)
+          registered = true
           hint.value = '注册成功，正在登录…'
         }
-        const data = await apiLogin(email.value.trim(), password.value)
+        const data = await apiLogin(normalizedEmail.value, password.value)
         emit('authed', { token: data.access_token, user: data.user })
       } catch (e) {
-        if (e instanceof ApiError) {
-          error.value = e.message
-          // 注册被关闭时引导用户找管理员，而不是让他反复重试
-          if (mode.value === 'register' && e.status === 403) {
-            hint.value = '如果是你自己部署的，请在 .env 里把 ALLOW_REGISTRATION 设为 true'
-          }
-        } else {
-          // 网络层异常（后端没起来 / 端口不对）—— 说清楚可能的原因，
-          // 否则用户只会看到一句 "Failed to fetch"。
-          error.value = `无法连接后端服务（${e.message}）。请确认后端已在 8000 端口启动。`
-        }
-      } finally {
-        busy.value = false
-      }
+        if (registered) { mode.value = 'login'; code.value = ''; error.value = '注册成功，但自动登录失败，请重新登录' }
+        else error.value = errorMessage(e)
+      } finally { busy.value = false }
     }
-
-    return { mode, email, password, displayName, busy, error, hint, hintText, canSubmit, switchMode, submit }
+    return { mode, email, password, displayName, code, busy, sending, error, hintText, cooldown, validEmail, canSubmit, switchMode, sendCode, submit }
   },
 }
 </script>
@@ -292,4 +220,8 @@ export default {
 .auth-foot a {
   color: var(--btn);
 }
+.auth-code-row { display: flex; gap: 8px; }
+.auth-code-row input { min-width: 0; flex: 1; }
+.auth-code-button { padding: 0 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--fill); color: var(--text); white-space: nowrap; cursor: pointer; }
+.auth-code-button:disabled { opacity: 0.5; cursor: default; }
 </style>

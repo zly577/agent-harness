@@ -36,7 +36,7 @@ def _validate_url(value: str | None) -> str:
     if not parsed.hostname:
         raise ValueError("url 缺少主机名（例如 https://mcp.example.com/mcp）")
     if parsed.username or parsed.password:
-        raise ValueError("url 不要带用户名/口令（请改用 headers 里的 Authorization）")
+        raise ValueError("url 不要带用户名/密码（请改用 headers 里的 Authorization）")
     return text
 
 

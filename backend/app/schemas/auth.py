@@ -1,16 +1,4 @@
-"""认证接口的请求/响应模型。
-
-## 为什么不用 `pydantic.EmailStr`
-
-`EmailStr` 需要额外装 `email-validator`（本机未装），而且它的校验规则会**拒绝
-`admin@local` 这种没有顶级域的名字** —— 恰恰是引导管理员的默认登录名。
-在这个项目里 email 只是"登录标识"，不是信件投递地址，所以用一条刻意的宽松规则：
-
-    <非空且无空白与 @ 的本地部分>@<非空无空白且无 @ 的域名部分>
-
-换成严格校验的收益（挡住 `a@b`）远小于它带来的"自己的默认账号登不进去"的麻烦。
-真要收紧，改 `_validate_email` 一处即可，注册/登录/引导三条路径都走它。
-"""
+"""注册要求可投递邮箱；登录保留 admin@local 的兼容性。"""
 from __future__ import annotations
 
 import re
@@ -21,9 +9,9 @@ from pydantic import BaseModel, Field, field_validator
 #: 一条 @，两侧都非空、无空白。故意不要求顶级域（见模块头注释）
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+$")
 
-#: 口令长度上下限。
+#: 密码长度上下限。
 #: 上限不是"安全"考虑而是**成本**考虑：argon2id 按输入长度做哈希，
-#: 一个超长口令（或恶意构造的 1MB 字符串）会明显拖慢 CPU。
+#: 一个超长密码（或恶意构造的 1MB 字符串）会明显拖慢 CPU。
 PASSWORD_MIN = 8
 PASSWORD_MAX = 128
 
@@ -36,27 +24,36 @@ def _validate_email(value: str) -> str:
     return email
 
 
-class RegisterRequest(BaseModel):
+class SendRegistrationCodeRequest(BaseModel):
+    email: str
+
+    @field_validator("email")
+    @classmethod
+    def _email(cls, v: str) -> str:
+        email = _validate_email(v)
+        if not re.fullmatch(r"[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+", email):
+            raise ValueError("请输入可接收邮件的邮箱地址")
+        return email
+
+
+class RegisterRequest(SendRegistrationCodeRequest):
     """自助注册。是否开放由配置 `ALLOW_REGISTRATION` 控制。"""
 
     email: str = Field(..., description="登录邮箱（大小写不敏感）")
     password: str = Field(
         ..., min_length=PASSWORD_MIN, max_length=PASSWORD_MAX,
-        description=f"口令，{PASSWORD_MIN}~{PASSWORD_MAX} 位",
+        description=f"密码，{PASSWORD_MIN}~{PASSWORD_MAX} 位",
     )
+    verification_code: str = Field(..., pattern=r"^[0-9]{6}$", description="6 位邮箱验证码")
     display_name: str = Field("", max_length=128, description="展示名，可空（默认取邮箱 @ 前的部分）")
 
-    @field_validator("email")
-    @classmethod
-    def _email(cls, v: str) -> str:
-        return _validate_email(v)
 
 
 class LoginRequest(BaseModel):
     """登录。"""
 
     email: str = Field(..., description="登录邮箱")
-    password: str = Field(..., min_length=1, max_length=PASSWORD_MAX, description="口令")
+    password: str = Field(..., min_length=1, max_length=PASSWORD_MAX, description="密码")
 
     @field_validator("email")
     @classmethod
@@ -101,17 +98,17 @@ class TokenResponse(BaseModel):
 
 
 class ChangePasswordRequest(BaseModel):
-    """改口令。
+    """改密码。
 
     ⚠️ 必须是**请求体**，不能写成函数参数（那会变成 query string）：
-    口令出现在 URL 里会被 uvicorn 的 access log、反向代理日志、浏览器历史
-    统统记下来 —— 一个"改口令"接口把口令写进日志，比不改还糟。
+    密码出现在 URL 里会被 uvicorn 的 access log、反向代理日志、浏览器历史
+    统统记下来 —— 一个"改密码"接口把密码写进日志，比不改还糟。
     """
 
-    old_password: str = Field(..., min_length=1, max_length=PASSWORD_MAX, description="原口令")
+    old_password: str = Field(..., min_length=1, max_length=PASSWORD_MAX, description="原密码")
     new_password: str = Field(
         ..., min_length=PASSWORD_MIN, max_length=PASSWORD_MAX,
-        description=f"新口令，{PASSWORD_MIN}~{PASSWORD_MAX} 位",
+        description=f"新密码，{PASSWORD_MIN}~{PASSWORD_MAX} 位",
     )
 
 

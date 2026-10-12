@@ -39,8 +39,8 @@ def _validate_base_url(value: str | None) -> str | None:
     if not parsed.hostname:
         raise ValueError("base_url 缺少主机名（例如 https://api.openai.com/v1）")
     if parsed.username or parsed.password:
-        # 把用户名口令写进 URL 会被各处日志顺手记下来，明确拒绝
-        raise ValueError("base_url 不要带用户名/口令（请用 api_key 字段）")
+        # 把用户名密码写进 URL 会被各处日志顺手记下来，明确拒绝
+        raise ValueError("base_url 不要带用户名/密码（请用 api_key 字段）")
     return text.rstrip("/")
 
 

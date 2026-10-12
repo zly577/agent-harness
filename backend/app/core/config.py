@@ -247,7 +247,16 @@ class Settings(BaseSettings):
     #    所以生产环境请纳入密钥管理并备份。development 下留空同 jwt_secret 的处理。
     fernet_key: str = ""
 
-    # 是否开放自助注册。开发期 true；私有部署建议 false（用户由管理员创建）。
+    # 注册验证码邮件服务。
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    smtp_ssl: bool = False
+    smtp_starttls: bool = True
+
+    # 是否开放自助注册。私有部署建议 false。
     allow_registration: bool = True
 
     # 引导管理员：迁移时若 users 表为空则创建它，并把存量会话/日志归属到它。

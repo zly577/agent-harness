@@ -80,7 +80,7 @@ export function setSession(token, user) {
   }
 }
 
-/** 只更新用户信息（如改完口令/改名后刷新展示）。 */
+/** 只更新用户信息（如改完密码/改名后刷新展示）。 */
 export function setUser(user) {
   setSession(_token, user)
 }
@@ -133,14 +133,22 @@ function describeError(status, body) {
   if (Array.isArray(detail) && detail.length) {
     const first = detail[0] || {}
     const field = Array.isArray(first.loc) ? first.loc[first.loc.length - 1] : ''
-    const msg = first.msg || '参数不合法'
+    const labels = { email: '邮箱', password: '密码', verification_code: '验证码', display_name: '昵称', old_password: '原密码', new_password: '新密码' }
+    if (labels[field]) {
+      if (first.type === 'missing') return `请输入${labels[field]}`
+      if (field === 'verification_code') return '请输入 6 位数字验证码'
+      if (field.includes('password')) return '密码长度应为 8–128 位'
+      if (field === 'email') return '请输入正确的邮箱地址'
+      return '昵称不能超过 128 个字符'
+    }
+    const msg = first.msg || '请检查填写的内容'
     return field ? `${field}：${msg}` : msg
   }
   if (status === 401) return '登录已失效，请重新登录'
   if (status === 403) return '没有权限执行该操作'
   if (status === 404) return '请求的资源不存在'
   if (status === 409) return '操作冲突，请刷新后重试'
-  if (status >= 500) return `服务端错误（HTTP ${status}）`
+  if (status >= 500) return '服务暂时不可用，请稍后再试'
   return `请求失败（HTTP ${status}）`
 }
 
@@ -184,8 +192,8 @@ export async function apiFetchRaw(path, opts = {}) {
       /* 响应不是 JSON（比如网关返回的 HTML）→ 用默认文案 */
     }
     if (skipAuth) {
-      // 登录/注册接口自己返回的 401（例如口令错）**不是**"凭证失效"，
-      // 绝不能顺手把全局登录态清掉 —— 否则用户在登录页输错一次口令，
+      // 登录/注册接口自己返回的 401（例如密码错）**不是**"凭证失效"，
+      // 绝不能顺手把全局登录态清掉 —— 否则用户在登录页输错一次密码，
       // 会被"登出"一次，页面跟着抖一下。
     } else if (silent401) {
       clearSession()
@@ -218,7 +226,7 @@ export async function apiFetchRaw(path, opts = {}) {
     }
     const message =
       resp.status >= 500 && !text.trim()
-        ? `连不上后端（HTTP ${resp.status}）：后端进程可能已停止或正在重启，请确认后端已启动`
+        ? '暂时无法连接服务，请稍后再试'
         : describeError(resp.status, body)
     throw new ApiError(message, resp.status, body)
   }
@@ -269,12 +277,16 @@ export async function login(email, password) {
   return data
 }
 
-export async function register(email, password, displayName) {
+export async function register(email, password, displayName, verificationCode) {
   return apiFetch('/api/v1/auth/register', {
     method: 'POST',
-    body: { email, password, display_name: displayName || '' },
+    body: { email, password, display_name: displayName || '', verification_code: verificationCode },
     skipAuth: true,
   })
+}
+
+export function sendRegistrationCode(email) {
+  return apiFetch('/api/v1/auth/register/code', { method: 'POST', body: { email }, skipAuth: true })
 }
 
 export function logout() {

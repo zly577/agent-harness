@@ -1,8 +1,8 @@
 """认证流程测试。
 
 覆盖：未登录 401（含"所有业务端点都受保护"的结构性断言）、注册、登录、
-当前用户、口令校验、token 过期/伪造、禁用账号、注册开关、改口令，
-以及"口令在库里是 argon2 哈希、任何接口都不回明文"。
+当前用户、密码校验、token 过期/伪造、禁用账号、注册开关、改密码，
+以及"密码在库里是 argon2 哈希、任何接口都不回明文"。
 
 ⚠️ 这些用例连的是**真实 MySQL**（本项目既有约定：`app.db.session.engine` 在
 import 时就绑定 `settings.mysql_url`）。所有测试账号都用 `@p18.test` 域名，
@@ -17,6 +17,17 @@ from app.core.security import create_access_token, hash_password
 from app.db.models import User
 from app.db.session import SessionLocal
 from tests.helpers import TEST_EMAIL_DOMAIN, TEST_PASSWORD, create_user, unique_email
+
+
+@pytest.fixture
+def registration_code(anon_client, monkeypatch):
+    captured = {}
+    monkeypatch.setattr("app.api.routes.auth.send_registration_code", lambda email, code: captured.update({email: code}))
+    def send(email):
+        response = anon_client.post("/api/v1/auth/register/code", json={"email": email})
+        assert response.status_code == 200, response.text
+        return captured[email.lower()]
+    return send
 
 
 # ============================================================================
@@ -102,12 +113,13 @@ def test_public_endpoints_reachable_without_login(anon_client):
 # ============================================================================
 
 
-def test_register_login_me_flow(anon_client):
+def test_register_login_me_flow(anon_client, registration_code):
     """完整闭环：注册 → 登录 → 带 token 取 me。"""
     email = unique_email("flow")
+    code = registration_code(email)
     resp = anon_client.post(
         "/api/v1/auth/register",
-        json={"email": email, "password": TEST_PASSWORD, "display_name": "闭环用户"},
+        json={"email": email, "password": TEST_PASSWORD, "display_name": "闭环用户", "verification_code": code},
     )
     assert resp.status_code == 201, resp.text
     created = resp.json()
@@ -131,16 +143,17 @@ def test_register_login_me_flow(anon_client):
     assert resp.json()["id"] == created["id"]
 
 
-def test_register_email_is_case_insensitive(anon_client):
+def test_register_email_is_case_insensitive(anon_client, registration_code):
     """`A@x` 与 `a@x` 必须视为同一账号（否则能注册出一堆重复用户）。"""
     email = unique_email("case")
+    code = registration_code(email)
     upper = email.upper()
     assert anon_client.post(
-        "/api/v1/auth/register", json={"email": upper, "password": TEST_PASSWORD}
+        "/api/v1/auth/register", json={"email": upper, "password": TEST_PASSWORD, "verification_code": code}
     ).status_code == 201
     # 用不同大小写再注册一次 → 409
     resp = anon_client.post(
-        "/api/v1/auth/register", json={"email": email, "password": TEST_PASSWORD}
+        "/api/v1/auth/register", json={"email": email, "password": TEST_PASSWORD, "verification_code": code}
     )
     assert resp.status_code == 409
     # 用原始大小写也能登录
@@ -149,13 +162,14 @@ def test_register_email_is_case_insensitive(anon_client):
     ).status_code == 200
 
 
-def test_register_duplicate_email_409(anon_client):
+def test_register_duplicate_email_409(anon_client, registration_code):
     email = unique_email("dup")
+    code = registration_code(email)
     assert anon_client.post(
-        "/api/v1/auth/register", json={"email": email, "password": TEST_PASSWORD}
+        "/api/v1/auth/register", json={"email": email, "password": TEST_PASSWORD, "verification_code": code}
     ).status_code == 201
     resp = anon_client.post(
-        "/api/v1/auth/register", json={"email": email, "password": TEST_PASSWORD}
+        "/api/v1/auth/register", json={"email": email, "password": TEST_PASSWORD, "verification_code": code}
     )
     assert resp.status_code == 409
     assert "已被注册" in resp.json()["detail"]
@@ -180,7 +194,7 @@ def test_register_respects_allow_registration_flag(anon_client, monkeypatch):
     """`ALLOW_REGISTRATION=false` 时自助注册必须被拒（403）。"""
     monkeypatch.setattr(settings, "allow_registration", False)
     resp = anon_client.post(
-        "/api/v1/auth/register", json={"email": unique_email("closed"), "password": TEST_PASSWORD}
+        "/api/v1/auth/register", json={"email": unique_email("closed"), "password": TEST_PASSWORD, "verification_code": "123456"}
     )
     assert resp.status_code == 403
     assert "关闭自助注册" in resp.json()["detail"]
@@ -199,7 +213,7 @@ def test_login_wrong_password_401(anon_client, auth_user):
 
 
 def test_login_unknown_email_gives_same_message(anon_client, auth_user):
-    """账号不存在与口令错误必须给**完全相同**的响应（防账号枚举）。"""
+    """账号不存在与密码错误必须给**完全相同**的响应（防账号枚举）。"""
     wrong_pwd = anon_client.post(
         "/api/v1/auth/login", json={"email": auth_user["email"], "password": "WrongPassw0rd!"}
     )
@@ -208,11 +222,11 @@ def test_login_unknown_email_gives_same_message(anon_client, auth_user):
         json={"email": f"nobody_{uuid.uuid4().hex[:8]}@{TEST_EMAIL_DOMAIN}", "password": "WrongPassw0rd!"},
     )
     assert wrong_pwd.status_code == no_user.status_code == 401
-    assert wrong_pwd.json()["detail"] == no_user.json()["detail"] == "邮箱或口令不正确"
+    assert wrong_pwd.json()["detail"] == no_user.json()["detail"] == "邮箱或密码不正确"
 
 
 def test_login_inactive_user_401(anon_client):
-    """被禁用的账号不能登录（口令对也不行）。"""
+    """被禁用的账号不能登录（密码对也不行）。"""
     user = create_user(is_active=False)
     resp = anon_client.post(
         "/api/v1/auth/login", json={"email": user["email"], "password": user["password"]}
@@ -280,16 +294,17 @@ def test_valid_token_for_inactive_user_401(anon_client):
 
 
 # ============================================================================
-# 5. 口令存储与泄漏
+# 5. 密码存储与泄漏
 # ============================================================================
 
 
-def test_password_stored_as_argon2_hash(anon_client):
+def test_password_stored_as_argon2_hash(anon_client, registration_code):
     """库里必须是 argon2id 哈希，绝不能出现明文。"""
     email = unique_email("hash")
+    code = registration_code(email)
     password = "Sup3rSecret!Pass"
     assert anon_client.post(
-        "/api/v1/auth/register", json={"email": email, "password": password}
+        "/api/v1/auth/register", json={"email": email, "password": password, "verification_code": code}
     ).status_code == 201
 
     db = SessionLocal()
@@ -302,11 +317,12 @@ def test_password_stored_as_argon2_hash(anon_client):
         db.close()
 
 
-def test_auth_responses_never_leak_password_material(anon_client, auth_user):
-    """注册/登录/me 的响应体里不能出现口令或哈希的任何痕迹。"""
+def test_auth_responses_never_leak_password_material(anon_client, auth_user, registration_code):
+    """注册/登录/me 的响应体里不能出现密码或哈希的任何痕迹。"""
     secret = "ResponseLeak!Check1"
     email = unique_email("leak")
-    reg = anon_client.post("/api/v1/auth/register", json={"email": email, "password": secret})
+    code = registration_code(email)
+    reg = anon_client.post("/api/v1/auth/register", json={"email": email, "password": secret, "verification_code": code})
     login = anon_client.post("/api/v1/auth/login", json={"email": email, "password": secret})
     me = anon_client.get(
         "/api/v1/auth/me",
@@ -326,14 +342,14 @@ def test_auth_responses_never_leak_password_material(anon_client, auth_user):
 
 
 # ============================================================================
-# 6. 改口令
+# 6. 改密码
 # ============================================================================
 
 
 def test_change_password_flow(anon_client):
-    """旧口令校验 → 换新 → 新口令能登、旧口令不能登。
+    """旧密码校验 → 换新 → 新密码能登、旧密码不能登。
 
-    用**独立账号**而不是共享的 `auth_user`：这条用例会改口令，
+    用**独立账号**而不是共享的 `auth_user`：这条用例会改密码，
     万一中途断言失败没走到"复原"，共享账号会把同一 session 里的其它用例一起带崩。
     """
     user = create_user()
@@ -342,7 +358,7 @@ def test_change_password_flow(anon_client):
     token = login.json()["access_token"]
     h = {"Authorization": f"Bearer {token}"}
 
-    # 旧口令给错 → 401
+    # 旧密码给错 → 401
     assert anon_client.post(
         "/api/v1/auth/change-password",
         json={"old_password": "Nope!12345678", "new_password": new},
@@ -367,7 +383,7 @@ def test_change_password_flow(anon_client):
     assert anon_client.post(
         "/api/v1/auth/login", json={"email": user["email"], "password": old}
     ).status_code == 401
-    # 改口令**不会**让已签发的 token 失效（无状态 JWT 的固有语义）：
+    # 改密码**不会**让已签发的 token 失效（无状态 JWT 的固有语义）：
     # 所以这里不校验旧 token 失效 —— 要立刻踢下线得引入 token 版本号，
     # 那属于另一件事（本期不做，已记录在方案里）。
     assert anon_client.get("/api/v1/auth/me", headers=h).status_code == 200
