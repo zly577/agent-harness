@@ -50,4 +50,7 @@ $global:taskDockerFail = $true
 $taskCaught = $false
 try { & $taskEntry -Action Status } catch { $taskCaught = $true }
 Assert-Task $taskCaught 'Docker error swallowed.'
+# The final failure was intentional. GitHub's PowerShell wrapper propagates
+# LASTEXITCODE even after a caught exception, so clear the stub's exit status.
+$global:LASTEXITCODE = 0
 Write-Host 'Windows launcher checks passed: mappings, dry run, startup, env preservation, shutdown and errors.'
