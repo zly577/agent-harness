@@ -202,3 +202,6 @@ docker compose start
 GitHub 的 `Docker smoke` workflow 验证基础镜像构建、服务启动、健康检查与登录，并静态校验沙箱叠加配置。它不调用真实模型，也不宣称验证 OpenSandbox 端到端执行。
 
 GitHub CI 已验证基础 Docker 构建、启动与登录。Windows 入口在 CI 中使用替身 Docker 检查配置、升级命令和协议路径校验，不会挂载 CI 磁盘或打开资源管理器；真实桌面协议打开与 OpenSandbox 端到端执行需要在部署者电脑上验证。
+
+
+常见发件邮箱预设（QQ、163、企业邮箱、微软 OAuth）及连接/收信验证步骤见 [邮件服务配置](README-smtp.md)。

@@ -48,8 +48,13 @@ def main() -> None:
     if config.get("ALLOW_REGISTRATION", "false").lower() == "false":
         status, _ = request("/api/v1/auth/register", {
             "email": "docker-smoke@example.com", "password": "smoke-check-password",
+            "verification_code": "123456",
         })
-        assert status == 403, "注册关闭策略检查失败"
+        assert status == 403, f"注册关闭策略检查失败：HTTP {status}"
+        status, _ = request("/api/v1/auth/register/code", {
+            "email": "docker-smoke@example.com",
+        })
+        assert status == 403, f"注册关闭时仍可请求验证码：HTTP {status}"
     print("Docker 冒烟检查通过：页面、健康、登录、权限与注册策略。")
 
 

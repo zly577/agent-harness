@@ -33,6 +33,11 @@ jobs:
         run: docker compose up -d --build --wait --wait-timeout 300
       - name: Check web, authentication and deployment policy
         run: python3 deploy/smoke-test.py
+      - name: Check email registration and SMTP delivery
+        run: |
+          docker compose cp backend/tests/test_registration_codes.py backend:/tmp/test_registration_codes.py
+          docker compose cp backend/tests/test_registration_mail.py backend:/tmp/test_registration_mail.py
+          docker compose exec -T backend python -m pytest --noconftest /tmp/test_registration_codes.py /tmp/test_registration_mail.py
       - name: Check personal deployment file modes in Linux container
         run: |
           docker compose cp backend/tests/test_desktop_modes.py backend:/tmp/test_desktop_modes.py

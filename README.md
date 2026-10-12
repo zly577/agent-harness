@@ -181,3 +181,6 @@ npm run dev
 部署前设置 `ALLOW_REGISTRATION=true`，并配置 `SMTP_HOST`、`SMTP_PORT`、`SMTP_USERNAME`、`SMTP_PASSWORD`（邮箱服务的授权码）和 `SMTP_FROM`（允许发信的邮箱地址）。587 端口默认启用 STARTTLS；使用 465 端口时设置 `SMTP_SSL=true`。本地运行填写 `backend/.env`，Docker 部署填写根目录 `.env` 后重建后端容器。不要把真实密码提交到仓库。
 
 启动时 Alembic 自动创建 `registration_codes` 表；手动部署也可在 backend 目录执行 `alembic upgrade head`。未配置邮件服务时发送验证码会提示暂不可用，不会绕过邮箱验证。上线前需使用自己的 SMTP 账号完成一次真实收信验证。
+
+
+常见发件邮箱预设（QQ、163、企业邮箱、微软 OAuth）及连接/收信验证步骤见 [邮件服务配置](deploy/README-smtp.md)。

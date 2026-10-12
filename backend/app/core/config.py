@@ -248,6 +248,12 @@ class Settings(BaseSettings):
     fernet_key: str = ""
 
     # 注册验证码邮件服务。
+    smtp_provider: str = "custom"
+    smtp_auth_mode: str = "auto"
+    smtp_oauth_tenant: str = "common"
+    smtp_oauth_client_id: str = ""
+    smtp_oauth_client_secret: str = ""
+    smtp_oauth_refresh_token: str = ""
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_username: str = ""
