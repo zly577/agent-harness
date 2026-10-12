@@ -67,6 +67,9 @@ $taskOpener = Join-Path $taskFixture 'deploy/open-workspace.ps1'
 $taskUserId = 'a' * 32
 $taskOpenPath = & $taskOpener -WorkspaceUri "agent-harness-workspace://open/$taskUserId" -ValidateOnly
 Assert-Task ($taskOpenPath -eq (Join-Path (Join-Path $taskFixture 'workspace') $taskUserId)) 'Workspace URL maps to the wrong directory.'
+$taskOtherRoot = Join-Path $taskFixture 'other-deployment-workspace'
+$taskOtherPath = & $taskOpener -WorkspaceUri "agent-harness-workspace://open/$taskUserId" -WorkspaceRoot $taskOtherRoot -ValidateOnly
+Assert-Task ($taskOtherPath -eq (Join-Path $taskOtherRoot $taskUserId)) 'Explicit deployment workspace ignored.'
 foreach ($taskBadUri in @('https://example.com', 'agent-harness-workspace://open/../outside', "agent-harness-workspace://open/$taskUserId?command=bad")) {
     $taskRejected = $false
     try { & $taskOpener -WorkspaceUri $taskBadUri -ValidateOnly } catch { $taskRejected = $true }

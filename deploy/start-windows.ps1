@@ -118,7 +118,7 @@ try {
             [System.IO.File]::WriteAllText($taskMigrationMarker, 'Imported without replacing existing files.')
         }
         if (-not $SkipDesktopIntegration) {
-            & (Join-Path $PSScriptRoot 'register-workspace.ps1')
+            & (Join-Path $PSScriptRoot 'register-workspace.ps1') -WorkspaceRoot $taskWorkspace
         }
     }
     $taskComposeArgs = @('compose', '-f', 'docker-compose.yml')
