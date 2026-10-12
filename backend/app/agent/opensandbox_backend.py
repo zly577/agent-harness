@@ -59,6 +59,7 @@ import locale
 import logging
 import os
 import re
+import shlex
 import subprocess
 import tempfile
 import threading
@@ -229,6 +230,33 @@ class _SandboxEntry:
     remote_state: dict[str, tuple[float, int]] = field(default_factory=dict)
 
 
+def _ensure_sandbox_root(client, root: str) -> None:
+    """确保沙箱内的工作目录存在。
+
+    沙箱镜像（如 `python:3.11`）默认**不含** `/workspace`，而 `execute` 以它为
+    工作目录。若不预先创建，新会话里「本地工作区为空 ⇒ 无文件可推送 ⇒ 目录仍不存在」
+    时，每条命令都会失败：
+
+        invalid request, validation error working directory does not exist: /workspace
+
+    只有在模型先写过一个文件（触发同步、顺带建出目录）之后才恢复正常，所以这里
+    在创建沙箱后立刻补建一次，让 `execute` 从第一条命令起就可用。
+    """
+    from opensandbox.models.execd import RunCommandOpts
+
+    target = "/" + root.strip("/")
+    if target == "/":
+        return
+    try:
+        client.commands.run(  # type: ignore[attr-defined]
+            f"mkdir -p {shlex.quote(target)}",
+            opts=RunCommandOpts(working_directory="/"),
+        )
+    except Exception as e:  # noqa: BLE001
+        # 建目录失败不阻断沙箱创建：后续写文件仍可能把目录带出来。
+        logger.warning("[sandbox] 预创建工作目录 %s 失败: %s", target, e)
+
+
 class SandboxRegistry:
     """进程内沙箱连接池（每 session 一个沙箱，懒创建、atexit 统一销毁）。
 
@@ -340,6 +368,9 @@ class SandboxRegistry:
             )
             client = SandboxSync.create(settings.sandbox_image, **create_kwargs)
             volumes = []
+
+        # 沙箱镜像默认没有工作目录；必须先建出来，否则空工作区下 execute 全部失败。
+        _ensure_sandbox_root(client, settings.sandbox_root)
 
         logger.info(
             "[sandbox] created sandbox for session=%s id=%s domain=%s proxy=%s volumes=%d",
