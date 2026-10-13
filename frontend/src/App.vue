@@ -1068,7 +1068,7 @@ export default {
       edit_file: '正在修改',
       delete: '正在删除',
       execute: '正在执行命令',
-      tavily_search: '正在联网搜索',
+      web_search: '正在联网搜索',
       write_todos: '正在更新任务清单',
       reset_tool_breakers: '正在重置熔断',
       task: '正在委派子智能体',

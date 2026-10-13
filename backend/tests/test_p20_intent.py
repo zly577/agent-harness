@@ -187,7 +187,7 @@ def _two_call_script() -> list:
 
 
 def test_normalize_accepts_good_labels():
-    assert normalize_intent("查询北京今天的天气", "tavily_search") == "查询北京今天的天气"
+    assert normalize_intent("查询北京今天的天气", "web_search") == "查询北京今天的天气"
     # 内部多余空白收敛成单空格（仍然单行）
     assert normalize_intent("  读取 config.py   的前 50 行 ", "read_file") == \
         "读取 config.py 的前 50 行"

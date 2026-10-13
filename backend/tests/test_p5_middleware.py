@@ -34,12 +34,12 @@ def test_tool_call_limit_uses_library_middleware(monkeypatch):
     from app.core.config import settings
 
     monkeypatch.setattr(settings, "tool_call_thread_limit", 5, raising=False)
-    monkeypatch.setattr(settings, "tool_call_limit_tool", "tavily_search", raising=False)
+    monkeypatch.setattr(settings, "tool_call_limit_tool", "web_search", raising=False)
     mws = build_tool_call_limit_middlewares()
     assert mws, "打开 TOOL_CALL_THREAD_LIMIT 后应产出一个限制中间件"
     mw = mws[0]
     assert isinstance(mw, ToolCallLimitMiddleware)
-    assert mw.tool_name == "tavily_search", mw.tool_name
+    assert mw.tool_name == "web_search", mw.tool_name
     assert mw.thread_limit == 5, mw.thread_limit
     assert mw.exit_behavior == "continue", mw.exit_behavior
 

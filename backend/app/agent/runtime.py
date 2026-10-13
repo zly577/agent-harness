@@ -9,14 +9,10 @@
 import asyncio
 import json
 import logging
-import os
 import time
 import uuid
 from deepagents import create_deep_agent
 from langchain_core.messages import ToolMessage
-from langchain_core.tools import tool
-from langchain_tavily import TavilySearch
-from pydantic import BaseModel, Field
 from sqlalchemy import func
 
 from app.agent.context import build_summary_middleware, get_checkpointer, get_store
@@ -49,6 +45,7 @@ from app.agent.subagent_stream import (
     summarize_task,
 )
 from app.agent.subagents import load_all_subagents
+from app.agent.web_search import web_search
 from app.agent.tool_outcome import classify_tool_result
 from app.core.config import settings
 from app.core.workspace import workspace_for
@@ -283,80 +280,10 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
         for err in mcp_errors:
             logger.warning("[mcp] %s", err)
 
-    class TavilySearchInput(BaseModel):
-        query: str = Field(description="用户的搜索查询词")
-        max_results: int = Field(
-            description="用户要求返回的搜索结果条数，从用户问题中提取。如果用户没有指定，默认5"
-        )
-
-    @tool("tavily_search", args_schema=TavilySearchInput)
-    async def tavily_search(query: str, max_results: int = 5):
-        """
-        使用Tavily联网搜索最新网页信息。
-        用户经常会指定需要返回多少条结果，请从用户提问中提取数字填入max_results。
-        例如用户说：帮我搜3条关于xxx的资料，max_results就设为3。
-        当用户未指定条数，默认max_results=5。
-
-        Args:
-            query: 搜索关键词
-            max_results: 需要返回的搜索结果数量
-        """
-        # 缺 key 时必须**快速失败并说清楚**：langchain_tavily 在构造
-        # TavilySearchAPIWrapper 时就会抛 ValidationError，且它真正读取的来源是
-        # 环境变量 TAVILY_API_KEY（不是 settings）。以前这里只有一行被丢弃的
-        # `os.getenv(...)`，等于什么都没配置 —— 结果是子智能体一搜就失败，
-        # 它只能白跑几十个模型步才发现"搜不了"，最终报告里写着"搜索工具不可用"。
-        #
-        # 2026-09-17：返回值必须以 `Error:` 开头。熔断器（middleware._is_tool_failure）
-        # 只认三种失败形状：ToolMessage.status=="error" / dict.error / 文本以 "Error:" 开头。
-        # 之前这里返回的是"联网搜索不可用：…"这样的**普通文本**，熔断器看不见失败，
-        # 于是不计数、不冷却，模型把它当成"这次没搜到"并继续换词重试。
-        # 实测一次调研里子智能体 5 个模型步中有 4 步在打搜索，共发出 16 次调用。
-        api_key = (settings.tavily_api_key or "").strip() or (os.environ.get("TAVILY_API_KEY") or "").strip()
-        if not api_key:
-            return (
-                "Error: 联网搜索不可用 —— 缺少 Tavily API Key。"
-                "请在 backend/.env 配置 TAVILY_API_KEY=...（到 https://tavily.com 申请）后重启后端。"
-                "在配置好之前不要依赖联网搜索：改用其他信息来源，或在回答中如实说明无法联网。"
-            )
-        os.environ["TAVILY_API_KEY"] = api_key
-
-        # 底层调用 Tavily。
-        # 必须用 ainvoke：本工具在 agent.astream() 的事件循环里执行，
-        # 一旦调用同步的 invoke()，网络往返期间会**阻塞整个 event loop** ——
-        # 表现是所有会话的 SSE 一起卡住、前端一个字都刷不出来、审批窗点不动。
-        tavily_tool = TavilySearch(
-            max_results=max_results,
-            search_depth="basic"
-        )
-        try:
-            # 执行超时兜底：Tavily 也可能"连上了却迟迟不返回"，没有上限会像
-            # MCP 工具一样把 agent 的 tools 节点卡死。复用同一套超时配置。
-            timeout = settings.mcp_tool_call_timeout_seconds
-            if timeout and timeout > 0:
-                result = await asyncio.wait_for(tavily_tool.ainvoke({"query": query}), timeout=timeout)
-            else:
-                result = await tavily_tool.ainvoke({"query": query})
-            return result
-        except asyncio.TimeoutError:
-            logger.warning("[tavily] 搜索超时（>%g 秒）", timeout)
-            return (
-                f"Error: 联网搜索超时（超过 {timeout:g} 秒无响应）。"
-                "请改用其他信息来源，或如实说明无法联网，不要重复调用本工具。"
-            )
-        except Exception as e:
-            # 把原因说清楚，模型才知道该换策略，而不是反复重试同一个搜索。
-            # 同样必须以 `Error:` 开头 —— 否则熔断器识别不到失败，模型会一直重试。
-            logger.warning("[tavily] 搜索失败: %s: %s", type(e).__name__, e)
-            return (
-                f"Error: 联网搜索失败（{type(e).__name__}）：{e}。"
-                "请改用其他信息来源，或如实说明无法联网，不要重复调用本工具。"
-            )
-
     # 注意：不要写成 `tools = extra_tools` —— 那是 MCP 返回的**同一个列表对象**，
     # append 会污染它（多次调用 get_agent 会重复累加）。这里显式拷贝。
     tools = list(extra_tools)
-    tools.append(tavily_search)
+    tools.append(web_search)
     # 工具熔断的"手动恢复"入口（模型可主动调用，见 middleware.ConsecutiveToolFailureMiddleware）
     tools.extend(recovery_tools)
 

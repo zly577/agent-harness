@@ -68,10 +68,6 @@ class Settings(BaseSettings):
     tool_args_progress_after_seconds: float = 3.0
     tool_args_progress_interval_seconds: float = 2.0
 
-    # 联网搜索（tavily_search 工具）。留空时该工具会快速返回"缺少 Key"的提示，
-    # 而不是让子智能体反复重试到熔断。
-    tavily_api_key: str = ""
-
     # ===== 持久化 =====
     # 业务数据（MySQL）。⚠️ 不要在代码里写真实口令：只保留一个"本机开发用的空模板"，
     # 实际连接串必须来自环境变量 MYSQL_URL（见 backend/.env，已 gitignore）。
@@ -95,7 +91,7 @@ class Settings(BaseSettings):
     #   tool_call_limit_exit_behavior: continue(降级，默认) / error(抛异常) / end(立刻结束)
     tool_call_thread_limit: int = 0
     tool_call_run_limit: int = 0
-    tool_call_limit_tool: str = "tavily_search"
+    tool_call_limit_tool: str = "web_search"
     tool_call_limit_exit_behavior: str = "continue"
 
     # ===== 工具【连续失败】熔断降级（自研中间件，对所有工具各自生效）=====

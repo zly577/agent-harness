@@ -44,7 +44,7 @@ docker run --rm --user "$(id -u):$(id -g)" --mount "type=bind,source=$(pwd),targ
 | `WEB_BIND_IP` | 默认 127.0.0.1，仅本机访问 |
 | `ALLOW_REGISTRATION` | 默认 true，允许直接注册；设为 false 关闭公开注册 |
 | `REGISTRATION_EMAIL_VERIFICATION` | 默认 false；设为 true 时注册需要邮箱验证码，并须配置 SMTP |
-| `TAVILY_API_KEY` | 可选，启用联网搜索 |
+| 联网搜索 | 无需 API key，直连 360 搜索，百度备用，无需代理 |
 | `MCP_ENABLED` | 默认 true，用户自行添加 MCP 工具源；不预置已启用服务器 |
 
 保持自动生成的 `MYSQL_PASSWORD` 使用十六进制字母数字。它会拼入连接 URL，手动设置包含 `@ / : % # $` 等字符的密码需要额外 URL 编码和 Compose 转义，不建议直接替换。
@@ -66,7 +66,7 @@ docker compose ps
 
 1. 在「模型」中添加供应商、Base URL、API Key、模型名称并设为默认。
 2. 发一条消息验证模型连接。
-3. 需要联网搜索时填写 `TAVILY_API_KEY`，再运行 `docker compose up -d`。
+3. 运行 `docker compose up -d`；联网搜索无需密钥，默认直连 360 搜索，百度备用；验证码、限流或页面结构变化可能导致搜索失败。
 4. MCP 默认启用，在界面添加自己的工具源即可。旧 `.env` 若仍为 `MCP_ENABLED=false`，需改为 true 并重建容器。stdio MCP 所需命令/依赖必须装在后端镜像内；访问远端 HTTP MCP 不需要把对方服务装进镜像。
 
 运行自动冒烟检查（无需模型 Key）：

@@ -54,7 +54,6 @@ services:
       HARNESS_ALLOW_FULL_ACCESS: "false"
       HITL_ENABLED: "true"
       MCP_ENABLED: ${MCP_ENABLED:-true}
-      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
       SANDBOX_ENABLED: ${SANDBOX_ENABLED:-false}
       SANDBOX_DOMAIN: ${SANDBOX_DOMAIN:-host.docker.internal:8080}
       SANDBOX_PROTOCOL: ${SANDBOX_PROTOCOL:-http}

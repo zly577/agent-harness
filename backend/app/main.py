@@ -48,7 +48,7 @@ def _setup_file_logging() -> None:
     只能靠反推 checkpoint 和 DB）。像 langchain_openai 的 `StreamChunkTimeoutError`
     （流式块间超时）也是打到 logging 的 WARNING，不落盘就永远看不见。
 
-    挂到 **root** logger 上：各模块的 `[mcp]`/`[tavily]`/`[runner]`、以及第三方 SDK
+    挂到 **root** logger 上：各模块的 `[mcp]`/`[web_search]`/`[runner]`、以及第三方 SDK
     的日志都向上传播到 root，一个 handler 全接住。
 
     ## ⚠️ 但 uvicorn 自己的日志**不会**传播到 root（2026-10-09 实测修正）

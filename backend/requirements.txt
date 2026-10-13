@@ -3,7 +3,7 @@
 #
 # 维护约定（2026-09-22 重新核对）：
 #  1. 本文件是**完整可运行清单**：凡是代码 import 到的第三方包都必须在这里，
-#     不允许出现「装得上但没声明」的包（pymysql/aiosqlite/pyyaml/langchain-tavily/
+#     不允许出现「装得上但没声明」的包（pymysql/aiosqlite/pyyaml/lxml/
 #     opensandbox/mcp/pywin32 都曾属于这一类，换台机器一定翻车）。
 #  2. 版本下限 = 本机 agent_env 实测通过的版本，不写 `==`（便于打补丁版本升级）；
 #     **上限只在真有兼容性雷时写**（目前仅 mcp）。
@@ -38,7 +38,7 @@ langchain-openai>=1.3            # openai 协议供应商（OpenAI/Kimi/通义/v
 langchain-anthropic>=1.5         # anthropic 协议供应商
 langchain-deepseek>=1.1          # ⚠️ 不可删：思考增量靠它解析 additional_kwargs.reasoning_content，
                                  #    换成裸 ChatOpenAI 会让长推理期间前端黑屏（见 P14）
-langchain-tavily>=0.2            # tavily_search 工具（app/agent/runtime.py）
+lxml>=4.9.4                    # 国内搜索页面解析（app/agent/web_search.py）
 
 # ===== 外部 MCP 工具源（P19）=====
 # 装了才有 MCP 能力；没装时 app/agent/mcp.py::_has_adapters() 会降级并给出安装提示。

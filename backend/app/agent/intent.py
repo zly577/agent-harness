@@ -95,7 +95,7 @@ TOOL_CATALOG: dict[str, dict[str, Any]] = {
     "task": {"display_name": "委派子智能体", "icon": "🤝", "category": "delegation",
              "expected_duration_ms": 120000, "retryable": False},
     # ---- 本仓库自带工具 ----
-    "tavily_search": {"display_name": "联网搜索", "icon": "🌐", "category": "web",
+    "web_search": {"display_name": "联网搜索", "icon": "🌐", "category": "web",
                       "expected_duration_ms": 6000, "retryable": True},
     "reset_tool_breakers": {"display_name": "重置工具熔断", "icon": "♻️",
                             "category": "maintenance", "expected_duration_ms": 50,
@@ -306,7 +306,7 @@ _VERB_OVERRIDES: dict[str, str] = {
     "grep": "搜索",
     "execute": "执行",
     "task": "委派",
-    "tavily_search": "搜索",
+    "web_search": "搜索",
     "reset_tool_breakers": "重置",
     "write_todos": "更新",
 }
