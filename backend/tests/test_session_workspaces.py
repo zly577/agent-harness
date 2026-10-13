@@ -257,3 +257,51 @@ def test_native_callback_actual_app_routing(database, tmp_path, browser_roots, m
     assert response.status_code == 200
     assert response.json()["directory"] == str(selected)
     client.close()
+
+
+def test_file_panel_and_open_directory_follow_workspace(database, tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.api.deps import get_current_user
+    from app.db.session import get_db
+    from app.api.routes import files
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "workspace_open_protocol", True)
+    monkeypatch.setattr(settings, "sandbox_enabled", False)
+    monkeypatch.setattr(settings, "harness_machine_access", False)
+    monkeypatch.setattr(files, "os", SimpleNamespace(name="posix"))
+    monkeypatch.setattr(files, "_open_requests", {})
+    user = SimpleNamespace(id="a" * 32)
+    monkeypatch.setattr(app, "dependency_overrides", {get_db: lambda: database, get_current_user: lambda: user})
+    selected = tmp_path / "中文项目"
+    selected.mkdir()
+    (selected / "selected.txt").write_text("selected")
+    database.add(Workspace(id="d" * 32, user_id=user.id, name=selected.name, directory=str(selected)))
+    database.commit()
+    session = sessions.create_session(sessions.CreateSessionRequest(workspace_id="d" * 32), user, database)
+    client = TestClient(app)
+    for params in ({"workspace_id": "d" * 32}, {"session_id": session["id"]}, {"session_id": session["id"], "workspace_id": "legacy"}):
+        listing = client.get("/api/v1/files", params={"path": "/workspace", **params})
+        assert listing.status_code == 200
+        assert any(entry["path"].endswith("selected.txt") for entry in listing.json()["entries"])
+        response = client.post("/api/v1/files/open-workspace", params=params)
+        assert response.status_code == 200
+        ticket = response.json()["open_url"].rsplit("/", 1)[1]
+        assert client.get(f"/api/v1/files/open-workspace/{ticket}").json() == {"directory": str(selected)}
+        assert client.get(f"/api/v1/files/open-workspace/{ticket}").status_code == 404
+    response = client.post("/api/v1/files/open-workspace", params={"workspace_id": "legacy"})
+    ticket = response.json()["open_url"].rsplit("/", 1)[1]
+    assert client.get(f"/api/v1/files/open-workspace/{ticket}").json() == {"directory": str(tmp_path / user.id)}
+    response = client.post("/api/v1/files/open-workspace", params={"workspace_id": "d" * 32})
+    ticket = response.json()["open_url"].rsplit("/", 1)[1]
+    files._open_requests[ticket]["expires"] = 0
+    assert client.get(f"/api/v1/files/open-workspace/{ticket}").status_code == 404
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id="b" * 32)
+    assert client.post("/api/v1/files/open-workspace", params={"workspace_id": "d" * 32}).status_code == 404
+    assert client.post("/api/v1/files/open-workspace", params={"session_id": session["id"]}).status_code == 404
+    app.dependency_overrides[get_current_user] = lambda: user
+    (selected / "selected.txt").unlink()
+    selected.rmdir()
+    assert client.post("/api/v1/files/open-workspace", params={"workspace_id": "d" * 32}).status_code == 409
+    assert not selected.exists()
+    client.close()

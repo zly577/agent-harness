@@ -28,6 +28,21 @@ Assert-Task ((ConvertTo-ContainerDirectory 'D:\deployment\workspace-other' $task
 $taskRejected = $false
 try { ConvertTo-ContainerDirectory 'C:\unmounted' $taskMounts } catch { $taskRejected = $true }
 Assert-Task $taskRejected 'Unmounted drive accepted.'
+Assert-Task ((ConvertTo-WindowsDirectory '/host/d/project/中文' $taskMounts) -eq 'D:\project\中文') 'Selected workspace reverse mapping failed.'
+Assert-Task ((ConvertTo-WindowsDirectory '/app/workspace/user' $taskMounts) -eq 'D:\deployment\workspace\user') 'Default workspace reverse mapping failed.'
+Assert-Task ((ConvertTo-WindowsDirectory '/host/d' $taskMounts) -eq 'D:\') 'Drive root reverse mapping failed.'
+foreach ($taskBadPath in @('/host/d-other/project', '/host/d/../outside', '/unmounted/project')) {
+    $taskRejected = $false
+    try { ConvertTo-WindowsDirectory $taskBadPath $taskMounts } catch { $taskRejected = $true }
+    Assert-Task $taskRejected 'Unsafe or unmounted container directory accepted.'
+}
+# Exercise the actual opener with stubbed HTTP and Docker: no Explorer launch.
+function global:Invoke-RestMethod { @{ directory = '/host/d/project/中文' } }
+function global:docker { $global:LASTEXITCODE = 0; ConvertTo-Json -InputObject $taskMounts -Compress }
+$taskOpened = & (Join-Path $taskRepo 'deploy/open-workspace.ps1') -WorkspaceUri "agent-harness-workspace://open/$taskTicket" -ValidateOnly
+Assert-Task ($taskOpened -eq 'D:\project\中文') 'Ticket-based opener did not resolve the selected directory.'
+Remove-Item Function:\Invoke-RestMethod
+Remove-Item Function:\docker
 # Compile the exact embedded C# and check the COM interface is available on this
 # Windows installation. No Show call is made during automated validation.
 $taskSource = Get-Content -LiteralPath $taskPicker -Raw

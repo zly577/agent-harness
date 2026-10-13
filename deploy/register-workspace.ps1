@@ -30,6 +30,9 @@ $WorkspaceRoot = [System.IO.Path]::GetFullPath($WorkspaceRoot)
 if (-not (Test-Path -LiteralPath $WorkspaceRoot -PathType Container)) {
     throw 'Workspace folder missing. Start the Windows deployment first or pass -WorkspaceRoot.'
 }
+if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'workspace-paths.ps1'))) {
+    throw 'Workspace path mapping helper missing.'
+}
 if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'pick-workspace.ps1'))) {
     throw 'Native directory picker handler missing.'
 }

@@ -6,7 +6,7 @@ taskRoot = WScript.Arguments(0)
 taskOrigin = WScript.Arguments(1)
 taskUri = WScript.Arguments(2)
 Set taskPattern = New RegExp
-taskPattern.Pattern = "^agent-harness-workspace://(open/[0-9a-f]{32}(/[0-9a-f]{32})?|pick/[0-9a-f]{64})/?$"
+taskPattern.Pattern = "^agent-harness-workspace://(open/[0-9a-f]{64}|open/[0-9a-f]{32}(/[0-9a-f]{32})?|pick/[0-9a-f]{64})/?$"
 If Not taskPattern.Test(taskUri) Then WScript.Quit 1
 Set taskFiles = CreateObject("Scripting.FileSystemObject")
 If InStr(taskUri, "://pick/") > 0 Then
@@ -20,7 +20,7 @@ If InStr(taskRoot, Chr(34)) > 0 Then WScript.Quit 1
 taskPattern.Pattern = "^http://(127\.0\.0\.1|localhost):[0-9]{1,5}$"
 If Not taskPattern.Test(taskOrigin) Then WScript.Quit 1
 Set taskShell = CreateObject("WScript.Shell")
-taskCommand = "powershell.exe -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File """ & taskHandler & """ -WorkspaceRoot """ & taskRoot & """ -WorkspaceUri """ & taskUri & """"
+taskCommand = "powershell.exe -NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File """ & taskHandler & """ -WorkspaceRoot """ & taskRoot & """ -WebOrigin """ & taskOrigin & """ -WorkspaceUri """ & taskUri & """"
 If InStr(taskUri, "://pick/") > 0 Then
     taskCommand = "powershell.exe -NoLogo -NoProfile -STA -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File """ & taskHandler & """ -WebOrigin """ & taskOrigin & """ -WorkspaceUri """ & taskUri & """"
 End If

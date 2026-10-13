@@ -951,6 +951,7 @@ export default {
     const fileList = ref([])
     const filePath = ref('/')
     const loadingFiles = ref(false)
+    let filesViewVersion = 0
 
     // 按会话维度管理流式状态：切换会话时原对话在后台继续输出
     // { sessionId: { messages: Array, streaming: boolean, controller: AbortController, loaded: boolean } }
@@ -992,9 +993,6 @@ export default {
     watch(sessionId, (id) => {
       sessionViewVersion += 1
       loadingHistory.value = false
-      showFilePanel.value = false
-      fileList.value = []
-      filePath.value = "/"
       try {
         if (id) window.localStorage.setItem(lastSessionKey, id)
         else window.localStorage.removeItem(lastSessionKey)
@@ -2012,7 +2010,7 @@ export default {
       else hasNewBelow.value = true
     }, { deep: true })
 
-    function fileSessionQuery() { return sessionId.value ? `&session_id=${encodeURIComponent(sessionId.value)}` : `&workspace_id=${encodeURIComponent(draftWorkspaceId.value)}` }
+    function fileSessionQuery() { return `&workspace_id=${encodeURIComponent(activeWorkspaceId.value)}` + (sessionId.value ? `&session_id=${encodeURIComponent(sessionId.value)}` : '') }
 
     async function loadSessions() {
       loadingSessions.value = true
@@ -2826,24 +2824,31 @@ export default {
     }
 
     async function loadFiles() {
+      const viewVersion = ++filesViewVersion
+      const query = fileSessionQuery()
+      const path = filePath.value
       loadingFiles.value = true
       try {
-        const data = await apiGet(`/api/v1/files?path=${encodeURIComponent(filePath.value)}${fileSessionQuery()}`)
+        const data = await apiGet(`/api/v1/files?path=${encodeURIComponent(path)}${query}`)
+        if (viewVersion !== filesViewVersion || query !== fileSessionQuery()) return
         fileList.value = Array.isArray(data?.entries) ? data.entries : []
       } catch {
-        fileList.value = []
+        if (viewVersion === filesViewVersion && query === fileSessionQuery()) fileList.value = []
+      } finally {
+        if (viewVersion === filesViewVersion) loadingFiles.value = false
       }
-      loadingFiles.value = false
     }
 
     async function openWorkspaceFolder() {
+      const query = fileSessionQuery()
       try {
-        const result = await apiPost(`/api/v1/files/open-workspace?${fileSessionQuery().slice(1)}`, {})
+        const result = await apiPost(`/api/v1/files/open-workspace?${query.slice(1)}`, {})
+        if (query !== fileSessionQuery()) return
         if (result.open_url) {
           window.location.href = result.open_url
           notify('请允许浏览器打开工作区目录；此入口用于部署者本机。', 'info')
         } else {
-          notify('已打开当前用户的工作区目录', 'info')
+          notify('已打开当前工作区目录', 'info')
         }
       } catch (e) {
         notify(`无法打开目录：${e.message}`, 'error')
@@ -2854,6 +2859,15 @@ export default {
     // 因为 deepagents 的 route 命中后会剥前缀，两者必然互为别名），
     // 所以面板只把 '/workspace' 当作用户工作区展示，避免同一批文件出现两次。
     const WORKSPACE_ROOT = '/workspace'
+
+    watch(() => [sessionId.value, activeWorkspaceId.value], () => {
+      filesViewVersion += 1
+      fileList.value = []
+      filePath.value = WORKSPACE_ROOT
+      loadingFiles.value = false
+      pendingDelete.value = null
+      if (showFilePanel.value) loadFiles()
+    })
 
     function openFilePanel() {
       showFilePanel.value = true

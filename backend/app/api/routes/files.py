@@ -4,13 +4,12 @@
 模型看到的是 `/workspace/...`），智能体通过 write_file / edit_file 等工具写入。
 本路由提供浏览、下载、删除能力。
 
-## 为什么这里没有 session_id
+## 工作区绑定
 
-工作区的隔离粒度是**用户**（见 `app/core/workspace.py` 的说明），
-所以文件 API 只认"当前登录用户"，不接受任何能指向他人目录的参数 ——
-这比"先查 session 归属再放行"更强：越权的输入根本不存在。
-同一用户的不同会话共享一份工作区（"我的工作台"），这也是 `Agent.md`
-能"跨会话生效"的前提。
+文件浏览、下载、删除和打开目录使用同一工作区：会话存在时读取会话的
+持久化 workspace_id，新会话草稿使用所选 workspace_id。全部校验归属；
+旧会话继续使用默认用户目录。Windows Docker 打开目录使用短时票据获取
+该目录的容器路径，再根据实际 bind mount 转换到 Windows 路径。
 
 ## 删除的安全边界（重要）
 
@@ -42,6 +41,19 @@ from sqlalchemy.orm import Session as OrmSession
 from app.db.models import User
 
 router = APIRouter(prefix="/api/v1/files", tags=["files"])
+desktop_callback_router = APIRouter(prefix="/api/v1/files", tags=["desktop"])
+_open_requests: dict[str, dict] = {}
+
+
+@desktop_callback_router.get("/open-workspace/{ticket}")
+def resolve_open_workspace(ticket: str):
+    """Redeem a short-lived, single-use ticket issued after ownership checks."""
+    import time
+    item = _open_requests.pop(ticket, None)
+    if not item or item["expires"] <= time.monotonic():
+        raise HTTPException(status_code=404, detail="打开目录请求已失效，请重新点击打开目录")
+    return {"directory": item["directory"]}
+
 
 
 def _workspace_root(user: User, workspace_id: str | None, db):
@@ -58,18 +70,19 @@ def _workspace_root(user: User, workspace_id: str | None, db):
 
 @router.post("/open-workspace")
 def open_workspace(user: User = Depends(get_current_user), session_id: str | None = None, workspace_id: str | None = None, db: OrmSession = Depends(get_db)):
-    """打开当前用户的根工作区；不接受任意路径或其他用户 id。"""
+    """打开所选会话或工作区的真实目录；先校验归属，不接受任意路径。"""
     from app.core.config import settings
-    from app.core.workspace import ensure_workspace
-
     if not re.fullmatch(r"[0-9a-f]{32}", user.id):
         raise HTTPException(status_code=400, detail="用户工作区标识无效")
-    root = _workspace_root(user, workspace_id, db)
     if session_id:
         owned_session_or_404(db, session_id, user)
         from app.agent.runtime import session_workspace
         root = session_workspace(session_id, user.id)
-        root.mkdir(parents=True, exist_ok=True)
+    else:
+        root = _workspace_root(user, workspace_id, db)
+    root = root.resolve()
+    if not root.is_dir():
+        raise HTTPException(status_code=409, detail="工作区目录已不存在，请重新选择目录")
     if os.name == "nt":
         try:
             os.startfile(str(root))
@@ -77,8 +90,15 @@ def open_workspace(user: User = Depends(get_current_user), session_id: str | Non
             raise HTTPException(status_code=503, detail="当前 Windows 会话无法打开资源管理器") from exc
         return {"opened": True, "open_url": None}
     if settings.workspace_open_protocol:
-        suffix = f"/{root.name}" if session_id and root != ensure_workspace(user.id) else ""
-        return {"opened": False, "open_url": f"agent-harness-workspace://open/{user.id}{suffix}"}
+        import secrets
+        import time
+        now = time.monotonic()
+        for key in list(_open_requests):
+            if _open_requests[key]["expires"] <= now:
+                _open_requests.pop(key, None)
+        ticket = secrets.token_hex(32)
+        _open_requests[ticket] = {"directory": str(root), "expires": now + 60}
+        return {"opened": False, "open_url": f"agent-harness-workspace://open/{ticket}"}
     raise HTTPException(
         status_code=409,
         detail="此部署没有本机文件夹打开入口。Windows Docker 请通过 start-windows.ps1 启动；远程服务器请使用下载功能。",

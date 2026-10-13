@@ -14,21 +14,7 @@ if ($WebOrigin -notmatch '^http://(?:127\.0\.0\.1|localhost):[0-9]{1,5}$' -or ([
     throw 'Directory picker callback must use a local HTTP origin.'
 }
 
-function ConvertTo-ContainerDirectory {
-    param([string]$SelectedPath, [object[]]$Mounts)
-    $taskSelected = [System.IO.Path]::GetFullPath($SelectedPath).TrimEnd('\', '/')
-    foreach ($taskMount in ($Mounts | Sort-Object { $_.Source.Length } -Descending)) {
-        if ($taskMount.Type -ne 'bind' -or $taskMount.Source -notmatch '^[A-Za-z]:[/\\]') { continue }
-        $taskSource = [System.IO.Path]::GetFullPath($taskMount.Source).TrimEnd('\', '/')
-        if ($taskSelected.Equals($taskSource, [System.StringComparison]::OrdinalIgnoreCase)) {
-            return $taskMount.Destination
-        }
-        if ($taskSelected.StartsWith($taskSource + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
-            return $taskMount.Destination.TrimEnd('/') + $taskSelected.Substring($taskSource.Length).Replace('\', '/')
-        }
-    }
-    throw 'Selected folder is not mounted in the backend container.'
-}
+. (Join-Path $PSScriptRoot 'workspace-paths.ps1')
 
 if ($ValidateOnly) { Write-Output $taskTicket; return }
 $taskCallback = "$WebOrigin/api/v1/workspaces/picker/$taskTicket"

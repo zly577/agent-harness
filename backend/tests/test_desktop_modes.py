@@ -86,7 +86,10 @@ def test_workspace_url_uses_authenticated_user_only(tmp_path, monkeypatch):
     try:
         response = TestClient(app).post("/api/v1/files/open-workspace", json={"user_id": "b" * 32, "path": "../../outside"})
         assert response.status_code == 200
-        assert response.json()["open_url"] == f"agent-harness-workspace://open/{user_id}"
+        ticket = response.json()["open_url"].rsplit("/", 1)[1]
+        assert len(ticket) == 64
+        assert TestClient(app).get(f"/api/v1/files/open-workspace/{ticket}").json() == {"directory": str(tmp_path / user_id)}
+        assert TestClient(app).get(f"/api/v1/files/open-workspace/{ticket}").status_code == 404
         assert (tmp_path / user_id).is_dir()
         assert not (tmp_path / ("b" * 32)).exists()
         monkeypatch.setattr(settings, "workspace_open_protocol", False)
