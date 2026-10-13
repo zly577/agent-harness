@@ -304,6 +304,21 @@
                 <span class="meter-rate" title="最近 2 秒的生成速度（估算）">{{ rateLabel(m) }}</span>
               </div>
 
+              <section v-if="taskPlan(m).length" class="task-plan" aria-label="任务清单" aria-live="polite">
+                <div class="task-plan-head"><span>任务清单</span><span>{{ taskPlan(m).filter(item => item.status === 'completed').length }} / {{ taskPlan(m).length }}</span></div>
+                <ol>
+                  <li v-for="item in taskPlan(m)" :key="item.key" :class="item.status">
+                    <span class="task-plan-mark" aria-hidden="true">
+                      <svg v-if="item.status === 'completed'" viewBox="0 0 16 16"><path d="m3 8 3 3 7-7" /></svg>
+                      <span v-else-if="item.status === 'running'" class="task-plan-spinner"></span>
+                      <span v-else class="task-plan-dot"></span>
+                    </span>
+                    <span class="task-plan-text">{{ item.text }}</span>
+                    <span class="task-plan-state">{{ item.status === 'completed' ? '已完成' : item.status === 'running' ? '运行中' : '等待中' }}</span>
+                  </li>
+                </ol>
+              </section>
+
               <!-- 工具活动：**同一时刻只展示最新一条**。
                    上一条一旦被新的取代，就收进下面的折叠列表（默认不展开）。
                    注意：绝对不能给这里的外层 <details> 绑 :open —— 之前那样写会在
@@ -312,7 +327,7 @@
               <div v-if="hasActivity(m)" class="activity">
                 <div v-if="activityLatest(m)" class="act-block">
                   <div class="act" :class="activityLatest(m).status">
-                    <span class="act-mark"></span>
+                    <span class="step-number">{{ activityLatest(m).step }}</span>
                     <!-- 优先显示模型给的"人话"意图（看板的"当前步骤"）。
                          没有（功能关闭/历史数据）时回落到原来的动作文案。
                          ⚠️ intent 是**模型生成的文本**，只能用插值（Vue 自动转义），
@@ -333,44 +348,30 @@
                   <p v-if="activityLatest(m).failHead" class="act-note bad">
                     ✕ {{ activityLatest(m).failHead }}
                   </p>
-                  <p v-else-if="activityLatest(m).resultHead" class="act-note">
-                    ↳ {{ activityLatest(m).resultHead }}
-                  </p>
-
-                  <!-- 回答"它到底还在不在跑"。判据是静默时长，不是卡片状态 ——
-                       后端被杀时 SSE 只是安静地断掉，卡片状态不会自己变。 -->
-                  <p v-if="runLiveness(m)" class="act-note" :class="runLiveness(m).level">
-                    <span>{{ runLiveness(m).level === 'hard' ? '⚠️ ' : '⏳ ' }}</span>
-                    <span>{{ runLiveness(m).text }}</span>
-                    <button
-                      v-if="runLiveness(m).level === 'hard'"
-                      class="act-action"
-                      @click="reconnect()"
-                    >重新连接</button>
-                  </p>
-
                   <!-- 具体执行了什么 —— 命令/参数 + 完整输出，一次点击就能核对 -->
                   <details class="act-call-wrap">
                     <summary>
-                      这一步的具体操作（{{ activityLatest(m).items.length }} 次调用）
+                      查看操作<span class="operation-count">{{ activityLatest(m).items.length }} 项</span>
                     </summary>
                     <div
                       v-for="it in activityLatest(m).items"
                       :key="it.id || it.name"
                       class="act-call"
                     >
-                      <div class="act-call-head">
+                      <div v-if="activityLatest(m).items.length > 1" class="act-call-head">
                         <span class="tool-status" :class="it.status"></span>
-                        <code class="tool-name">{{ it.name || 'tool' }}</code>
+                        <code class="tool-name">{{ toolName(it.name) }}</code>
                         <span class="tool-badge" :class="it.status">{{ toolOutcomeText(it) }}</span>
                       </div>
                       <div v-if="it.args && Object.keys(it.args).length" class="tool-section">
                         <div class="tool-label">操作</div>
-                        <pre class="tool-code">{{ formatJson(it.args) }}</pre>
+                        <div v-if="it.name === 'execute' && it.args.command" class="md terminal-tool" v-html="renderTerminal(it.args.command, '命令')"></div>
+                        <ToolArguments v-else :args="it.args" />
                       </div>
                       <div v-if="it.result" class="tool-section">
                         <div class="tool-label">结果</div>
-                        <pre class="tool-code">{{ truncate(it.result, 4000) }}</pre>
+                        <div v-if="it.name === 'execute'" class="md terminal-tool" v-html="renderTerminal(truncate(it.result, 12000), '执行输出')"></div>
+                        <pre v-else class="tool-code">{{ truncate(it.result, 4000) }}</pre>
                       </div>
                     </div>
                   </details>
@@ -380,7 +381,7 @@
                 <details v-if="activityHistory(m).length || doneDelegations(m).length" class="act-history">
                   <summary>
                     <span class="act-history-text">
-                      此前的 {{ activityHistory(m).length + doneDelegations(m).length }} 项
+                      已收纳 {{ activityHistory(m).length + doneDelegations(m).length }} 个步骤
                     </span>
                     <svg class="tools-chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 6.5L8 9l2.5-2.5" /></svg>
                   </summary>
@@ -429,33 +430,28 @@
                   </div>
 
                   <div v-if="activityHistory(m).length" class="tool-group">
-                    <div v-for="g in activityHistory(m)" :key="g.key" class="act-item">
-                      <div class="act-item-head">
+                    <details v-for="g in activityHistory(m)" :key="g.key" class="act-item archived-step">
+                      <summary class="act-item-head">
+                        <span class="step-number">{{ g.step }}</span>
                         <span class="tool-status" :class="g.status"></span>
-                        <code v-if="g.intent" class="act-verb act-intent" :title="g.title">{{ g.intent }}</code>
-                        <code v-else class="act-verb">{{ g.verb }}</code>
-                        <span class="act-detail">{{ g.detail }}</span>
+                        <span class="act-verb" :title="g.title">{{ g.intent || g.verb }}</span>
+                        <span class="act-detail" :title="g.full">{{ g.detail }}</span>
                         <span class="tool-badge" :class="g.status">{{ g.badge }}</span>
-                      </div>
-                      <!-- 归档里也要能一眼看出"哪一步没成" -->
+                      </summary>
                       <p v-if="g.failHead" class="act-note bad">✕ {{ g.failHead }}</p>
-                      <p v-else-if="g.resultHead" class="act-note">↳ {{ g.resultHead }}</p>
-                      <details v-for="it in g.items" :key="it.id || it.name" class="tool">
-                        <summary>
-                          <code class="tool-name">{{ it.name || 'tool' }}</code>
-                        </summary>
-                        <div class="tool-detail">
-                          <div v-if="it.args && Object.keys(it.args).length" class="tool-section">
-                            <div class="tool-label">参数</div>
-                            <pre class="tool-code">{{ formatJson(it.args) }}</pre>
-                          </div>
-                          <div v-if="it.result" class="tool-section">
-                            <div class="tool-label">结果</div>
-                            <pre class="tool-code">{{ truncate(it.result, 4000) }}</pre>
-                          </div>
+                      <div v-for="it in g.items" :key="it.id || it.name" class="tool-detail">
+                        <span v-if="g.items.length > 1" class="tool-label">{{ toolName(it.name) }}</span>
+                        <div v-if="it.args && Object.keys(it.args).length" class="tool-section">
+                          <div v-if="it.name === 'execute' && it.args.command" class="md terminal-tool" v-html="renderTerminal(it.args.command, '命令')"></div>
+                          <ToolArguments v-else :args="it.args" />
                         </div>
-                      </details>
-                    </div>
+                        <details v-if="it.result" class="operation-output">
+                          <summary>查看结果</summary>
+                          <div v-if="it.name === 'execute'" class="md terminal-tool" v-html="renderTerminal(truncate(it.result, 12000), '执行输出')"></div>
+                          <pre v-else class="tool-code">{{ truncate(it.result, 4000) }}</pre>
+                        </details>
+                      </div>
+                    </details>
                   </div>
                 </details>
               </div>
@@ -702,8 +698,11 @@ import {
   streamChat,
   streamRunAttach,
 } from './sse'
-import { renderMarkdown } from './markdown'
+import { renderMarkdown, renderTerminal } from './markdown'
+import { resizeComposer } from './chatPresentation'
 import { recordDelta, instantaneousRate, freezeMeter, resumeMeter } from './generationMeter'
+import ToolArguments from './ToolArguments.vue'
+import { taskPlan, toolName } from './toolPresentation'
 import AuthView from './AuthView.vue'
 import ProvidersView from './ProvidersView.vue'
 import McpView from './McpView.vue'
@@ -726,7 +725,7 @@ function formatTime() {
 }
 
 export default {
-  components: { AuthView, ProvidersView, McpView },
+  components: { ToolArguments, AuthView, ProvidersView, McpView },
   setup() {
     // ===== 登录态=====
     // 未登录时整个主界面不挂载（模板里 v-if / v-else），登录后重新挂载，
@@ -956,16 +955,6 @@ export default {
       }
     }, { flush: 'sync' })
 
-    function formatJson(v) {
-      if (v === null || v === undefined) return ''
-      if (typeof v === 'string') return v
-      try {
-        return JSON.stringify(v, null, 2)
-      } catch {
-        return String(v)
-      }
-    }
-
     function truncate(s, n) {
       s = String(s ?? '')
       return s.length > n ? `${s.slice(0, n)}\n…（已截断）` : s
@@ -1099,7 +1088,7 @@ export default {
       }
       const names = []
       for (const it of g.items) {
-        const n = it.name || 'tool'
+        const n = toolName(it.name)
         if (!names.includes(n)) names.push(n)
       }
       if (names.length <= 3) return names.join('、')
@@ -1115,7 +1104,7 @@ export default {
      * 非只读工具（写文件、跑命令、委派）单独成条 —— 那些是用户真正想知道的动作。
      */
     function toolFeed(m) {
-      const tcs = (m?.toolCalls || []).filter((t) => t.kind !== 'subagent')
+      const tcs = (m?.toolCalls || []).filter((t) => t.kind !== 'subagent' && t.name !== 'write_todos')
       const feed = []
       for (const t of tcs) {
         const simple = VIEW_TOOLS.has(t.name)
@@ -1145,7 +1134,8 @@ export default {
         else if (g.items.some((it) => it.status === 'interrupted')) g.status = 'interrupted'
         else g.status = 'done'
       }
-      feed.forEach((g) => {
+      feed.forEach((g, index) => {
+        g.step = index + 1
         // 左列：跑完显示工具本身，正在跑才显示动作文案（见 toolLabel）
         g.verb = toolLabel(g)
         // 看板的"当前步骤"优先显示意图（模型给的人话）；取不到就回落到 verb。
@@ -1228,33 +1218,6 @@ export default {
       return `${Math.floor(secs / 60)}m${(secs % 60).toFixed(0)}s`
     }
 
-    /**
-     * 卡片下方那一行"它到底还在不在跑"的提示。
-     *
-     * 判据是**距最近一次后端事件的静默时长**，不是"卡片状态"：
-     * 后端被杀时 SSE 只是安静地断掉，卡片状态不会自己变，只有静默时长会一路涨上去。
-     *
-     * 阈值分三档（数字来自实测：正常的长命令/大参数静默可以到几十秒，
-     * 而 `llm_stream_chunk_timeout_seconds` 默认 300s 兜"对端静默挂起"）：
-     * - < 20s：不提示（正常在跑，卡片上的耗时已经在动了）
-     * - 20~90s：如实报"已静默 Ns"，让人知道**接口还活着**，只是还没吐东西
-     * - ≥ 90s：明确怀疑失联 —— 后端可能已停止/连接已断开，给一个"重新连接"的入口
-     */
-    const STALE_SOFT = 20
-    const STALE_HARD = 90
-    function runLiveness(m) {
-      if (!m?.streaming) return null
-      const secs = idleSeconds()
-      if (secs < STALE_SOFT) return null
-      if (secs < STALE_HARD) {
-        return { level: 'soft', text: `已 ${Math.round(secs)}s 没有新事件，仍在等待（长命令/大参数可能如此）` }
-      }
-      return {
-        level: 'hard',
-        text: `已 ${Math.round(secs)}s 没有收到任何事件 —— 后端可能已停止或连接已断开`,
-      }
-    }
-
     /** 最新一条（始终可见，实时刷新状态文案）。 */
     function activityLatest(m) {
       const feed = toolFeed(m)
@@ -1263,7 +1226,7 @@ export default {
 
     /** 此前的调用：最近的在前，默认不展示。 */
     function activityHistory(m) {
-      return toolFeed(m).slice(0, -1).reverse()
+      return toolFeed(m).slice(0, -1)
     }
 
     // ===== 子智能体委派：运行中 / 已完成 =====
@@ -1450,26 +1413,6 @@ export default {
     // ===== 计时器 / 每秒 token =====
     const nowTick = ref(Date.now())
 
-    /**
-     * 最近一次收到**任何**后端事件的时刻。
-     *
-     * 用途是回答那个被反复问的问题："它到底还在不在跑？"
-     * 只靠"卡片显示进行中"是回答不了的 —— 后端被杀掉时，SSE 只是安静地断掉，
-     * 前端再不收事件，卡片就会永远停在"进行中"。所以必须拿"最后一条消息距今多久"
-     * 作为判据：短 = 正常等待（长命令/长参数都可能有几十秒静默），
-     * 长到不合理 = 大概率已经失联，必须明确告诉用户而不是继续装作在跑。
-     */
-    const lastEventAt = ref(0)
-    /** 是否至少已经收到过一轮事件（避免刚发消息就把"未收到事件"当成异常）。 */
-    const sentAt = ref(0)
-
-    /** 距最近一次事件过去了多少秒（无事件时以发出消息的时刻起算）。 */
-    function idleSeconds() {
-      const base = lastEventAt.value || sentAt.value
-      if (!base) return 0
-      return Math.max((nowTick.value - base) / 1000, 0)
-    }
-
     /** 秒级刷新的心跳：只在有消息在流式输出时才走。 */
     function startTicker() {
       if (ticker) return
@@ -1507,12 +1450,8 @@ export default {
     const inputEl = ref(null)
 
     /** 让 textarea 跟着内容长高（上限由 CSS 的 max-height 兜住）。 */
-    function autoGrow() {
-      const el = inputEl.value
-      if (!el) return
-      el.style.height = 'auto'
-      el.style.height = `${el.scrollHeight}px`
-    }
+    function autoGrow() { resizeComposer(inputEl.value) }
+    watch(input, () => { nextTick(autoGrow) })
 
 
 
@@ -1773,6 +1712,7 @@ export default {
     function finishTurn(msg) {
       if (!msg) return
       freezeMeter(msg)
+      if (!msg.planPaused) msg.planFinished = true
       ;(msg.delegations || []).forEach((d) => {
         if (d.status === 'running') {
           d.status = 'done'
@@ -1862,8 +1802,6 @@ export default {
      *   （session / approval / error / stopped / done），由各调用方自己决定怎么反应。
      */
     function applyDataEvent(msg, evt) {
-      // 任何一个后端事件都算"它还活着"的证据（见 lastEventAt 的注释）
-      lastEventAt.value = Date.now()
       if (msg.streaming && messages.includes(msg)) {
         if (evt.type === 'token') recordDelta(msg, evt.content || '')
         if (evt.type === 'thinking' && evt.scope !== 'subagent' && !evt.subagent_id) recordDelta(msg, evt.delta || '')
@@ -1894,6 +1832,7 @@ export default {
           applyUsageEvent(msg, evt)
           return true
         case 'result':
+          if (!msg.planPaused) msg.planFinished = true
           freezeMeter(msg)
           if (evt.content) msg.content = evt.content
           return true
@@ -1916,6 +1855,7 @@ export default {
       if (sid && sessionStates[sid]) sessionStates[sid].approval = payload
       approval.value = payload
       if (target) {
+        target.planPaused = true
         freezeMeter(target)
         target.streaming = false
         if (!String(target.content || '').trim()) {
@@ -2144,9 +2084,6 @@ export default {
       target.push(fresh)
       syncDisplay()
       startTicker()
-      // 起一段新的等待 —— 静默计时从这里重新算（见 lastEventAt）
-      sentAt.value = Date.now()
-      lastEventAt.value = 0
 
       if (!sessionStates[sid]) {
         sessionStates[sid] = { messages: target, streaming: true, controller, loaded: true, approval: null }
@@ -2187,42 +2124,6 @@ export default {
       if (!anyStreaming()) stopTicker()
       loadSessions()
       return true
-    }
-
-    /**
-     * 失联后的「重新连接」。
-     *
-     * 为什么不能直接再开一条 `streamRunAttach`：后端被杀掉时，运行已经不存在了，
-     * 硬接只会再断一次，用户看到的是"点了没用"。所以顺序是**先问后端事实**：
-     * 1. 先把本地这些"卡在进行中"的状态如实收尾（标记已中断），不留假象；
-     * 2. `fetchRunState` 问一句"那边到底还有没有一个运行"；
-     * 3. 有 → 接回去接着看；没有 → 明确告诉用户"后端没有在跑了"，
-     *    而不是继续转圈（用户至少知道该去重启后端了）。
-     */
-    async function reconnect() {
-      const sid = sessionId.value
-      if (!sid) return
-      const st = sessionStates[sid]
-      const msgs = st?.messages || messages
-      if (st) st.streaming = false
-      const target = msgs[msgs.length - 1]
-      if (target && target.role === 'assistant') {
-        target.streaming = false
-        finishTurn(target)   // 卡在 running 的调用如实标成"已中断"
-      }
-      let run = null
-      try {
-        run = await fetchRunState(sid)
-      } catch (e) {
-        notify(`接不上后端：${e.message}（后端可能已停止，重启后再发消息即可）`, 'error')
-        return
-      }
-      if (run && run.running) {
-        const back = await resumeRun(sid, msgs)
-        if (!back) notify('后端仍在运行，但这次没接上，刷新页面即可', 'error')
-        return
-      }
-      notify('后端已经没有任何在跑的运行了（多半是后端进程停止了）。重启后端后再发消息即可。')
     }
 
     /**
@@ -2428,9 +2329,6 @@ export default {
         outputTokens: 0,
       })
       startTicker()
-      // 静默计时从这里起算 —— 有了它，"后端一声不响"才可能被识别出来
-      sentAt.value = Date.now()
-      lastEventAt.value = 0
 
       sessionMsgs.push(userMsg)
       sessionMsgs.push(assistantMsg)
@@ -2542,13 +2440,12 @@ export default {
           sessionStates[sid].streaming = true
           sessionStates[sid].controller = controller
         }
+        target.planPaused = false
+        target.planFinished = false
         resumeMeter(target)
         target.streaming = true
         if (!target.startedAt) target.startedAt = Date.now()
         startTicker()
-        // 审批恢复也是一段新的等待，静默计时重算
-        sentAt.value = Date.now()
-        lastEventAt.value = 0
 
         try {
           await streamApproval(sid, approve ? 'approve' : 'reject', controller.signal, (evt) => {
@@ -3105,8 +3002,7 @@ export default {
       openSession,
       newChat,
       deleteSession,
-      renderMarkdown,
-      formatJson,
+      renderMarkdown, renderTerminal, taskPlan, toolName,
       truncate,
       argPairs,
       isSessionStreaming,
@@ -3128,8 +3024,6 @@ export default {
       elapsedLabel,
       // 运行可见性（成败 / 实时耗时 / 失联判定 / 重新连接）
       toolOutcomeText,
-      runLiveness,
-      reconnect,
       rateLabel,
       // 滚动跟随
       stickToBottom,
@@ -3656,6 +3550,8 @@ button { font-family: inherit; }
 /* 用户消息：浅底圆角块，占据自身内容宽度 */
 .bubble.user {
   max-width: 78%;
+  min-width: 0;
+  overflow-wrap: anywhere;
   padding: 9px 16px;
   border-radius: 20px;
   background: var(--fill);
@@ -3951,20 +3847,7 @@ button { font-family: inherit; }
   word-break: break-word;
 }
 .act-note.bad { color: var(--danger); }
-.act-note.soft { color: var(--warn); }
-.act-note.hard { color: var(--danger); }
-.act-action {
-  flex: 0 0 auto;
-  padding: 2px 9px;
-  border: 1px solid currentColor;
-  border-radius: 999px;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  font-size: 11.5px;
-  cursor: pointer;
-}
-.act-action:hover { background: var(--hover); }
+
 
 .act-call-wrap {
   border: 1px solid var(--border);
@@ -4409,7 +4292,9 @@ button { font-family: inherit; }
 .composer textarea {
   flex: 1;
   min-width: 0;
-  height: 24px;
+  height: 32px;
+  min-height: 32px;
+  box-sizing: border-box;
   max-height: 200px;
   padding: 4px 0;
   border: 0;
@@ -4798,4 +4683,77 @@ button { font-family: inherit; }
 .btn-attach:disabled, .attachment-remove:disabled { opacity: 0.4; cursor: default; }
 .btn-attach:focus-visible, .attachment-remove:focus-visible { outline: 2px solid var(--text-2); outline-offset: 2px; }
 @media (max-width: 600px) { .attachment-card { flex-basis: 210px; } }
+</style>
+
+<style>
+.md { min-width: 0; overflow-wrap: anywhere; }
+.md .terminal-block { border-color: var(--border); border-radius: 12px; background: var(--bg); box-shadow: none; }
+.md .terminal-block .code-head { padding: 9px 12px; background: var(--bg); border-color: var(--border); color: var(--text-2); }
+.md .terminal-block .code-lang { text-transform: none; letter-spacing: 0.02em; }
+.md .terminal-dots { display: flex; gap: 5px; margin-right: 5px; }
+.md .terminal-dots i { display: block; width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); }
+.md .terminal-dots i:nth-child(2) { background: var(--text-3); }
+.md .terminal-dots i:nth-child(3) { background: var(--text-3); }
+.md .terminal-block pre { max-height: 420px; overflow: auto; padding: 16px 18px; }
+.md .terminal-block pre code { color: var(--text); font-size: 12.5px; line-height: 1.8; white-space: pre; word-break: normal; overflow-wrap: normal; }
+.md .terminal-block .code-copy { color: var(--text-2); border-color: var(--border); }
+.md .terminal-block .code-copy:hover { background: var(--hover); color: var(--text); }
+.md .terminal-block .code-copy.done { color: var(--ok); border-color: var(--ok); }
+.md .terminal-block .hljs-keyword, .md .terminal-block .hljs-built_in { color: var(--syn-keyword); }
+.md .terminal-block .hljs-string { color: var(--syn-string); }
+.md .terminal-block .hljs-number, .md .terminal-block .hljs-literal { color: var(--syn-number); }
+.md .terminal-block .hljs-comment { color: var(--syn-comment); }
+.md .terminal-block .hljs-variable, .md .terminal-block .hljs-attr { color: var(--syn-title); }
+.terminal-tool { width: 100%; }
+.terminal-tool .terminal-block { margin: 0; }
+</style>
+
+<style>
+/* Compact activity rows: one summary, optional operation details. */
+.activity { gap: 6px; }
+.act-block { gap: 5px; }
+.act { padding: 7px 10px; border-radius: 9px; background: transparent; }
+.act-verb, .act-intent { font-family: var(--font); font-size: 12px; }
+.act-detail { font-size: 11px; }
+.act-badge { font-size: 10.5px; }
+.act-call-wrap { border: 0; border-radius: 7px; }
+.act-call-wrap > summary { padding: 4px 10px; font-size: 11.5px; gap: 8px; }
+.operation-count { color: var(--text-3); font-size: 10.5px; }
+.act-call { margin: 4px 10px; padding: 10px 0 4px; }
+.act-call-head { margin-bottom: 10px; }
+.act-history { border: 0; border-radius: 8px; }
+.act-history > summary { padding: 6px 10px; font-size: 11.5px; color: var(--text-3); }
+.act-history > .tool-group, .act-history > .subagent-archive { padding: 7px 10px; }
+.act-item { margin-bottom: 3px; }
+.act-item-head { padding: 4px 0; gap: 7px; }
+.act-item .tool-detail { padding: 8px 0; }
+.task-plan { width: 100%; box-sizing: border-box; padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); }
+.task-plan-head { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--text-2); font-weight: 500; }
+.task-plan-head > :last-child { color: var(--text-3); font-size: 11px; font-weight: 400; }
+.task-plan ol { margin: 10px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.task-plan li { display: flex; align-items: flex-start; gap: 9px; font-size: 12px; line-height: 1.6; }
+.task-plan-text { flex: 1; min-width: 0; overflow-wrap: anywhere; color: var(--text-2); }
+.task-plan-state { flex-shrink: 0; font-size: 10.5px; color: var(--text-3); padding-top: 1px; }
+.task-plan li.completed { opacity: 0.45; }
+.task-plan li.completed .task-plan-text { text-decoration: line-through; text-decoration-color: var(--text-3); }
+.task-plan li.running .task-plan-text { color: var(--text); }
+.task-plan li.running .task-plan-state { color: var(--text-2); }
+.task-plan-mark { width: 16px; height: 19px; display: grid; place-items: center; flex-shrink: 0; color: var(--ok); }
+.task-plan-mark svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.task-plan-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--text-3); opacity: 0.5; }
+.task-plan-spinner { width: 10px; height: 10px; border: 1.5px solid var(--border-2); border-top-color: var(--text-2); border-radius: 50%; animation: plan-spin 0.9s linear infinite; }
+@keyframes plan-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .task-plan-spinner { animation: none; } }
+</style>
+
+<style>
+.act { box-sizing: border-box; }
+.step-number { display: grid; place-items: center; flex: 0 0 20px; height: 20px; border-radius: 6px; background: var(--fill); color: var(--text-3); font-family: var(--mono); font-size: 10px; }
+.act.running .step-number, .act.generating .step-number { color: var(--text); }
+.archived-step > summary { cursor: pointer; list-style: none; }
+.archived-step > summary::-webkit-details-marker { display: none; }
+.archived-step > summary:hover { background: var(--hover); }
+.archived-step > .tool-detail { margin-left: 29px; }
+.archived-step:not([open]) { display: block; }
+.operation-output > summary { cursor: pointer; font-size: 11px; color: var(--text-3); margin-bottom: 6px; }
 </style>

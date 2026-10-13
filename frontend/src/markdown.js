@@ -7,8 +7,16 @@
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import hljs from 'highlight.js/lib/common'
+import dos from 'highlight.js/lib/languages/dos'
+import powershell from 'highlight.js/lib/languages/powershell'
+import { boundedUrlExtension, boundedUrlTokenizer } from './chatPresentation'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
+
+hljs.registerLanguage('dos', dos)
+hljs.registerLanguage('powershell', powershell)
+
+marked.use({ extensions: [boundedUrlExtension], tokenizer: boundedUrlTokenizer })
 
 marked.setOptions({
   gfm: true, // 表格、删除线、任务列表等 GitHub 扩展
@@ -42,7 +50,7 @@ const LANG_ALIAS = {
   yml: 'yaml', html: 'xml', htm: 'xml', vue: 'xml', svg: 'xml',
   'c++': 'cpp', 'c#': 'csharp', cs: 'csharp', rs: 'rust',
   golang: 'go', kt: 'kotlin', ps1: 'powershell', pwsh: 'powershell',
-  cmd: 'dos', bat: 'dos', 'objective-c': 'objectivec',
+  cmd: 'dos', bat: 'dos', batch: 'dos', 'objective-c': 'objectivec',
   md: 'markdown', text: '', txt: '', plain: '', plaintext: '',
 }
 
@@ -54,7 +62,7 @@ function resolveLang(raw) {
 }
 
 const codeRenderer = {
-  code({ text, lang }) {
+  code({ text, lang, terminal = false, title = null }) {
     const language = resolveLang(lang)
     const body = text.replace(/\n$/, '')
     let highlighted
@@ -67,11 +75,13 @@ const codeRenderer = {
     } else {
       highlighted = escapeHtml(body)
     }
-    const label = language || 'text'
+    terminal = terminal || ['dos', 'powershell', 'bash'].includes(language)
+    const label = title || ({ dos: 'Windows CMD', powershell: 'PowerShell', bash: 'Shell' }[language]) || language || 'text'
     // 复制内容由 JS 从 <pre><code> 的 textContent 读取，不写进属性（避免转义/体积问题）
     return (
-      '<div class="code-block">' +
+      `<div class="code-block${terminal ? ' terminal-block' : ''}">` +
         '<div class="code-head">' +
+          (terminal ? '<span class="terminal-dots" aria-hidden="true"><i></i><i></i><i></i></span>' : '') +
           `<span class="code-lang">${escapeHtml(label)}</span>` +
           '<button class="code-copy" type="button" aria-label="复制代码">复制</button>' +
         '</div>' +
@@ -82,6 +92,12 @@ const codeRenderer = {
 }
 
 marked.use({ renderer: codeRenderer })
+
+export function renderTerminal(text, title = '终端输出', lang = '') {
+  // Escape untrusted output; strip terminal control sequences instead of interpreting HTML.
+  const clean = String(text || '').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
+  return DOMPurify.sanitize(codeRenderer.code({ text: clean, lang, terminal: true, title }))
+}
 
 // ---------------------------------------------------------------------------
 // 二、公式：源码级占位 → 消毒后注入 KaTeX
