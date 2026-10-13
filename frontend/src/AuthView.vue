@@ -9,7 +9,7 @@
         <label class="auth-field"><span>邮箱</span><input v-model="email" type="text" inputmode="email" autocomplete="username" placeholder="请输入邮箱地址" maxlength="255" required :disabled="busy || sending" autofocus /></label>
         <label class="auth-field"><span>密码</span><input v-model="password" type="password" :autocomplete="mode === 'login' ? 'current-password' : 'new-password'" :placeholder="mode === 'register' ? '请设置 8–128 位密码' : '请输入密码'" :minlength="mode === 'register' ? 8 : 1" maxlength="128" required :disabled="busy" /></label>
         <template v-if="mode === 'register'">
-          <div class="auth-field">
+          <div v-if="emailVerificationRequired" class="auth-field">
             <label for="registration-code">邮箱验证码</label>
             <div class="auth-code-row">
               <input id="registration-code" v-model="code" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="6 位数字验证码" pattern="[0-9]{6}" maxlength="6" required :disabled="busy" />
@@ -19,6 +19,7 @@
           </div>
           <label class="auth-field"><span>昵称<em>（选填）</em></span><input v-model="displayName" type="text" autocomplete="nickname" maxlength="128" placeholder="希望我们怎么称呼你" :disabled="busy" /></label>
         </template>
+        <p v-if="mode === 'register' && registrationConfigLoaded && !registrationAllowed" class="auth-hint">暂未开放注册，请联系管理员。</p>
         <p v-if="error" class="auth-error" role="alert">{{ error }}</p>
         <p v-else-if="hintText" class="auth-hint" role="status">{{ hintText }}</p>
         <button class="auth-submit" type="submit" :disabled="busy || sending || !canSubmit">{{ busy ? (mode === 'login' ? '正在登录…' : '正在注册…') : (mode === 'login' ? '登录' : '注册并登录') }}</button>
@@ -29,8 +30,8 @@
 </template>
 
 <script>
-import { computed, onUnmounted, ref, watch } from 'vue'
-import { ApiError, login as apiLogin, register as apiRegister, sendRegistrationCode } from './api'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { ApiError, apiGet, login as apiLogin, register as apiRegister, sendRegistrationCode } from './api'
 
 export default {
   name: 'AuthView',
@@ -39,6 +40,15 @@ export default {
   setup(props, { emit }) {
     const mode = ref('login'), email = ref(''), password = ref(''), displayName = ref(''), code = ref('')
     const busy = ref(false), sending = ref(false), error = ref(''), hint = ref(''), now = ref(Date.now())
+    const registrationAllowed = ref(false), emailVerificationRequired = ref(true), registrationConfigLoaded = ref(false)
+    onMounted(async () => {
+      try {
+        const config = await apiGet('/api/v1/auth/registration-config')
+        registrationAllowed.value = config.allow_registration
+        emailVerificationRequired.value = config.email_verification_required
+        registrationConfigLoaded.value = true
+      } catch (e) { error.value = '无法读取注册设置，请刷新页面重试' }
+    })
     const resendAt = ref({})
     const normalizedEmail = computed(() => email.value.trim().toLowerCase())
     const cooldown = computed(() => Math.max(0, Math.ceil(((resendAt.value[normalizedEmail.value] || 0) - now.value) / 1000)))
@@ -47,7 +57,7 @@ export default {
     watch(email, () => { code.value = ''; error.value = ''; hint.value = '' })
     const validEmail = computed(() => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalizedEmail.value))
     const hintText = computed(() => hint.value || props.notice || '')
-    const canSubmit = computed(() => normalizedEmail.value && password.value.length > 0 && (mode.value === 'login' || (validEmail.value && password.value.length >= 8 && /^[0-9]{6}$/.test(code.value))))
+    const canSubmit = computed(() => normalizedEmail.value && password.value.length > 0 && (mode.value === 'login' || (registrationConfigLoaded.value && registrationAllowed.value && validEmail.value && password.value.length >= 8 && (!emailVerificationRequired.value || /^[0-9]{6}$/.test(code.value)))))
     const errorMessage = e => e instanceof ApiError ? e.message : '暂时无法连接服务，请检查网络后重试'
     function switchMode(next) {
       if (busy.value || sending.value || mode.value === next) return
@@ -71,7 +81,7 @@ export default {
       let registered = false
       try {
         if (mode.value === 'register') {
-          await apiRegister(normalizedEmail.value, password.value, displayName.value.trim(), code.value)
+          await apiRegister(normalizedEmail.value, password.value, displayName.value.trim(), emailVerificationRequired.value ? code.value : undefined)
           registered = true
           hint.value = '注册成功，正在登录…'
         }
@@ -82,7 +92,7 @@ export default {
         else error.value = errorMessage(e)
       } finally { busy.value = false }
     }
-    return { mode, email, password, displayName, code, busy, sending, error, hintText, cooldown, validEmail, canSubmit, switchMode, sendCode, submit }
+    return { emailVerificationRequired, registrationAllowed, registrationConfigLoaded, mode, email, password, displayName, code, busy, sending, error, hintText, cooldown, validEmail, canSubmit, switchMode, sendCode, submit }
   },
 }
 </script>

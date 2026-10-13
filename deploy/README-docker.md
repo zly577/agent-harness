@@ -42,7 +42,8 @@ docker run --rm --user "$(id -u):$(id -g)" --mount "type=bind,source=$(pwd),targ
 | `BOOTSTRAP_ADMIN_PASSWORD` | 随机生成的初始密码，请保存 |
 | `WEB_PORT` | 默认 8088，可改为未占用端口 |
 | `WEB_BIND_IP` | 默认 127.0.0.1，仅本机访问 |
-| `ALLOW_REGISTRATION` | 默认 false，需要公开自助注册时改 true |
+| `ALLOW_REGISTRATION` | 默认 true，允许直接注册；设为 false 关闭公开注册 |
+| `REGISTRATION_EMAIL_VERIFICATION` | 默认 false；设为 true 时注册需要邮箱验证码，并须配置 SMTP |
 | `TAVILY_API_KEY` | 可选，启用联网搜索 |
 | `MCP_ENABLED` | 默认 true，用户自行添加 MCP 工具源；不预置已启用服务器 |
 

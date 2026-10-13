@@ -44,7 +44,7 @@ class RegisterRequest(SendRegistrationCodeRequest):
         ..., min_length=PASSWORD_MIN, max_length=PASSWORD_MAX,
         description=f"密码，{PASSWORD_MIN}~{PASSWORD_MAX} 位",
     )
-    verification_code: str = Field(..., pattern=r"^[0-9]{6}$", description="6 位邮箱验证码")
+    verification_code: str | None = Field(None, pattern=r"^[0-9]{6}$", description="6 位邮箱验证码")
     display_name: str = Field("", max_length=128, description="展示名，可空（默认取邮箱 @ 前的部分）")
 
 

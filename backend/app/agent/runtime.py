@@ -148,6 +148,21 @@ def set_session_provider(session_id: str, provider_id: str | None) -> bool:
     return True
 
 
+def session_workspace(session_id: str, owner: str | None):
+    """Resolve persisted workspace membership, retaining legacy user roots."""
+    with SessionLocal() as db:
+        row = db.get(DbSession, session_id)
+        workspace_id = row.workspace_id if row and row.user_id == owner else None
+        if workspace_id:
+            from app.db.models import Workspace
+            workspace = db.get(Workspace, workspace_id)
+            if workspace and workspace.user_id == owner:
+                from pathlib import Path
+                return Path(workspace.directory)
+    root = workspace_for(owner)
+    return root / "workspaces" / workspace_id if workspace_id else root
+
+
 def get_main_backend(session_key: str = _MAIN_SESSION, user_id: str | None = None):
     """获取某会话的 backend（本地磁盘 + 沙箱执行），供文件浏览/下载 API 使用。
 
@@ -169,12 +184,12 @@ def get_main_backend(session_key: str = _MAIN_SESSION, user_id: str | None = Non
     # 否则"文件面板看到的"和"对话读写的"会来自两个不同的后端对象。
     return build_main_backend(
         session_key=session_key,
-        workspace=workspace_for(owner),
+        workspace=session_workspace(session_key, owner),
         mode=access.access_mode(session_key, owner),
     )
 
 
-async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None):
+async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None, *, history_only: bool = False):
     """懒加载：按会话构建智能体（backend 绑定该会话的沙箱容器 + 该用户的工作区）。
 
     Args:
@@ -197,8 +212,12 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
     # 按「会话 → 用户默认 → 系统默认」解析出本次要用的模型供应商。
     # 这一步必须在构建 graph **之前**完成：模型是 create_deep_agent 的编译期输入，
     # 换供应商只能重建 agent（见 invalidate_agents）。
-    provider = _resolve_provider_for_agent(owner, session_provider_id)
-    model = build_llm(provider)
+    if history_only:
+        from app.agent.history_model import HistoryModel
+        model = HistoryModel()
+    else:
+        provider = _resolve_provider_for_agent(owner, session_provider_id)
+        model = build_llm(provider)
 
     # 本地磁盘读写（FilesystemBackend）+ OpenSandbox 执行（execute 工具）
     # 本地磁盘根按用户隔离 → 会话/用户之间的文件与 Agent.md 互不可见
@@ -208,7 +227,7 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
     mode = access.access_mode(session_key, owner)
     backend = build_main_backend(
         session_key=session_key,
-        workspace=workspace_for(owner),
+        workspace=session_workspace(session_key, owner),
         mode=mode,
     )
 
@@ -222,8 +241,9 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
         )
 
     # 编译 YAML 技能定义并播种进 backend 虚拟文件系统
-    compile_all_skills()
-    await seed_skills(backend)
+    if not history_only:
+        compile_all_skills()
+        await seed_skills(backend)
 
     # 中间件管道 = 上下文压缩 + 技能 + 日志 + 审计 + 工具熔断 + 工具调用次数上限
     # 工具熔断：每个工具独立计数，连续失败达阈值 → 冷却期短路 → 冷却后放一次探测自愈；
@@ -257,7 +277,7 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
     # ⚠️ 必须传 owner：MCP 工具是"能读内网/带密钥"的能力，按用户隔离是硬要求，
     #    传空就等于只加载 YAML 那份（老行为），用户自己配的一条都不会出现。
     extra_tools: list = []
-    if settings.mcp_enabled:
+    if settings.mcp_enabled and not history_only:
         mcp_tools, mcp_errors = await build_mcp_tools(load_mcp_configs(owner))
         extra_tools.extend(mcp_tools)
         for err in mcp_errors:
@@ -374,6 +394,11 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
         # 子智能体（YAML 注册表），同一模型；task 工具委派 + 隔离上下文
         subagents=load_all_subagents(),
     )
+    if history_only:
+        # Only aget_state may use this graph. Never cache it as an executable
+        # agent: sending a message must still initialize the real model/tools.
+        return agent
+
     # 给内建的 task 工具加超时上限：deepagents 的 task 是 `await subagent.ainvoke(...)`，
     # 期间没有任何事件产出，不设限就只能看着转圈（见 subagent_stream 模块头注释）。
     # 注意：返回值必须当真 —— 返回 False 说明**这轮没有超时保护**（例如 langgraph
@@ -426,7 +451,7 @@ def session_title(message: str) -> str:
     return text[:30] + "…" if len(text) > 30 else text
 
 
-def create_session(user_id: str, title: str | None = None) -> str:
+def create_session(user_id: str, title: str | None = None, workspace_id: str | None = None) -> str:
     """创建新会话：
     - 生成 session_id（作为 langgraph 的 thread_id）
     - 在 MySQL 业务库登记会话元信息（**绑定归属用户**）
@@ -438,7 +463,7 @@ def create_session(user_id: str, title: str | None = None) -> str:
     session_id = uuid.uuid4().hex
     db = SessionLocal()
     try:
-        db.add(DbSession(id=session_id, user_id=user_id, title=title or "新会话", status="active"))
+        db.add(DbSession(id=session_id, user_id=user_id, workspace_id=workspace_id, title=title or "新会话", status="active"))
         db.commit()
     finally:
         db.close()
@@ -734,7 +759,7 @@ async def load_history(session_id: str, user_id: str | None = None) -> list[dict
     # （徽标说"进行中"，而那一轮其实早就没了）。这里补上这条路径。
     _reap_stale_if_idle(session_id)
 
-    agent = await get_agent(session_id, user_id=user_id)
+    agent = await get_agent(session_id, user_id=user_id, history_only=True)
     state = await agent.aget_state({"configurable": {"thread_id": session_id}})
     msgs = (state.values or {}).get("messages") or []
 

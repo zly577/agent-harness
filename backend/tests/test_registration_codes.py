@@ -29,6 +29,7 @@ class RegistrationTests(unittest.TestCase):
         self.codes = {}
         self.mail = patch('app.api.routes.auth.send_registration_code', side_effect=lambda email, code: self.codes.update({email: code})).start()
         patch.object(settings, 'allow_registration', True).start()
+        patch.object(settings, 'registration_email_verification', True).start()
         self.addCleanup(patch.stopall)
         self.addCleanup(self.engine.dispose)
         self.addCleanup(self.client.close)
@@ -92,6 +93,18 @@ class RegistrationTests(unittest.TestCase):
             self.assertIsNone(db.get(RegistrationCode, 'person@example.com'))
         self.mail.side_effect = lambda email, code: self.codes.update({email: code})
         self.assertEqual(self.send().status_code, 200)
+
+    def test_optional_verification_direct_registration(self):
+        with patch.object(settings, 'registration_email_verification', False):
+            config = self.client.get('/api/v1/auth/registration-config').json()
+            self.assertFalse(config['email_verification_required'])
+            self.assertEqual(self.send().status_code, 400)
+            result = self.client.post('/api/v1/auth/register', json={'email': 'direct@example.com', 'password': 'StrongPassword123'})
+            self.assertEqual(result.status_code, 201)
+            self.mail.assert_not_called()
+            login = self.client.post('/api/v1/auth/login', json={'email': 'direct@example.com', 'password': 'StrongPassword123'})
+            self.assertEqual(login.status_code, 200)
+            self.assertEqual(self.client.post('/api/v1/auth/register', json={'email': 'direct@example.com', 'password': 'StrongPassword123'}).status_code, 409)
 
     def test_validation_email_binding_disabled(self):
         for email in ['admin@local', 'a b@example.com', 'a@example.com\r\nBcc:x@y.com']:

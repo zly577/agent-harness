@@ -36,21 +36,40 @@ from fastapi.responses import Response
 from app.agent.opensandbox_backend import MACHINE_MOUNT_ROOT
 from app.agent.runtime import get_main_backend
 from app.agent.sandbox import WORKSPACE_PREFIX
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, owned_session_or_404
+from app.db.session import get_db
+from sqlalchemy.orm import Session as OrmSession
 from app.db.models import User
 
 router = APIRouter(prefix="/api/v1/files", tags=["files"])
 
 
+def _workspace_root(user: User, workspace_id: str | None, db):
+    from pathlib import Path
+    from app.core.workspace import ensure_workspace
+    from app.db.models import Workspace
+    if not workspace_id or workspace_id == "legacy":
+        return ensure_workspace(user.id)
+    workspace = db.get(Workspace, workspace_id)
+    if not workspace or workspace.user_id != user.id:
+        raise HTTPException(status_code=404, detail="工作区不存在")
+    return Path(workspace.directory)
+
+
 @router.post("/open-workspace")
-def open_workspace(user: User = Depends(get_current_user)):
+def open_workspace(user: User = Depends(get_current_user), session_id: str | None = None, workspace_id: str | None = None, db: OrmSession = Depends(get_db)):
     """打开当前用户的根工作区；不接受任意路径或其他用户 id。"""
     from app.core.config import settings
     from app.core.workspace import ensure_workspace
 
     if not re.fullmatch(r"[0-9a-f]{32}", user.id):
         raise HTTPException(status_code=400, detail="用户工作区标识无效")
-    root = ensure_workspace(user.id)
+    root = _workspace_root(user, workspace_id, db)
+    if session_id:
+        owned_session_or_404(db, session_id, user)
+        from app.agent.runtime import session_workspace
+        root = session_workspace(session_id, user.id)
+        root.mkdir(parents=True, exist_ok=True)
     if os.name == "nt":
         try:
             os.startfile(str(root))
@@ -58,21 +77,27 @@ def open_workspace(user: User = Depends(get_current_user)):
             raise HTTPException(status_code=503, detail="当前 Windows 会话无法打开资源管理器") from exc
         return {"opened": True, "open_url": None}
     if settings.workspace_open_protocol:
-        return {"opened": False, "open_url": f"agent-harness-workspace://open/{user.id}"}
+        suffix = f"/{root.name}" if session_id and root != ensure_workspace(user.id) else ""
+        return {"opened": False, "open_url": f"agent-harness-workspace://open/{user.id}{suffix}"}
     raise HTTPException(
         status_code=409,
         detail="此部署没有本机文件夹打开入口。Windows Docker 请通过 start-windows.ps1 启动；远程服务器请使用下载功能。",
     )
 
 
-def _user_backend(user: User):
+def _user_backend(user: User, session_id: str | None = None, db=None, workspace_id: str | None = None):
     """当前用户工作区对应的 backend。
 
     为什么不用 `get_main_backend()` 的默认参数：那个默认会落到"匿名目录"，
     于是所有人共用一个目录 —— 正是本期要消除的行为。这里显式传 user.id，
     让"文件面板看的是谁的工作区"在代码上一眼可见。
     """
-    return get_main_backend(user_id=user.id)
+    if session_id:
+        owned_session_or_404(db, session_id, user)
+    if not session_id and workspace_id and workspace_id != "legacy":
+        from app.agent.sandbox import build_main_backend
+        return build_main_backend(workspace=_workspace_root(user, workspace_id, db))
+    return get_main_backend(session_key=session_id, user_id=user.id)
 
 
 
@@ -121,10 +146,13 @@ def _assert_deletable(norm: str) -> None:
 async def list_files(
     path: str = Query("/", description="目录路径，默认根目录"),
     user: User = Depends(get_current_user),
+    session_id: str | None = None,
+    workspace_id: str | None = None,
+    db: OrmSession = Depends(get_db),
 ):
     """列出**当前用户**工作区中指定目录下的文件和子目录。"""
     norm = _normalize_path(path)
-    backend = _user_backend(user)
+    backend = _user_backend(user, session_id, db, workspace_id)
     try:
         result = backend.ls(norm)
     except Exception as e:
@@ -148,11 +176,14 @@ def _content_disposition(filename: str) -> str:
 async def download_file(
     path: str = Query(..., description="要下载的文件绝对路径，如 /workspace/report.md"),
     user: User = Depends(get_current_user),
+    session_id: str | None = None,
+    workspace_id: str | None = None,
+    db: OrmSession = Depends(get_db),
 ):
     """下载**当前用户**工作区中的指定文件，返回原始字节流。"""
     norm = _normalize_path(path)
 
-    backend = _user_backend(user)
+    backend = _user_backend(user, session_id, db, workspace_id)
     try:
         results = backend.download_files([norm])
     except Exception as e:
@@ -203,6 +234,9 @@ async def download_file(
 async def delete_file(
     path: str = Query(..., description="要删除的条目绝对路径，如 /workspace/notes/草稿.md"),
     user: User = Depends(get_current_user),
+    session_id: str | None = None,
+    workspace_id: str | None = None,
+    db: OrmSession = Depends(get_db),
 ):
     """删除**当前用户**工作区里的一个文件或目录（**目录连同内容一起删，不可恢复**）。
 
@@ -211,7 +245,7 @@ async def delete_file(
     norm = _normalize_path(path)
     _assert_deletable(norm)
 
-    backend = _user_backend(user)
+    backend = _user_backend(user, session_id, db, workspace_id)
     try:
         result = backend.delete(norm)
     except Exception as e:  # noqa: BLE001

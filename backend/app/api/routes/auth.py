@@ -63,10 +63,18 @@ def _issue_token(user: User) -> TokenResponse:
     return TokenResponse(access_token=token, expires_in=expires_in, user=UserOut.of(user))
 
 
+@router.get("/registration-config")
+def registration_config():
+    return {"allow_registration": settings.allow_registration,
+            "email_verification_required": settings.registration_email_verification}
+
+
 @router.post("/register/code")
 def request_registration_code(req: SendRegistrationCodeRequest, db: OrmSession = Depends(get_db)):
     if not settings.allow_registration:
         raise HTTPException(403, "暂未开放注册，请联系管理员")
+    if not settings.registration_email_verification:
+        raise HTTPException(400, "当前注册不需要邮箱验证码")
     if db.scalar(select(User).where(User.email == req.email)):
         raise HTTPException(409, "该邮箱已被注册，请直接登录")
     now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -117,16 +125,20 @@ def register(req: RegisterRequest, db: OrmSession = Depends(get_db)):
     if exists is not None:
         raise HTTPException(status_code=409, detail="该邮箱已被注册")
 
-    challenge = db.scalar(select(RegistrationCode).where(RegistrationCode.email == req.email).with_for_update())
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
-    if not challenge or challenge.expires_at <= now:
-        raise HTTPException(400, "验证码已过期或尚未发送，请重新获取")
-    if challenge.attempts >= 5:
-        raise HTTPException(429, "验证码错误次数过多，请重新获取")
-    if not verify_password(req.verification_code, challenge.code_hash):
-        challenge.attempts += 1
-        db.commit()
-        raise HTTPException(400, "验证码不正确，请检查后重新输入")
+    challenge = None
+    if settings.registration_email_verification:
+        if not req.verification_code:
+            raise HTTPException(422, "请输入 6 位邮箱验证码")
+        challenge = db.scalar(select(RegistrationCode).where(RegistrationCode.email == req.email).with_for_update())
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        if not challenge or challenge.expires_at <= now:
+            raise HTTPException(400, "验证码已过期或尚未发送，请重新获取")
+        if challenge.attempts >= 5:
+            raise HTTPException(429, "验证码错误次数过多，请重新获取")
+        if not verify_password(req.verification_code, challenge.code_hash):
+            challenge.attempts += 1
+            db.commit()
+            raise HTTPException(400, "验证码不正确，请检查后重新输入")
 
     display_name = (req.display_name or "").strip() or req.email.split("@")[0]
     user = User(
@@ -139,7 +151,8 @@ def register(req: RegisterRequest, db: OrmSession = Depends(get_db)):
         is_active=True,
     )
     db.add(user)
-    db.delete(challenge)
+    if challenge is not None:
+        db.delete(challenge)
     try:
         db.commit()
     except IntegrityError:

@@ -147,7 +147,7 @@ async def check_approval(
 ):
     """查看该会话当前是否有待审批项（含全部中断）。"""
     owned_session_or_404(db, session_id, user)
-    agent = await runtime.get_agent(session_id, user_id=user.id)
+    agent = await runtime.get_agent(session_id, user_id=user.id, history_only=True)
     info = await approvals.read_pending_approval(agent, _config(session_id), user_id=user.id)
     return ApprovalCheckResponse(
         session_id=session_id,

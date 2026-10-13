@@ -119,7 +119,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\start-windows.ps1 -
 - **用户模型 Key**：通过网页配置，Fernet 加密后保存到 MySQL。
 - **持久化卷**：MySQL、SQLite、工作区、后端日志；重建容器保留数据。
 - **密钥备份**：务必保存根目录 `.env`；丢失 `FERNET_KEY` 会无法解密已有供应商 Key。
-- **注册**：Docker 默认关闭自助注册；需要时将 `ALLOW_REGISTRATION=true`，重新运行启动命令。
+- **注册**：Docker 默认开放自助注册（不要求邮箱验证码）；需要时将 `ALLOW_REGISTRATION=true`，重新运行启动命令。
 - **MCP**：默认启用接入能力，但不预置可用工具；用户在「MCP」界面添加自己的服务器。已有 `.env` 的 `MCP_ENABLED=false` 会保留，请手动改为 true；Windows 个人入口已强制启用。
 
 ## 本机开发
@@ -175,11 +175,19 @@ npm run dev
 
 ### 邮箱验证码注册
 
-注册时填写邮箱、8–128 位密码和 6 位邮箱验证码，昵称选填。验证码 10 分钟有效，每个邮箱发送间隔 60 秒，输错 5 次后需要重新获取；注册成功后验证码立即失效，并自动登录。已有账号（包括 `admin@local`）仍可用原密码登录。
+启用邮箱验证后，注册时填写邮箱、8–128 位密码和 6 位邮箱验证码，昵称选填。验证码 10 分钟有效，每个邮箱发送间隔 60 秒，输错 5 次后需要重新获取；注册成功后验证码立即失效，并自动登录。已有账号（包括 `admin@local`）仍可用原密码登录。
 
-部署前设置 `ALLOW_REGISTRATION=true`，并配置 `SMTP_HOST`、`SMTP_PORT`、`SMTP_USERNAME`、`SMTP_PASSWORD`（邮箱服务的授权码）和 `SMTP_FROM`（允许发信的邮箱地址）。587 端口默认启用 STARTTLS；使用 465 端口时设置 `SMTP_SSL=true`。本地运行填写 `backend/.env`，Docker 部署填写根目录 `.env` 后重建后端容器。
+启用验证码时设置 `ALLOW_REGISTRATION=true`、`REGISTRATION_EMAIL_VERIFICATION=true`，并配置 `SMTP_HOST`、`SMTP_PORT`、`SMTP_USERNAME`、`SMTP_PASSWORD`（邮箱服务的授权码）和 `SMTP_FROM`（允许发信的邮箱地址）。587 端口默认启用 STARTTLS；使用 465 端口时设置 `SMTP_SSL=true`。本地运行填写 `backend/.env`，Docker 部署填写根目录 `.env` 后重建后端容器。
 
 启动时 Alembic 自动创建 `registration_codes` 表；手动部署也可在 backend 目录执行 `alembic upgrade head`。未配置邮件服务时发送验证码会提示暂不可用，不会绕过邮箱验证。上线前需使用自己的 SMTP 账号完成一次真实收信验证。
 
 
 常见发件邮箱预设（QQ、163、企业邮箱、微软 OAuth）及连接/收信验证步骤见 [邮件服务配置](deploy/README-smtp.md)。
+
+### 可选的注册邮箱验证
+
+默认 `ALLOW_REGISTRATION=true`、`REGISTRATION_EMAIL_VERIFICATION=false`，无需配置邮件服务，用户填写邮箱和密码即可注册并登录。
+
+需要验证码时设置 `REGISTRATION_EMAIL_VERIFICATION=true` 并配置 SMTP；注册页面会自动显示验证码输入框。关闭公开注册使用 `ALLOW_REGISTRATION=false`。Windows 个人磁盘部署入口仍关闭公开注册。
+
+本机开发修改 `backend/.env` 后重启后端；Docker 修改根目录 `.env` 后重新运行 `docker compose up -d --build`。已有 `.env` 不会自动覆盖，升级时请按需修改。不要把真实 SMTP 凭证提交到 GitHub。

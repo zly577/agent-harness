@@ -2,13 +2,16 @@
 param([Parameter(Mandatory = $true)][string]$WorkspaceUri, [string]$WorkspaceRoot, [switch]$ValidateOnly)
 $ErrorActionPreference = 'Stop'
 # Validate the entire raw URL before interpreting it or starting any process.
-if ($WorkspaceUri -notmatch '^agent-harness-workspace://open/([0-9a-f]{32})/?$') {
+if ($WorkspaceUri -notmatch '^agent-harness-workspace://open/([0-9a-f]{32})(?:/([0-9a-f]{32}))?/?$') {
     throw 'Invalid workspace URL.'
 }
 $taskUserId = $Matches[1]
+$taskWorkspaceId = $Matches[2]
 if (-not $WorkspaceRoot) { $WorkspaceRoot = Join-Path (Split-Path -Parent $PSScriptRoot) 'workspace' }
 $taskBase = [System.IO.Path]::GetFullPath($WorkspaceRoot).TrimEnd('\', '/')
-$taskPath = [System.IO.Path]::GetFullPath((Join-Path $taskBase $taskUserId))
+$taskRelative = $taskUserId
+if ($taskWorkspaceId) { $taskRelative = Join-Path (Join-Path $taskUserId "workspaces") $taskWorkspaceId }
+$taskPath = [System.IO.Path]::GetFullPath((Join-Path $taskBase $taskRelative))
 if (-not $taskPath.StartsWith($taskBase + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
     throw 'Workspace path outside allowed directory.'
 }

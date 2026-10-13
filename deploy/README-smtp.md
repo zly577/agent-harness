@@ -1,5 +1,7 @@
 # 注册验证码邮件配置
 
+默认直接注册，无需邮件配置。只有启用 `REGISTRATION_EMAIL_VERIFICATION=true` 时才需要以下配置。
+
 用户可以使用 QQ、163、Outlook 或企业邮箱接收验证码，没有收件域名白名单。以下配置是部署者用于发送验证码的一个邮箱账号，不需要为每种收件邮箱分别配置账号。
 
 Docker 修改仓库根目录 `.env`；直接运行 Python 后端修改 `backend/.env`。填写后重启后端；Docker 使用 `docker compose up -d --build backend`。
@@ -23,6 +25,7 @@ QQ / 163 / 126 / 腾讯或网易企业邮箱示例：
 
 ```dotenv
 ALLOW_REGISTRATION=true
+REGISTRATION_EMAIL_VERIFICATION=true
 SMTP_PROVIDER=qq
 SMTP_USERNAME=你的发件邮箱
 SMTP_FROM=你的发件邮箱

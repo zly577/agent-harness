@@ -23,12 +23,13 @@ import { apiFetch, apiFetchRaw } from './api'
  *   传空 = 不指定，由后端按「会话已绑定 → 用户默认 → 系统默认」解析。
  *   注意它会**写回会话**（后续轮次沿用），不是"只影响这一轮"的临时值。
  */
-export async function streamChat(message, sessionId, signal, onEvent, providerId = null) {
+export async function streamChat(message, sessionId, signal, onEvent, providerId = null, workspaceId = null) {
   // 后端：session_id 缺省即新建；"new" 也让它缺省新建
   const body = sessionId && sessionId !== 'new'
     ? { message, session_id: sessionId }
     : { message }
   if (providerId) body.provider_id = providerId
+  if (!body.session_id && workspaceId) body.workspace_id = workspaceId
 
   await consumeStream('/api/v1/chat/stream', body, signal, onEvent)
 }

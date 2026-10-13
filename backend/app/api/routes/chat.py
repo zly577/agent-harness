@@ -26,9 +26,18 @@ async def chat(
 ):
     # 会话解析：无 session_id 则新建（登记 MySQL，绑定当前用户）；有则校验归属
     if req.session_id is None:
-        session_id = runtime.create_session(user.id, runtime.session_title(req.message))
+        workspace_id = req.workspace_id if req.workspace_id != "legacy" else None
+        if workspace_id:
+            from app.db.models import Workspace
+            workspace = db.get(Workspace, workspace_id)
+            if not workspace or workspace.user_id != user.id:
+                raise HTTPException(status_code=404, detail="工作区不存在")
+        session_id = runtime.create_session(user.id, runtime.session_title(req.message), workspace_id=workspace_id)
     else:
-        owned_session_or_404(db, req.session_id, user)
+        row = owned_session_or_404(db, req.session_id, user)
+        if row.title == "新会话":
+            row.title = runtime.session_title(req.message)
+            db.commit()
         session_id = req.session_id
         runtime.touch_session(session_id)
 

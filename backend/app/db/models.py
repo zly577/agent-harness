@@ -54,6 +54,14 @@ class User(Base):
     )
 
 
+class Workspace(Base):
+    __tablename__ = "workspaces"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(32), index=True)
+    name: Mapped[str] = mapped_column(String(255))
+    directory: Mapped[str] = mapped_column(Text)
+
+
 class Session(Base):
     """会话主记录。ID 与 langgraph SQLite checkpoint 的 thread_id 对齐。"""
 
@@ -68,6 +76,7 @@ class Session(Base):
     provider_id: Mapped[str | None] = mapped_column(
         String(32), index=True, nullable=True, comment="会话绑定的模型供应商；NULL=跟随默认"
     )
+    workspace_id: Mapped[str | None] = mapped_column(String(32), index=True, nullable=True)
     title: Mapped[str] = mapped_column(String(255), default="新会话", comment="会话标题")
     status: Mapped[str] = mapped_column(String(16), default="active", comment="active/archived")
     created_at: Mapped[datetime] = mapped_column(

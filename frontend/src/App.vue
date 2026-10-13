@@ -22,36 +22,48 @@
     <!-- 侧边栏：会话列表（宽度可拖拽调整） -->
     <aside class="sidebar" ref="sidebarEl" :style="{ width: sidebarWidth + 'px' }">
       <div class="sb-top">
-        <button class="sb-new" @click="newChat">
+        <div class="sb-brand">
+          <span class="sb-mark">AH</span>
+          <span class="sb-name">Agent Harness</span>
+        </div>
+
+        <button class="sb-new" @click="newChat()">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg>
           <span>新对话</span>
+        </button>
+        <button class="sb-new" :disabled="creatingWorkspace" @click="createWorkspace">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h5l2 2h5v7H2z" /></svg>
+          <span>{{ creatingWorkspace ? '请选择目录…' : '新建工作区' }}</span>
         </button>
       </div>
 
       <nav class="sb-nav">
         <div v-if="loadingSessions" class="sb-hint">载入中…</div>
-        <div v-else-if="!sessions.length" class="sb-hint">暂无历史会话</div>
-        <div
-          v-for="s in sessions"
-          :key="s.id"
-          class="sb-item"
-          :class="{ active: s.id === sessionId }"
-          @click="openSession(s.id)"
-        >
-          <span class="sb-title">{{ s.title || '新会话' }}</span>
-          <span v-if="isSessionStreaming(s.id)" class="sb-live" title="后台输出中"></span>
-          <button class="sb-del" title="删除会话" @click.stop="deleteSession(s.id)">
-            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7" /></svg>
-          </button>
-        </div>
+
+        <section v-for="workspace in workspaceGroups" :key="workspace.id" class="sb-workspace">
+          <div class="sb-workspace-head">
+            <button class="sb-workspace-toggle" @click="toggleWorkspace(workspace.id)" :aria-expanded="!collapsedWorkspaces[workspace.id]">
+              <span>{{ collapsedWorkspaces[workspace.id] ? '▸' : '▾' }}</span>
+              <span class="sb-title" :title="workspace.directory">{{ workspace.title }}</span>
+              <span class="sb-workspace-count">{{ workspace.sessions.length }}</span>
+            </button>
+            <button class="sb-workspace-add" title="在此工作区新建会话" @click="newChat(workspace.id)">+</button>
+            <button v-if="workspace.id !== 'legacy'" class="sb-workspace-add" title="删除工作区" @click="deleteWorkspace(workspace)">×</button>
+          </div>
+          <template v-if="!collapsedWorkspaces[workspace.id]">
+            <div v-for="s in workspace.sessions" :key="s.id" class="sb-item" :class="{ active: s.id === sessionId }" @click="openSession(s.id)">
+              <span class="sb-title">{{ s.title || '新会话' }}</span>
+              <span v-if="isSessionStreaming(s.id)" class="sb-live" title="后台输出中"></span>
+              <button class="sb-del" title="删除会话" @click.stop="deleteSession(s.id)">
+                <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7" /></svg>
+              </button>
+            </div>
+          </template>
+        </section>
       </nav>
 
       <div class="sb-foot">
-        <div class="sb-brand">
-          <span class="sb-mark">AH</span>
-          <span class="sb-name">Agent Harness</span>
-        </div>
-        <p class="sb-tip">DeepAgents 通用智能体</p>
+
 
         <!-- 当前用户 + 登出 -->
         <div class="sb-user">
@@ -172,6 +184,7 @@
         @scroll.passive="onMessagesScroll"
         @wheel.passive="onMessagesWheel"
       >
+        <div v-if="loadingHistory" class="history-loading" role="status">正在加载会话…</div>
         <div v-if="messages.length <= 1 && !loadingHistory" class="empty">
           <div class="empty-mark">AH</div>
           <h2 class="empty-title">今天想做什么？</h2>
@@ -187,14 +200,6 @@
             <button class="chip" @click="showProviders = true">去配置模型</button>
           </div>
 
-          <div v-else class="chips">
-            <button
-              v-for="s in suggestions"
-              :key="s"
-              class="chip"
-              @click="useSuggestion(s)"
-            >{{ s }}</button>
-          </div>
         </div>
 
         <div v-for="(m, i) in messages" :key="i" class="row" :class="m.role">
@@ -511,7 +516,7 @@
       <div v-if="showFilePanel" class="overlay" @click.self="showFilePanel = false">
         <div class="modal file-modal">
           <div class="modal-head row-head">
-            <h3>工作区文件</h3>
+            <h3>{{ currentWorkspace?.name || "默认工作区" }} · 文件</h3>
             <div class="modal-head-actions">
               <button class="btn-ghost sm" @click="openWorkspaceFolder">打开目录</button>
               <button class="btn-ghost sm" @click="loadFiles" :disabled="loadingFiles">
@@ -521,6 +526,7 @@
             </div>
           </div>
 
+          <p class="workspace-directory" :title="currentWorkspace?.directory">{{ currentWorkspace?.directory }}</p>
           <div class="file-path">
             <nav class="breadcrumb">
               <template v-for="(seg, i) in breadcrumbs" :key="seg.path">
@@ -637,7 +643,7 @@
             placeholder="给 Agent Harness 发消息"
             @keydown.enter.exact.prevent="send"
             @input="autoGrow"
-            :disabled="streaming"
+            :disabled="streaming || loadingHistory"
             rows="1"
           ></textarea>
           <button v-if="streaming" class="btn-stop" title="停止生成" @click="stopStream">
@@ -892,14 +898,20 @@ export default {
       }
     }
 
+    let sessionViewVersion = 0
     watch(sessionId, (id) => {
+      sessionViewVersion += 1
+      loadingHistory.value = false
+      showFilePanel.value = false
+      fileList.value = []
+      filePath.value = "/"
       try {
         if (id) window.localStorage.setItem(lastSessionKey, id)
         else window.localStorage.removeItem(lastSessionKey)
       } catch {
         // 存不了就算了，只影响"刷新后回到原处"这一便利
       }
-    })
+    }, { flush: 'sync' })
 
     function formatJson(v) {
       if (v === null || v === undefined) return ''
@@ -917,12 +929,27 @@ export default {
     }
 
     // ===== 顶栏标题 / 空状态建议词 =====
-    const suggestions = [
-      '看看工作区里有什么文件',
-      '写一个 Python 脚本，统计工作区里的代码行数',
-      '把一段需求整理成 Markdown 文档存到工作区',
-      '委派子智能体调研一个主题',
-    ]
+    const workspaces = ref([])
+    const creatingWorkspace = ref(false)
+    const creatingChat = ref(false)
+    const draftWorkspaceId = ref("legacy")
+    const collapsedWorkspaces = reactive({})
+    const workspaceGroups = computed(() => {
+      const groups = new Map(workspaces.value.map(w => [w.id, { id: w.id, title: w.name, directory: w.directory, sessions: [] }]))
+      for (const session of sessions.value) {
+        const id = session.workspace_id || 'legacy'
+        if (!groups.has(id)) groups.set(id, { id, title: id === 'legacy' ? '默认工作区' : '工作区', sessions: [] })
+        groups.get(id).sessions.push(session)
+      }
+      return [...groups.values()]
+    })
+
+    const currentWorkspace = computed(() => {
+      const session = sessions.value.find(s => s.id === sessionId.value)
+      return workspaces.value.find(w => w.id === (session?.workspace_id || draftWorkspaceId.value))
+    })
+
+    function toggleWorkspace(id) { collapsedWorkspaces[id] = !collapsedWorkspaces[id] }
 
     const currentTitle = computed(() => {
       const cur = sessions.value.find((s) => s.id === sessionId.value)
@@ -1495,16 +1522,7 @@ export default {
       el.style.height = `${el.scrollHeight}px`
     }
 
-    /** 点建议词：填入输入框并把光标交回去，不直接发送。 */
-    function useSuggestion(text) {
-      input.value = text
-      nextTick(() => {
-        const el = inputEl.value
-        if (!el) return
-        el.focus()
-        autoGrow()
-      })
-    }
+
 
     /** 顶栏的审批开关按钮（原来是 checkbox，现在点按钮切换）。 */
     function toggleHitlBtn() {
@@ -1999,10 +2017,13 @@ export default {
       else hasNewBelow.value = true
     }, { deep: true })
 
+    function fileSessionQuery() { return sessionId.value ? `&session_id=${encodeURIComponent(sessionId.value)}` : `&workspace_id=${encodeURIComponent(draftWorkspaceId.value)}` }
+
     async function loadSessions() {
       loadingSessions.value = true
       try {
-        const data = await apiGet('/api/v1/sessions')
+        const [data, workspaceData] = await Promise.all([apiGet('/api/v1/sessions'), apiGet('/api/v1/workspaces')])
+        workspaces.value = workspaceData
         const serverList = Array.isArray(data) ? data : []
         // 保留前端乐观创建的临时项（尚未收到真实 session_id 的新会话）
         const tempItems = sessions.value.filter((s) => s._temp || (typeof s.id === 'string' && s.id.startsWith('temp_')))
@@ -2053,6 +2074,7 @@ export default {
      */
     async function restorePendingApproval(sid) {
       if (!sid) return
+      const viewVersion = sessionViewVersion
       let info
       try {
         info = await fetchApproval(sid)
@@ -2063,13 +2085,15 @@ export default {
       const pending = !!(info?.pending && (info.actions || []).length)
       if (!pending) {
         if (sessionStates[sid]) sessionStates[sid].approval = null
-        if (sessionId.value === sid) approval.value = null
+        if (sessionId.value === sid && sessionViewVersion === viewVersion) approval.value = null
         return
       }
       const payload = { pending: true, actions: info.actions, session_id: sid }
       if (sessionStates[sid]) sessionStates[sid].approval = payload
-      approval.value = payload
-      notify('有一个操作在等你确认')
+      if (sessionId.value === sid && sessionViewVersion === viewVersion) {
+        approval.value = payload
+        notify('有一个操作在等你确认')
+      }
     }
 
     /**
@@ -2088,7 +2112,8 @@ export default {
       }
       if (!run || run.status === 'idle' || !run.running) return false
 
-      const target = msgs || state?.messages || messages
+      if (!state || sessionStates[sid] !== state || state.streaming) return false
+      const target = msgs || state.messages
 
       // openSession 是把会话消息**拷贝元素**到 `messages` 里的（两个数组不是同一个对象），
       // 所以"删掉半截消息"和"push 接回来的气泡"都必须同步到 `messages` 一次，
@@ -2221,92 +2246,88 @@ export default {
     }
 
     async function openSession(id) {
-      if (id === sessionId.value) return
-      // 临时创建中的会话就是当前新会话，点击不处理
-      if (typeof id === 'string' && id.startsWith('temp_')) return
-      // 允许在流式输出时切换会话，原对话在后台继续
+      if ((id === sessionId.value && (loadingHistory.value || sessionStates[id]?.loaded)) || (typeof id === 'string' && id.startsWith('temp_'))) return
       sessionId.value = id
-      // 换会话先复位跟随状态（新会话永远从"看最新"开始）
+      const viewVersion = ++sessionViewVersion
+      const isCurrent = () => sessionId.value === id && sessionViewVersion === viewVersion
       stickToBottom.value = true
       hasNewBelow.value = false
-
-      // 把该会话绑定的模型同步到选择器上。
-      // 不这么做的话，切到一个绑了 B 模型的会话、而选择器还显示着 A，
-      // 用户会以为"这个会话用的是 A"——界面必须反映真实状态。
       syncProviderFromSession(id)
-
-      // 如果该会话已在内存中（可能正在后台流式输出），直接恢复，不重新加载
+      approval.value = null
+      // Immediately stop showing the previous conversation under the new title.
+      messages.splice(0, messages.length)
       if (sessionStates[id]?.loaded) {
-        messages.splice(0, messages.length, ...noteBlankTail(sessionStates[id].messages))
-        // 弹窗**不**从内存里照搬：那份记忆可能早就失效（审批已处理 / 已切自动执行），
-        // 照搬就是"幽灵弹窗"。一律等下面 restorePendingApproval 拿后端结论。
-        approval.value = null
-        // 切会话 = 明确想看最新的那一条，强制回到底部并恢复跟随
-        await nextTick(() => scrollToBottom(true))
-        // 本地没有在跑、但后端还在跑（比如页面刷新过）→ 接回来
-        resumeRun(id)
-        // 可能正停在一个待审批中断上（审批中断时用户不在页面上）
-        restorePendingApproval(id)
-        return
-      }
-
-      loadingHistory.value = true
-      try {
-        const data = await apiGet(`/api/v1/sessions/${id}/messages`)
-        const list = (Array.isArray(data) ? data : []).map((m) => ({
-          role: m.role,
-          content: m.content,
-          toolCalls: Array.isArray(m.toolCalls) ? m.toolCalls : [],
-          delegations: Array.isArray(m.delegations) ? m.delegations : [],
-          streaming: false,
-          time: '',
-        }))
-        // 空会话就保持空列表，直接显示欢迎页
-        noteBlankTail(list)
-        // 存入会话状态，后续切换可直接恢复
-        if (!sessionStates[id]) {
-          sessionStates[id] = { messages: reactive(list), streaming: false, controller: null, loaded: true, approval: null }
-        } else {
-          sessionStates[id].messages = reactive(list)
-          sessionStates[id].loaded = true
-        }
-        messages.splice(0, messages.length, ...list)
-        // 同上面的理由：弹窗只认后端，不认上一次留下的内存状态
-        approval.value = null
-      } catch (e) {
-        // **"还没配置模型"不该在对话区留一条红字**。
-        //
-        // 它不是一个"对话出了错"，而是一个"你还没做某件事"的前置条件 ——
-        // 把它写成一条助手消息，会让每次打开会话都刷出一句
-        // "⚠️ 载入历史失败：你还没有配置模型…"，看起来像历史丢了/系统坏了。
-        //
-        // 现在改成：这种情况**什么都不显示**，直接落回欢迎页 —— 而欢迎页上本来就有
-        // 「还没有配置模型供应商…去配置模型」的引导（见模板里的 .empty-nomodel）。
-        // 真正该出现这句话的时机是"用户尝试发消息"（`send()` 的本地校验）。
-        //
-        // 判据用 HTTP 状态：后端把 ProviderNotConfigured 统一转成 **400**
-        // （见 app/main.py 的全局异常处理器）。其它错误（500 等）照旧显示，
-        // 否则真出问题时用户会看到一片空白而毫无线索。
-        if (!isModelMissingError(e)) {
-          messages.splice(0, messages.length, {
-            role: 'assistant',
-            content: `⚠️ 载入历史失败：${e.message}`,
-            toolCalls: [],
-            delegations: [],
+        messages.push(...noteBlankTail(sessionStates[id].messages))
+        loadingHistory.value = false
+      } else {
+        loadingHistory.value = true
+        try {
+          const data = await apiGet(`/api/v1/sessions/${id}/messages`)
+          if (!isCurrent()) return
+          const list = (Array.isArray(data) ? data : []).map(m => ({
+            ...m,
+            toolCalls: Array.isArray(m.toolCalls) ? m.toolCalls : [],
+            delegations: Array.isArray(m.delegations) ? m.delegations : [],
             streaming: false,
             time: '',
-          })
+          }))
+          noteBlankTail(list)
+          sessionStates[id] = { messages: reactive(list), streaming: false, controller: null, loaded: true, approval: null }
+          messages.push(...sessionStates[id].messages)
+        } catch (e) {
+          if (!isCurrent()) return
+          if (!isModelMissingError(e)) {
+            messages.push({ role: 'assistant', content: `⚠️ 载入历史失败：${e.message}`, toolCalls: [], delegations: [], streaming: false, time: '' })
+          }
+        } finally {
+          if (isCurrent()) loadingHistory.value = false
         }
       }
-      loadingHistory.value = false
-      await nextTick(() => scrollToBottom(true))
-      // 历史载入后，接回后端可能仍在进行的这一轮（刷新 / 重新打开页面走这里）
+      await nextTick()
+      if (!isCurrent()) return
+      scrollToBottom(true)
       resumeRun(id)
-      // 以及恢复可能悬着的审批弹窗
       restorePendingApproval(id)
     }
 
-    function newChat() {
+    async function newChat(workspaceId = 'legacy') {
+      if (creatingChat.value || loadingHistory.value) return
+      const current = sessions.value.find(s => s.id === sessionId.value)
+      const currentWorkspaceId = current?.workspace_id || draftWorkspaceId.value
+      if (!streaming.value && messages.length === 0 && currentWorkspaceId === workspaceId) return
+      resetChat()
+      draftWorkspaceId.value = workspaceId
+      collapsedWorkspaces[workspaceId] = false
+    }
+
+    async function createWorkspace() {
+      if (creatingWorkspace.value) return
+      creatingWorkspace.value = true
+      try {
+        const workspace = await apiPost('/api/v1/workspaces/pick-directory', {})
+        if (workspace.cancelled) return
+        await loadSessions()
+        await newChat(workspace.id)
+      } catch (e) { notify(`新建工作区失败：${e.message}`, 'error') }
+      finally { creatingWorkspace.value = false }
+    }
+
+    async function deleteWorkspace(workspace) {
+      if (!window.confirm(`确认删除工作区“${workspace.title}”及其全部会话？目录中的文件会保留。`)) return
+      try {
+        await apiDelete(`/api/v1/workspaces/${workspace.id}`)
+        if (workspace.sessions.some(s => s.id === sessionId.value) || (!sessionId.value && draftWorkspaceId.value === workspace.id)) resetChat()
+        for (const session of workspace.sessions) {
+          sessionStates[session.id]?.controller?.abort()
+          delete sessionStates[session.id]
+        }
+        await loadSessions()
+      } catch (e) { notify(`删除工作区失败：${e.message}`, 'error') }
+    }
+
+    function resetChat() {
+      sessionViewVersion += 1
+      draftWorkspaceId.value = "legacy"
       // 允许在流式输出时创建新对话，原对话在后台继续
       sessionId.value = null
       // 新会话不继承上一个会话的模型选择，回到"我自己的默认"。
@@ -2320,6 +2341,8 @@ export default {
       hasNewBelow.value = false    }
 
     async function deleteSession(id) {
+      const session = sessions.value.find(s => s.id === id)
+      if (!window.confirm(`确认删除会话“${session?.title || '新会话'}”？`)) return
       try {
         await apiDelete(`/api/v1/sessions/${id}`)
       } catch (e) {
@@ -2329,13 +2352,16 @@ export default {
         await loadSessions()
         return
       }
-      if (sessionId.value === id) newChat()
+      sessionStates[id]?.controller?.abort()
+      delete sessionStates[id]
+      if (sessionId.value === id) resetChat()
       await loadSessions()
     }
 
     async function send() {
       const text = input.value.trim()
-      if (!text || streaming.value) return
+      if (!text || streaming.value || loadingHistory.value) return
+      if (!sessionId.value && sessions.value.some(s => s._temp && s.workspace_id === draftWorkspaceId.value)) return
 
       // 没有可用的模型就**不要发出去**。
       // 以前会把请求发上去、由后端回一句"尚未配置供应商"，用户还得自己猜去哪儿配；
@@ -2354,6 +2380,8 @@ export default {
 
       const controller = new AbortController()
       const startingSessionId = sessionId.value // 新会话时为 null
+      const startingViewVersion = sessionViewVersion
+      const startingWorkspaceId = draftWorkspaceId.value
       let resolvedSessionId = startingSessionId
 
       // 新会话：乐观创建侧边栏项（不等后端返回 session_id）
@@ -2363,6 +2391,7 @@ export default {
         const shortTitle = text.length > 30 ? text.slice(0, 30) + '…' : text
         sessions.value.unshift({
           id: tempId,
+          workspace_id: startingWorkspaceId,
           title: shortTitle,
           status: 'active',
           created_at: new Date().toISOString(),
@@ -2428,14 +2457,14 @@ export default {
           if (evt.type === 'session') {
             resolvedSessionId = evt.session_id
             // 只有用户还停留在新会话页时才切换 sessionId，不把已切走的用户拉回来
-            if (sessionId.value === null) {
+            if (sessionId.value === null && sessionViewVersion === startingViewVersion) {
               sessionId.value = evt.session_id
             }
             // 把侧边栏的乐观临时项替换为真实 session_id
             if (tempId) {
               const idx = sessions.value.findIndex((s) => s.id === tempId)
               if (idx !== -1) {
-                sessions.value[idx] = { ...sessions.value[idx], id: evt.session_id, _temp: false }
+                sessions.value[idx] = { ...sessions.value[idx], id: evt.session_id, workspace_id: startingWorkspaceId, _temp: false }
               }
             }
             if (!sessionStates[resolvedSessionId]) {
@@ -2458,7 +2487,7 @@ export default {
             assistantMsg.content = `⚠️ ${evt.detail}`
             assistantMsg.error = true
           }
-        }, chosenProvider.value || null)
+        }, chosenProvider.value || null, startingWorkspaceId)
       } catch (e) {
         if (e.name !== 'AbortError') {
           assistantMsg.content = `⚠️ ${e.message}`
@@ -2587,6 +2616,8 @@ export default {
 
     /** 静默重载某会话历史（用于审批状态与后端不一致时的兜底同步）。 */
     async function refreshSession(id) {
+      const originalState = sessionStates[id]
+      const viewVersion = sessionViewVersion
       try {
         const data = await apiGet(`/api/v1/sessions/${id}/messages`)
         const list = (Array.isArray(data) ? data : []).map((m) => ({
@@ -2600,12 +2631,12 @@ export default {
         if (!list.length) return
         noteBlankTail(list)
         const state = sessionStates[id]
-        if (state) {
+        if (state && state === originalState && !state.streaming) {
           state.messages = reactive(list)
           state.loaded = true
           state.streaming = false
           state.approval = null
-          if (id === sessionId.value) messages.splice(0, messages.length, ...list)
+          if (id === sessionId.value && viewVersion === sessionViewVersion && !loadingHistory.value) messages.splice(0, messages.length, ...list)
         }
       } catch {
         // 忽略：保留当前画面
@@ -2768,7 +2799,7 @@ export default {
     async function loadFiles() {
       loadingFiles.value = true
       try {
-        const data = await apiGet(`/api/v1/files?path=${encodeURIComponent(filePath.value)}`)
+        const data = await apiGet(`/api/v1/files?path=${encodeURIComponent(filePath.value)}${fileSessionQuery()}`)
         fileList.value = Array.isArray(data?.entries) ? data.entries : []
       } catch {
         fileList.value = []
@@ -2778,7 +2809,7 @@ export default {
 
     async function openWorkspaceFolder() {
       try {
-        const result = await apiPost('/api/v1/files/open-workspace', {})
+        const result = await apiPost(`/api/v1/files/open-workspace?${fileSessionQuery().slice(1)}`, {})
         if (result.open_url) {
           window.location.href = result.open_url
           notify('请允许浏览器打开工作区目录；此入口用于部署者本机。', 'info')
@@ -2849,7 +2880,7 @@ export default {
       // 改成先带凭证把字节流取回来，再用 blob URL 触发保存；顺带能给出真实失败原因。
       const name = path.split('/').pop() || 'download'
       try {
-        const resp = await apiFetchRaw(`/api/v1/files/download?path=${encodeURIComponent(path)}`)
+        const resp = await apiFetchRaw(`/api/v1/files/download?path=${encodeURIComponent(path)}${fileSessionQuery()}`)
         const blob = await resp.blob()
         const url = URL.createObjectURL(blob)
         const a = document.createElement('a')
@@ -2881,7 +2912,7 @@ export default {
       if (!info || deleting.value) return
       deleting.value = true
       try {
-        await apiDelete(`/api/v1/files?path=${encodeURIComponent(info.path)}`)
+        await apiDelete(`/api/v1/files?path=${encodeURIComponent(info.path)}${fileSessionQuery()}`)
         pendingDelete.value = null
         notify(`已删除 ${info.path.split('/').filter(Boolean).pop() || info.path}`)
         await loadFiles()
@@ -2950,6 +2981,8 @@ export default {
       stopAllStreams()
       sessionId.value = null
       sessions.value = []
+      workspaces.value = []
+      draftWorkspaceId.value = "legacy"
       messages.splice(0, messages.length)
       approval.value = null
       resetProviderState()
@@ -2978,6 +3011,8 @@ export default {
       stopAllStreams()
       sessionId.value = null
       sessions.value = []
+      workspaces.value = []
+      draftWorkspaceId.value = "legacy"
       messages.splice(0, messages.length)
       approval.value = null
       resetProviderState()
@@ -3071,7 +3106,13 @@ export default {
       argPairs,
       isSessionStreaming,
       // 新版界面
-      suggestions,
+      workspaceGroups,
+      creatingWorkspace,
+      currentWorkspace,
+      createWorkspace,
+      deleteWorkspace,
+      collapsedWorkspaces,
+      toggleWorkspace,
       currentTitle,
       hasActivity,
       // 工具活动：只展示最新一条
@@ -3094,7 +3135,6 @@ export default {
       jumpToBottom,
       inputEl,
       autoGrow,
-      useSuggestion,
       toggleHitlBtn,
       // 权限模式（沙箱内 / 完全访问）
       accessFull,
@@ -4286,14 +4326,17 @@ button { font-family: inherit; }
   flex-direction: column;
   align-items: center;
   height: 100%;
-  padding: 0 24px 64px;
+  justify-content: center;
+  min-height: 280px;
+  box-sizing: border-box;
+  padding: 24px;
   text-align: center;
 }
 .empty-mark {
   width: 40px; height: 40px;
   display: grid;
   place-items: center;
-  margin: auto 0 18px;
+  margin: 0 0 18px;
   border-radius: 50%;
   border: 1px solid var(--border-2);
   color: var(--text-2);
@@ -4697,4 +4740,27 @@ button { font-family: inherit; }
   .messages { scroll-behavior: auto; }
 }
 
+</style>
+
+<style scoped>
+.sb-workspace { margin-bottom: 12px; }
+.sb-workspace-head { display: flex; align-items: center; gap: 4px; }
+.sb-workspace-toggle { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; border: 0; background: transparent; padding: 10px 8px; color: #666; cursor: pointer; text-align: left; }
+.sb-workspace-count { font-size: 11px; opacity: .65; }
+.sb-workspace-add { border: 0; background: transparent; color: #666; font-size: 20px; cursor: pointer; padding: 4px 8px; }
+.sb-workspace-add:hover { background: #eee; border-radius: 6px; }
+.sb-workspace .sb-item { margin-left: 16px; }
+</style>
+
+<style scoped>
+.sb-top .sb-brand { padding: 8px 8px 18px; }
+.sb-new:disabled { opacity: .55; cursor: wait; }
+</style>
+
+<style scoped>
+.workspace-directory { margin: 0; padding: 10px 20px; border-bottom: 1px solid var(--border); color: var(--text-2); font-size: 12px; overflow-wrap: anywhere; }
+</style>
+
+<style scoped>
+.history-loading { display: grid; place-items: center; height: 100%; color: var(--text-2); font-size: 14px; }
 </style>

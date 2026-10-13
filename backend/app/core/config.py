@@ -264,6 +264,7 @@ class Settings(BaseSettings):
 
     # 是否开放自助注册。私有部署建议 false。
     allow_registration: bool = True
+    registration_email_verification: bool = False
 
     # 引导管理员：迁移时若 users 表为空则创建它，并把存量会话/日志归属到它。
     # 未配置 PASSWORD 时会用固定默认值并打 WARNING（仅便于本机开箱；生产必须配）。

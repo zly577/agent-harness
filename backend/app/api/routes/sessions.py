@@ -19,7 +19,7 @@ from app.agent.runner import run_manager
 from app.api.deps import get_current_user, owned_session_or_404
 from app.api.routes.chat_stream import SSE_HEADERS, sse, stream_events
 from app.db.models import Session as DbSession
-from app.db.models import User
+from app.db.models import User, Workspace
 from app.db.session import get_db
 
 router = APIRouter(prefix="/api/v1", tags=["sessions"])
@@ -38,11 +38,109 @@ def _serialize(s: DbSession) -> dict:
     return {
         "id": s.id,
         "title": s.title,
+        "workspace_id": s.workspace_id or "legacy",
         "status": s.status,
         "provider_id": s.provider_id,
         "created_at": s.created_at.isoformat() if s.created_at else None,
         "updated_at": s.updated_at.isoformat() if s.updated_at else None,
     }
+
+
+class CreateSessionRequest(BaseModel):
+    workspace_id: str | None = Field(None, max_length=32)
+
+
+@router.post("/sessions")
+def create_session(req: CreateSessionRequest, user: User = Depends(get_current_user),
+                   db: OrmSession = Depends(get_db)):
+    import uuid
+    from pathlib import Path
+    from app.core.workspace import ensure_workspace
+    workspace_id = req.workspace_id
+    if workspace_id in (None, "legacy"):
+        workspace_id = None
+        root = ensure_workspace(user.id)
+    else:
+        workspace = db.get(Workspace, workspace_id)
+        if not workspace or workspace.user_id != user.id:
+            raise HTTPException(status_code=404, detail="工作区不存在")
+        root = Path(workspace.directory)
+    if not root.is_dir():
+        raise HTTPException(status_code=409, detail="工作区目录已不存在，请重新选择目录")
+    row = DbSession(id=uuid.uuid4().hex, user_id=user.id, title="新会话",
+                    workspace_id=workspace_id, status="active")
+    db.add(row)
+    db.commit()
+    return _serialize(row)
+
+
+@router.get("/workspaces")
+def list_workspaces(user: User = Depends(get_current_user), db: OrmSession = Depends(get_db)):
+    from app.core.workspace import ensure_workspace
+    rows = db.query(Workspace).filter(Workspace.user_id == user.id).all()
+    return [{"id": "legacy", "name": "默认工作区", "directory": str(ensure_workspace(user.id))}] + [
+        {"id": w.id, "name": w.name, "directory": w.directory} for w in rows]
+
+
+@router.post("/workspaces/pick-directory")
+async def pick_workspace_directory(user: User = Depends(get_current_user), db: OrmSession = Depends(get_db)):
+    import asyncio
+    import os
+    import uuid
+    from pathlib import Path
+    if os.name != "nt":
+        raise HTTPException(status_code=409, detail="目录选择需要在本机 Windows 开发环境运行后端")
+    # STA Windows folder picker runs separately so the API stays responsive.
+    script = """[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+Add-Type -AssemblyName System.Windows.Forms
+$dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+$dialog.Description = '请选择工作区目录'
+$dialog.ShowNewFolderButton = $true
+if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Write($dialog.SelectedPath) }
+$dialog.Dispose()
+"""
+    import base64
+    encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
+    import subprocess
+    # Uvicorn reload uses a Windows Selector loop, which cannot launch async
+    # subprocesses. Run the blocking dialog in a worker thread instead.
+    try:
+        process = await asyncio.to_thread(subprocess.run,
+            ["powershell.exe", "-NoProfile", "-STA", "-WindowStyle", "Hidden", "-EncodedCommand", encoded],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW)
+    except OSError as exc:
+        raise HTTPException(status_code=503, detail="无法启动本机目录选择窗口，请检查 Windows PowerShell") from exc
+    stdout = process.stdout
+    if process.returncode:
+        raise HTTPException(status_code=503, detail="无法打开本机目录选择窗口")
+    selected = stdout.decode("utf-8-sig").strip()
+    if not selected:
+        return {"cancelled": True}
+    root = Path(selected).resolve()
+    if not root.is_dir():
+        raise HTTPException(status_code=422, detail="请选择有效的目录")
+    for existing in db.query(Workspace).filter(Workspace.user_id == user.id).all():
+        if os.path.normcase(existing.directory) == os.path.normcase(str(root)):
+            return {"id": existing.id, "name": existing.name, "directory": existing.directory}
+    row = Workspace(id=uuid.uuid4().hex, user_id=user.id, name=root.name or root.anchor, directory=str(root))
+    db.add(row)
+    db.commit()
+    return {"id": row.id, "name": row.name, "directory": row.directory}
+
+
+@router.delete("/workspaces/{workspace_id}")
+async def delete_workspace(workspace_id: str, user: User = Depends(get_current_user), db: OrmSession = Depends(get_db)):
+    workspace = db.get(Workspace, workspace_id)
+    if not workspace or workspace.user_id != user.id:
+        raise HTTPException(status_code=404, detail="工作区不存在")
+    rows = db.query(DbSession).filter(DbSession.user_id == user.id, DbSession.workspace_id == workspace_id).all()
+    for row in rows:
+        await run_manager.stop_and_wait(row.id)
+        runtime.invalidate_agents(row.id)
+        db.delete(row)
+    db.delete(workspace)
+    db.commit()
+    return {"ok": True}
 
 
 @router.get("/sessions")
@@ -188,13 +286,15 @@ async def stop_session_run(
 
 
 @router.delete("/sessions/{session_id}")
-def delete_session(
+async def delete_session(
     session_id: str,
     user: User = Depends(get_current_user),
     db: OrmSession = Depends(get_db),
 ):
     """删除会话（业务元信息；checkpoint 历史保留在 SQLite 中）。"""
     s = owned_session_or_404(db, session_id, user)
+    await run_manager.stop_and_wait(session_id)
+    runtime.invalidate_agents(session_id)
     db.delete(s)
     db.commit()
     return {"ok": True}
