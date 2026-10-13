@@ -45,6 +45,7 @@ from app.agent.subagent_stream import (
     summarize_task,
 )
 from app.agent.subagents import load_all_subagents
+from app.agent.clarification import ask_user, ClarificationMiddleware
 from app.agent.web_search import web_search
 from app.agent.tool_outcome import classify_tool_result
 from app.core.config import settings
@@ -252,6 +253,7 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
         # "在执行任何工具之前摘掉 `_intent`"。放里面（比如放到 HITL 之后）会出现
         # "审批弹窗里带着 `_intent`"、甚至"熔断器看到的是没摘干净的参数"。
         *build_intent_middlewares(),
+        ClarificationMiddleware(),
         TodoListMiddleware(),
         # 摘要中间件必须与主模型**同一个实例**：
         # 否则会出现"对话走用户选的供应商、压缩摘要却偷偷走另一个模型"，
@@ -283,7 +285,7 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
     # 注意：不要写成 `tools = extra_tools` —— 那是 MCP 返回的**同一个列表对象**，
     # append 会污染它（多次调用 get_agent 会重复累加）。这里显式拷贝。
     tools = list(extra_tools)
-    tools.append(web_search)
+    tools.extend([web_search, ask_user])
     # 工具熔断的"手动恢复"入口（模型可主动调用，见 middleware.ConsecutiveToolFailureMiddleware）
     tools.extend(recovery_tools)
 
@@ -783,6 +785,12 @@ async def run_chat(session_id: str, user_message: str, user_id: str | None = Non
         {"messages": [{"role": "user", "content": user_message}]},
         config={"configurable": {"thread_id": session_id}},
     )
+    from app.agent.approvals import read_pending_approval
+    pending = await read_pending_approval(agent, {"configurable": {"thread_id": session_id}}, user_id=user_id)
+    if pending.get("clarifications"):
+        return "等待你补充信息：" + "；".join(item["question"] for item in pending["clarifications"])
+    if pending.get("pending"):
+        return "任务已暂停，等待操作审批。"
     reply = result["messages"][-1].content
     if not isinstance(reply, str):
         reply = str(reply)
@@ -1228,7 +1236,8 @@ async def agent_event_stream(session_id: str, agent_input, user_id: str | None =
         except Exception as e:  # noqa: BLE001
             logger.warning("[runtime] read pending reply text failed: %s", e)
             note = ""
-        yield ("approval", {**pinfo, "text": note})
+        kind = "clarification" if pinfo.get("clarifications") else "approval"
+        yield (kind, {**pinfo, "text": note})
         return
 
     # 无中断：取最终回复

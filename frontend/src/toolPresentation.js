@@ -6,7 +6,7 @@ const labels = {
   max_results: '结果数量', url: '地址', urls: '地址', cwd: '执行目录', encoding: '编码',
   todos: '任务', tasks: '任务', status: '状态', name: '名称', title: '标题', id: '标识',
 }
-export const toolNames = { ls: '浏览目录', glob: '查找文件', grep: '搜索内容', read_file: '读取文件', write_file: '写入文件', edit_file: '修改文件', execute: '执行命令', task: '委派任务', write_todos: '更新计划', web_search: '联网搜索', delete: '删除文件' }
+export const toolNames = { ls: '浏览目录', glob: '查找文件', grep: '搜索内容', read_file: '读取文件', write_file: '写入文件', edit_file: '修改文件', execute: '执行命令', task: '委派任务', write_todos: '更新计划', ask_user: '询问用户', web_search: '联网搜索', delete: '删除文件' }
 export function toolName(name) { return toolNames[name] || name || '工具' }
 export function argumentFields(args) {
   if (args == null) return []

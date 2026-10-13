@@ -52,6 +52,11 @@ export async function streamApproval(sessionId, decision, signal, onEvent) {
   )
 }
 
+export async function streamClarification(sessionId, interruptId, answer, cancelled, signal, onEvent) {
+  await consumeStream(`/api/v1/approvals/${encodeURIComponent(sessionId)}/answer`,
+    { interrupt_id: interruptId, answer, cancelled }, signal, onEvent)
+}
+
 /**
  * 读取人工介入（HITL）开关状态。
  * @param {string} [sessionId] 传了则看该会话的开关（可能被单独覆盖）

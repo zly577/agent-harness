@@ -44,6 +44,16 @@ async def chat(
         session_id = req.session_id
         runtime.touch_session(session_id)
 
+    from app.agent.approvals import read_pending_approval
+    from app.agent.runner import run_manager
+    if run_manager.is_running(session_id):
+        raise HTTPException(status_code=409, detail="该会话已有一轮回答正在进行中")
+    if req.session_id:
+        agent = await runtime.get_agent(session_id, user_id=user.id, history_only=True)
+        pending = await read_pending_approval(agent, {"configurable": {"thread_id": session_id}}, user_id=user.id)
+        if pending.get("pending"):
+            raise HTTPException(status_code=409, detail="请先回答待澄清的问题或处理待审批操作，再发送新消息")
+
     # 与流式入口共用同一段逻辑（含归属校验 + agent 重建），行为必须一致
     apply_provider_choice(db, session_id, user, req.provider_id)
 

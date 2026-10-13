@@ -210,10 +210,27 @@ async def read_pending_approval(agent, config: dict, user_id: str | None = None)
     if not interrupts or not (getattr(state, "next", None) or ()):
         return {"pending": False}
 
+    # A resumed sibling task may retain its old interrupt while another task still waits.
+    # Only expose interrupts belonging to unfinished tasks, never already-completed siblings.
+    tasks = getattr(state, "tasks", None)
+    if tasks:
+        active_ids = {str(item.id) for task in tasks if getattr(task, "result", None) is None
+                      for item in (getattr(task, "interrupts", None) or [])}
+        interrupts = [item for item in interrupts if str(getattr(item, "id", "")) in active_ids]
+    if not interrupts:
+        forget_pending(config.get("configurable", {}).get("thread_id"))
+        return {"pending": False}
+
     groups: list[dict] = []
     actions: list[dict] = []
+    clarifications: list[dict] = []
     for inter in interrupts:
         value = inter.value if hasattr(inter, "value") else inter
+        if isinstance(value, dict) and value.get("kind") == "clarification":
+            clarifications.append({"id": str(getattr(inter, "id", "") or ""),
+                                   "question": str(value.get("question") or ""),
+                                   "options": value.get("options") or []})
+            continue
         group_actions = _actions_of(value)
         groups.append({
             "id": str(getattr(inter, "id", "") or ""),
@@ -222,21 +239,25 @@ async def read_pending_approval(agent, config: dict, user_id: str | None = None)
         actions.extend(group_actions)
 
     # 登记：关闭人工介入时要靠这份名单把挂起的中断逐个收尾
-    _note_pending(config.get("configurable", {}).get("thread_id"), user_id)
+    if groups:
+        _note_pending(config.get("configurable", {}).get("thread_id"), user_id)
+    else:
+        forget_pending(config.get("configurable", {}).get("thread_id"))
 
     return {
         "thread_id": config.get("configurable", {}).get("thread_id"),
         # pending 以**中断是否存在**为准：即使某个中断的 value 形状不认识
         # （拿不到 action 明细），它也确实挂着，必须让用户能处理掉。
-        "pending": True,
-        "actions": actions or [{
+        "pending": bool(groups or clarifications),
+        "clarifications": clarifications,
+        "actions": (actions or [{
             "type": "interrupt",
             "tool": "",
             "args": {},
             "summary": "未知类型的待审批操作",
             "description": "",
             "error": "",
-        }],
+        }]) if groups else [],
         "interrupts": groups,
     }
 

@@ -20,9 +20,22 @@ class ApprovalInterrupt(BaseModel):
     actions: list[ApprovalAction] = Field(default_factory=list)
 
 
+class ClarificationQuestion(BaseModel):
+    id: str
+    question: str
+    options: list[str] = Field(default_factory=list)
+
+
+class ClarificationAnswerRequest(BaseModel):
+    interrupt_id: str = Field(min_length=1, max_length=128)
+    answer: str = Field(default="", max_length=10000)
+    cancelled: bool = False
+
+
 class ApprovalCheckResponse(BaseModel):
     session_id: str
     pending: bool
+    clarifications: list[ClarificationQuestion] = Field(default_factory=list)
     #: 全部待审批操作（多个中断时是它们的并集），供弹窗逐条展示
     actions: list[ApprovalAction] = Field(default_factory=list)
     #: 按中断分组的待审批项，含 langgraph 的 interrupt id。

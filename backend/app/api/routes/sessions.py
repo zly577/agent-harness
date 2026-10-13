@@ -379,6 +379,13 @@ async def get_session_run(
     owned_session_or_404(db, session_id, user)
     run = run_manager.current(session_id)
     if run is None:
+        from app.agent.approvals import read_pending_approval
+        agent = await runtime.get_agent(session_id, user_id=user.id, history_only=True)
+        pending = await read_pending_approval(agent, {"configurable": {"thread_id": session_id}}, user_id=user.id)
+        if pending.get("pending"):
+            return {"session_id": session_id, "running": False, "suspended": True,
+                    "status": "awaiting_input" if pending.get("clarifications") else "awaiting_approval",
+                    "user_message": "", "error": "", "event_count": 0}
         return {"session_id": session_id, "running": False, "status": "idle",
                 "user_message": "", "error": "", "event_count": 0}
     return run.snapshot()

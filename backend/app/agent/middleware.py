@@ -387,7 +387,7 @@ class ConsecutiveToolFailureMiddleware(AgentMiddleware):
     # ---- 工具执行拦截 ----
     async def awrap_tool_call(self, request, handler):
         called = str(request.tool_call.get("name") or "")
-        if not self._tracked(called):
+        if called == "ask_user" or not self._tracked(called):
             return await handler(request)
 
         if not self._gate(request, called):
@@ -411,7 +411,7 @@ class ConsecutiveToolFailureMiddleware(AgentMiddleware):
     def wrap_tool_call(self, request, handler):
         """同步版（deepagents 走异步链路；语义与异步版保持一致）。"""
         called = str(request.tool_call.get("name") or "")
-        if not self._tracked(called):
+        if called == "ask_user" or not self._tracked(called):
             return handler(request)
 
         if not self._gate(request, called):

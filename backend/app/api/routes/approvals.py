@@ -38,7 +38,7 @@ from app.api.routes.chat_stream import SSE_HEADERS, sse
 from app.core.crypto import scrub_secrets
 from app.db.models import User
 from app.db.session import get_db
-from app.schemas.approval import ApprovalCheckResponse, ApprovalDecideRequest
+from app.schemas.approval import ApprovalCheckResponse, ApprovalDecideRequest, ClarificationAnswerRequest
 
 logger = logging.getLogger(__name__)
 
@@ -113,18 +113,19 @@ async def _resume_pending(session_id: str) -> str | None:
     owner = runtime.session_owner(session_id)
     agent = await runtime.get_agent(session_id, user_id=owner)
     info = await approvals.read_pending_approval(agent, _config(session_id), user_id=owner)
-    if not info.get("pending"):
+    if not info.get("actions"):
         return None
     resume = _resume_payload(info, approve=False)
     try:
         # 走运行管理器：这本来就是该会话的一轮运行（状态诚实 + 可回放）。
         # 然后一直订阅到它收尾 —— 调用方（关闭人工介入开关）需要"中断确实已处理"。
         run = run_manager.start(session_id, runtime.resume_input(resume), user_id=owner)
-        async for _event in run_manager.subscribe(session_id, since=len(run.events)):
+        async for _event in run_manager.subscribe(session_id, since=0):
             pass
     except Exception as e:
         return scrub_secrets(f"{type(e).__name__}: {e}")
-    return "ok"
+    remaining = await approvals.read_pending_approval(agent, _config(session_id), user_id=owner)
+    return None if remaining.get("clarifications") else "ok"
 
 
 def _resume_payload(info: dict, approve: bool):
@@ -154,6 +155,7 @@ async def check_approval(
         pending=info.get("pending", False),
         actions=info.get("actions") or [],
         interrupts=info.get("interrupts") or [],
+        clarifications=info.get("clarifications") or [],
     )
 
 
@@ -168,7 +170,7 @@ async def decide(
     owned_session_or_404(db, session_id, user)
     agent = await runtime.get_agent(session_id, user_id=user.id)
     info = await approvals.read_pending_approval(agent, _config(session_id), user_id=user.id)
-    if not info.get("pending"):
+    if not info.get("actions"):
         # 说清楚"为什么没有了"：前端据此**关闭弹窗并同步**，而不是把它当成一次
         # 含糊的失败（旧文案只说"可能已处理过"，前端于是提示"已提交过"却留着弹窗，
         # 用户会反复点同一个按钮）。
@@ -189,6 +191,11 @@ async def decide(
     decided = sum(len(g.get("decisions") or []) for g in resume.values()) if isinstance(resume, dict) \
         else len(resume)
 
+    try:
+        run = run_manager.start(session_id, runtime.resume_input(resume), user_id=user.id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
     async def _gen():
         # 标记"处理中"：这期间再来一次审批请求会被 409 挡掉。
         # （run_manager 那边也会挡：恢复本身就是该会话的一轮运行。）
@@ -200,29 +207,48 @@ async def decide(
                 "decision": "approve" if approve else "reject",
                 "count": decided,
             })
-            try:
-                # 恢复动作走运行管理器（所有运行都归它）：
-                # - 与连接解耦：断流/刷新不影响恢复写完，checkpoint 不会停在中断态；
-                # - 状态诚实：恢复期间该会话的 run 是 running（而不是继续谎报
-                #   awaiting_approval）——否则恢复途中用户发新消息会与恢复同时写
-                #   同一份 checkpoint；
-                # - 可回放：恢复途中刷新页面能接回来。
-                run = run_manager.start(
-                    session_id, runtime.resume_input(resume), user_id=user.id
-                )
-            except RuntimeError as e:
-                # 该会话已经有一轮在跑（罕见竞态）：说清楚，别让用户以为卡住了
-                yield sse({"type": "error", "detail": f"无法提交审批：{e}"})
-                yield "event: done\ndata: {}\n\n"
-                return
-
             # since=起跑时的缓冲长度：只订阅**本次恢复**的增量。
             # 不回放缓冲 —— 那一轮在审批前已经堆了几千条事件，全量回放
             # 会把整个回合在前端重复渲染一遍。
-            async for evt in run_manager.subscribe(session_id, since=len(run.events)):
+            async for evt in run_manager.subscribe(session_id, since=0):
                 yield sse(evt)
             yield "event: done\ndata: {}\n\n"
         finally:
             _state[session_id] = {"busy": False}
 
     return StreamingResponse(_gen(), media_type="text/event-stream", headers=SSE_HEADERS)
+
+
+@router.post("/{session_id}/answer")
+async def answer_question(
+    session_id: str,
+    req: ClarificationAnswerRequest,
+    user: User = Depends(get_current_user),
+    db: OrmSession = Depends(get_db),
+):
+    """Answer exactly one clarification; operation approvals remain untouched."""
+    owned_session_or_404(db, session_id, user)
+    if not req.cancelled and not req.answer.strip():
+        raise HTTPException(status_code=422, detail="请填写回答或选择取消任务")
+    if run_manager.is_running(session_id):
+        raise HTTPException(status_code=409, detail="回答已提交，正在处理中，请稍候")
+    agent = await runtime.get_agent(session_id, user_id=user.id)
+    info = await approvals.read_pending_approval(agent, _config(session_id), user_id=user.id)
+    if not any(question["id"] == req.interrupt_id for question in info.get("clarifications", [])):
+        raise HTTPException(status_code=409, detail="当前无待回答问题（问题已处理或已失效）")
+    # No await between checking the current interrupt and starting: duplicate requests cannot claim it twice.
+    try:
+        run = run_manager.start(session_id, runtime.resume_input({question["id"]: {
+            "answer": req.answer.strip(), "cancelled": req.cancelled,
+        } for question in info.get("clarifications", [])
+            if req.cancelled or question["id"] == req.interrupt_id}), user_id=user.id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    async def events():
+        yield sse({"type": "session", "session_id": session_id})
+        yield sse({"type": "answer", "interrupt_id": req.interrupt_id, "cancelled": req.cancelled})
+        async for event in run_manager.subscribe(session_id, since=0):
+            yield sse(event)
+        yield "event: done\ndata: {}\n\n"
+    return StreamingResponse(events(), media_type="text/event-stream", headers=SSE_HEADERS)

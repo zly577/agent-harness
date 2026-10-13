@@ -137,6 +137,7 @@ def build_subagent(cfg: SubAgentConfig):
     子智能体的 `FilesystemMiddleware` 用的是父级（可执行）backend，deepagents 要求
     所有权限路径都落在某个 route 前缀内，否则直接抛 NotImplementedError。
     """
+    from app.agent.clarification import CLARIFICATION_POLICY, ClarificationMiddleware
     from deepagents import SubAgent
     from deepagents.middleware.filesystem import FilesystemPermission
 
@@ -163,7 +164,7 @@ def build_subagent(cfg: SubAgentConfig):
     return SubAgent(
         name=cfg.name,
         description=cfg.description,
-        system_prompt=cfg.system_prompt,
+        system_prompt=cfg.system_prompt + "\n\n" + CLARIFICATION_POLICY,
         permissions=permissions or None,
         # 只剥离 `_intent`，不注入 schema。
         # 子智能体的工具调用走 `subagent_tool` 事件（不在这期的契约里），所以
@@ -174,7 +175,7 @@ def build_subagent(cfg: SubAgentConfig):
         # 护栏必须**单独挂**（子智能体不继承主 Agent 的中间件栈）。少了这一行，
         # 子智能体照样能跑 `Stop-Process -Name python -Force` 把后端杀掉 ——
         # 而"调用者是谁"对后果毫无影响：死的是同一个进程。
-        middleware=[build_intent_strip_middleware(), build_self_kill_guard_middleware()],
+        middleware=[build_intent_strip_middleware(), ClarificationMiddleware(), build_self_kill_guard_middleware()],
     )
 
 

@@ -95,6 +95,8 @@ TOOL_CATALOG: dict[str, dict[str, Any]] = {
     "task": {"display_name": "委派子智能体", "icon": "🤝", "category": "delegation",
              "expected_duration_ms": 120000, "retryable": False},
     # ---- 本仓库自带工具 ----
+    "ask_user": {"display_name": "询问用户", "icon": "💬", "category": "planning",
+                 "expected_duration_ms": 0, "retryable": False},
     "web_search": {"display_name": "联网搜索", "icon": "🌐", "category": "web",
                       "expected_duration_ms": 6000, "retryable": True},
     "reset_tool_breakers": {"display_name": "重置工具熔断", "icon": "♻️",

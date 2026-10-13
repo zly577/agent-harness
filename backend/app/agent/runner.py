@@ -93,9 +93,11 @@ def to_sse_event(kind: str, data: Any) -> dict:
         return {"type": "subagent_usage", **data}
     if kind == "usage":
         return {"type": "usage", **data}
-    if kind == "approval":
+    if kind in {"approval", "clarification"}:
         return {
-            "type": "approval",
+            "type": kind,
+            "clarifications": data.get("clarifications") or [],
+            "interrupts": data.get("interrupts") or [],
             "pending": bool(data.get("pending")),
             "actions": data.get("actions") or [],
             # 停在审批上时，模型可能已经说过一段话了：把它带出去让前端落进气泡，
@@ -139,7 +141,7 @@ class SessionRun:
     @property
     def suspended(self) -> bool:
         """挂在人工审批上：不算在跑，但这一轮也没结束。"""
-        return self.status == "awaiting_approval"
+        return self.status in {"awaiting_approval", "awaiting_input"}
 
     def snapshot(self) -> dict:
         """给前端的运行状态（不含事件体，事件走 SSE 回放）。"""
@@ -169,7 +171,7 @@ class RunManager:
     def current(self, session_id: str) -> SessionRun | None:
         """当前或最近一次运行（可能已结束但还在保留期内）。"""
         run = self._runs.get(session_id)
-        if run and run.finished_at and (time.time() - run.finished_at) > KEEP_SECONDS:
+        if run and not run.suspended and run.finished_at and (time.time() - run.finished_at) > KEEP_SECONDS:
             # 保留期已过：清掉，避免内存里长期挂着几万条事件
             self._runs.pop(session_id, None)
             return None
@@ -200,6 +202,10 @@ class RunManager:
         existing = self.current(session_id)
         if existing and existing.running:
             raise RuntimeError("该会话已有一轮回答正在进行中")
+        if existing and existing.suspended:
+            from langgraph.types import Command
+            if not isinstance(agent_input, Command):
+                raise RuntimeError("请先回答待澄清的问题或处理待审批操作")
 
         run = SessionRun(session_id=session_id, user_message=user_message, user_id=user_id)
         self._runs[session_id] = run
@@ -268,7 +274,7 @@ class RunManager:
             # 语义上这一轮还悬着：等用户点同意/拒绝。
             # 不再分别的话，前端会以为整轮结束，刷新后既接不回来、也看不到审批弹窗。
             last_type = run.events[-1].get("type") if run.events else ""
-            run.status = "awaiting_approval" if last_type == "approval" else "done"
+            run.status = {"approval": "awaiting_approval", "clarification": "awaiting_input"}.get(last_type, "done")
         finally:
             run.finished_at = time.time()
             self._close(run)

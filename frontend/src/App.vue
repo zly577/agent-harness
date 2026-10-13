@@ -467,7 +467,34 @@
 
       <!-- 审批弹窗：小、紧凑，工具调用只展示内容摘要，按钮永不被长参数挤走。
            注意：不提供"点遮罩关闭"——误关会让这一轮会话悬在待审批状态，必须显式选择同意/拒绝。 -->
-      <div v-if="approval" class="overlay">
+      <div v-if="approval && (approval.clarifications || []).length" class="overlay">
+        <div class="modal approval-modal" role="dialog" aria-modal="true" aria-labelledby="clarification-title">
+          <div class="modal-head">
+            <h3 id="clarification-title">需要你补充信息</h3>
+            <p>任务已暂停，收到回答后继续。</p>
+          </div>
+          <div class="modal-body clarification-body">
+            <p class="clarification-question">{{ approval.clarifications[0].question }}</p>
+            <div class="clarification-options">
+              <button v-for="option in approval.clarifications[0].options" :key="option"
+                class="btn-ghost" :class="{ selected: clarificationAnswer === option }"
+                :disabled="deciding" @click="clarificationAnswer = option">{{ option }}</button>
+            </div>
+            <label for="clarification-answer">你的回答（也可自由输入）</label>
+            <textarea id="clarification-answer" v-model="clarificationAnswer" rows="4" maxlength="10000"
+              :disabled="deciding" placeholder="请补充完成任务所需的信息"></textarea>
+            <p v-if="approval.clarifications.length > 1">还有 {{ approval.clarifications.length - 1 }} 个问题等待回答。</p>
+            <p v-if="approval.actions.length">另有操作等待审批，回答问题不会自动批准这些操作。</p>
+          </div>
+          <div class="modal-foot">
+            <button class="btn-ghost" :disabled="deciding" @click="decide(false)">取消任务</button>
+            <button class="btn-primary" :disabled="deciding || !clarificationAnswer.trim()" @click="decide(true)">
+              {{ deciding ? '提交中…' : '提交并继续' }}
+            </button>
+          </div>
+        </div>
+      </div>
+      <div v-else-if="approval" class="overlay">
         <div class="modal approval-modal" role="dialog" aria-modal="true">
           <div class="modal-head">
             <h3>需要你确认</h3>
@@ -743,6 +770,7 @@ import {
   setHitlConfig,
   stopRun,
   streamApproval,
+  streamClarification,
   streamChat,
   streamRunAttach,
 } from './sse'
@@ -929,6 +957,10 @@ export default {
     const showTools = ref(true)
     // 待审批弹窗：{ session_id, actions } | null；deciding 表示决策已提交、正在恢复执行
     const approval = ref(null)
+    const clarificationAnswer = ref('')
+    watch(() => approval.value?.clarifications?.[0]?.id, (id, previous) => {
+      if (id !== previous) clarificationAnswer.value = ''
+    }, { flush: 'sync' })
     const deciding = ref(false)
     // 人工介入（HITL）热插拔开关：后端为准，这里只做镜像
     const hitlOn = ref(true)
@@ -1905,15 +1937,19 @@ export default {
      *    "最终回复"至少要有"我停在哪、在等什么"。
      */
     function applyApprovalEvent(target, evt, sid) {
-      const payload = { ...evt, session_id: sid }
+      const payload = { ...evt, actions: evt.actions || [], clarifications: evt.clarifications || [], session_id: sid }
       if (sid && sessionStates[sid]) sessionStates[sid].approval = payload
-      approval.value = payload
+      if (sessionId.value === sid) approval.value = payload
       if (target) {
         target.planPaused = true
         freezeMeter(target)
         target.streaming = false
         if (!String(target.content || '').trim()) {
           const n = (evt.actions || []).length
+          if ((evt.clarifications || []).length) {
+            target.content = `⏸ 等待你补充信息：${evt.clarifications[0].question}`
+            return
+          }
           target.content = String(evt.text || '').trim()
             || `⏸ 已停在人工审批：有 ${n} 个操作等你在弹窗里确认。确认后我会继续；`
                + '上面工具区里是本轮已经完成的动作。'
@@ -2075,17 +2111,17 @@ export default {
         // 后端不可用之类：静默，别在打开会话时弹一堆错
         return
       }
-      const pending = !!(info?.pending && (info.actions || []).length)
+      const pending = !!(info?.pending && ((info.actions || []).length || (info.clarifications || []).length))
       if (!pending) {
         if (sessionStates[sid]) sessionStates[sid].approval = null
         if (sessionId.value === sid && sessionViewVersion === viewVersion) approval.value = null
         return
       }
-      const payload = { pending: true, actions: info.actions, session_id: sid }
+      const payload = { ...info, actions: info.actions || [], clarifications: info.clarifications || [], session_id: sid }
       if (sessionStates[sid]) sessionStates[sid].approval = payload
       if (sessionId.value === sid && sessionViewVersion === viewVersion) {
         approval.value = payload
-        notify('有一个操作在等你确认')
+        notify(payload.clarifications.length ? '任务正在等待你补充信息' : '有一个操作在等你确认')
       }
     }
 
@@ -2151,7 +2187,7 @@ export default {
       try {
         await streamRunAttach(sid, controller.signal, (evt) => {
           if (applyDataEvent(fresh, evt)) return
-          if (evt.type === 'approval') {
+          if ((evt.type === 'approval' || evt.type === 'clarification')) {
             applyApprovalEvent(fresh, evt, sid)
           } else if (evt.type === 'stopped') {
             fresh.streaming = false
@@ -2502,7 +2538,7 @@ export default {
             }
           } else if (applyDataEvent(assistantMsg, evt)) {
             // 数据类事件（token/thinking/工具/子智能体/用量/result）已统一处理
-          } else if (evt.type === 'approval') {
+          } else if ((evt.type === 'approval' || evt.type === 'clarification')) {
             const sid = resolvedSessionId || startingSessionId
             applyApprovalEvent(assistantMsg, evt, sid)
           } else if (evt.type === 'stopped') {
@@ -2545,6 +2581,10 @@ export default {
       const sid = info.session_id || sessionId.value
       if (!sid) return
 
+      const question = info.clarifications?.[0]
+      const answer = clarificationAnswer.value.trim()
+      const actionLabel = question ? '回答' : '审批'
+      if (question && approve && !answer) return
       deciding.value = true
       const state = { done: false, error: null, newApproval: false }
       // 注意：从这里到函数末尾**任何**抛出都必须复位 deciding，
@@ -2573,12 +2613,15 @@ export default {
         startTicker()
 
         try {
-          await streamApproval(sid, approve ? 'approve' : 'reject', controller.signal, (evt) => {
+          const submit = question
+            ? (signal, onEvent) => streamClarification(sid, question.id, answer, !approve, signal, onEvent)
+            : (signal, onEvent) => streamApproval(sid, approve ? 'approve' : 'reject', signal, onEvent)
+          await submit(controller.signal, (evt) => {
             if (evt.type === 'done') {
               state.done = true
             } else if (applyDataEvent(target, evt)) {
               // 数据类事件已统一处理
-            } else if (evt.type === 'approval') {
+            } else if ((evt.type === 'approval' || evt.type === 'clarification')) {
               // 恢复过程中又挂了新的审批（例如模型接着要改另一个文件）
               state.newApproval = true
               applyApprovalEvent(target, evt, sid)
@@ -2605,11 +2648,11 @@ export default {
           if (/正在处理中/.test(state.error)) {
             // 已经提交过、正在跑：不报失败，只提示 + 拉一次最新历史
             if (!state.newApproval) {
-              target.content = target.content || '（该审批已提交，正在同步最新结果…）'
+              target.content = target.content || `（${actionLabel}已提交，正在同步最新结果…）`
             }
-            notify('该审批已提交过，正在同步最新结果…')
+            notify(`${actionLabel}已提交过，正在同步最新结果…`)
             refreshSession(sid)
-          } else if (/无待审批项/.test(state.error)) {
+          } else if (/无待审批项|无待回答问题/.test(state.error)) {
             // 这条审批**已经不在了**：可能刚被处理掉，也可能人工介入已切到「自动执行」
             // （那次切换会把挂起的中断统一用"拒绝"收尾，见后端 clear_pending_interrupt）。
             // 重点是**把弹窗关掉并同步**：旧实现只提示"已审批过"却留着弹窗，
@@ -2617,21 +2660,23 @@ export default {
             approval.value = null
             if (sessionStates[sid]) sessionStates[sid].approval = null
             if (!state.newApproval) {
-              target.content = target.content || '（这条审批已失效，正在同步最新结果…）'
+              target.content = target.content || '（该待处理事项已失效，正在同步最新结果…）'
             }
-            notify('这条审批已失效（已处理过，或人工介入已切到自动执行）')
+            notify(question ? '问题已处理或已失效，正在同步' : '审批已处理或已失效，正在同步')
             refreshSession(sid)
+            restorePendingApproval(sid)
           } else {
-            target.content = `⚠️ 审批失败：${state.error}`
+            target.content = `⚠️ ${question ? "回答提交" : "审批"}失败：${state.error}`
             target.error = true
             // 仍未决：把弹窗放回来，用户可以直接重试
             if (!state.newApproval && info) {
               approval.value = info
+              clarificationAnswer.value = answer
               if (sessionStates[sid]) sessionStates[sid].approval = info
             }
             // 同时给一条明显提示：错误写在对话气泡里时，用户很可能看不到
             // （气泡在视口外），于是以为"点了没反应"。
-            notify(`审批失败：${state.error}`, 'error')
+            notify(`${question ? "回答提交" : "审批"}失败：${state.error}`, 'error')
           }
         }
       } finally {
@@ -2758,9 +2803,9 @@ export default {
           // POST 拒绝，漏掉的会话之后会在弹窗里"复活"。
           // 这里只负责把界面上记着的弹窗全部清掉。
           for (const id of Object.keys(sessionStates)) {
-            if (sessionStates[id]) sessionStates[id].approval = null
+            if (sessionStates[id] && !sessionStates[id].approval?.clarifications?.length) sessionStates[id].approval = null
           }
-          approval.value = null
+          if (!approval.value?.clarifications?.length) approval.value = null
         }
 
         const cfg = await setHitlConfig(next)
@@ -3134,6 +3179,7 @@ export default {
       streaming,
       showTools,
       approval,
+      clarificationAnswer,
       deciding,
       hitlOn,
       hitlBusy,
@@ -4914,4 +4960,12 @@ button { font-family: inherit; }
 .archived-step > .tool-detail { margin-left: 29px; }
 .archived-step:not([open]) { display: block; }
 .operation-output > summary { cursor: pointer; font-size: 11px; color: var(--text-3); margin-bottom: 6px; }
+</style>
+
+<style scoped>
+.clarification-body { display: flex; flex-direction: column; gap: 12px; }
+.clarification-question { white-space: pre-wrap; overflow-wrap: anywhere; }
+.clarification-options { display: flex; flex-wrap: wrap; gap: 8px; }
+.clarification-options .selected { border-color: var(--accent); }
+.clarification-body textarea { width: 100%; box-sizing: border-box; resize: vertical; min-height: 90px; font: inherit; padding: 10px; }
 </style>
