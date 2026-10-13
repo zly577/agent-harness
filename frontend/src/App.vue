@@ -40,15 +40,18 @@
       <nav class="sb-nav">
         <div v-if="loadingSessions" class="sb-hint">载入中…</div>
 
-        <section v-for="workspace in workspaceGroups" :key="workspace.id" class="sb-workspace">
+        <section v-for="workspace in workspaceGroups" :key="workspace.id" class="sb-workspace" :class="{ selected: workspace.id === activeWorkspaceId }">
+          <div class="sb-workspace-sticky">
           <div class="sb-workspace-head">
             <button class="sb-workspace-toggle" @click="toggleWorkspace(workspace.id)" :aria-expanded="!collapsedWorkspaces[workspace.id]">
-              <span>{{ collapsedWorkspaces[workspace.id] ? '▸' : '▾' }}</span>
+              <svg class="sb-workspace-chevron" :class="{ expanded: !collapsedWorkspaces[workspace.id] }" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg>
+              <svg class="sb-workspace-folder" viewBox="0 0 20 20" aria-hidden="true"><path d="M2.5 5.5h5l2 2h8v9h-15z" /></svg>
               <span class="sb-title" :title="workspace.directory">{{ workspace.title }}</span>
               <span class="sb-workspace-count">{{ workspace.sessions.length }}</span>
             </button>
             <button class="sb-workspace-add" title="在此工作区新建会话" @click="newChat(workspace.id)">+</button>
             <button v-if="workspace.id !== 'legacy'" class="sb-workspace-add" title="删除工作区" @click="deleteWorkspace(workspace)">×</button>
+          </div>
           </div>
           <template v-if="!collapsedWorkspaces[workspace.id]">
             <div v-for="s in workspace.sessions" :key="s.id" class="sb-item" :class="{ active: s.id === sessionId }" @click="openSession(s.id)">
@@ -679,6 +682,12 @@
         <p class="disclaimer">{{ accessFull
           ? '完全访问：可修改已挂载磁盘；LocalShell 在后端所在环境执行命令。'
           : '默认模式：工作区可读写，已挂载磁盘只读；读磁盘时按审批设置确认。' }}</p>
+        <div class="main-workspace" aria-label="当前工作区">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.5 5.5h5l2 2h8v9h-15z" /></svg>
+          <span class="main-workspace-label">当前工作区</span>
+          <span class="main-workspace-name" :title="selectedWorkspace.title">{{ selectedWorkspace.title }}</span>
+          <span v-if="selectedWorkspace.directory" class="main-workspace-directory" :title="selectedWorkspace.directory">{{ selectedWorkspace.directory }}</span>
+        </div>
       </footer>
     </div>
   </div>
@@ -976,10 +985,13 @@ export default {
       return [...groups.values()]
     })
 
-    const currentWorkspace = computed(() => {
+    const activeWorkspaceId = computed(() => {
       const session = sessions.value.find(s => s.id === sessionId.value)
-      return workspaces.value.find(w => w.id === (session?.workspace_id || draftWorkspaceId.value))
+      return session ? (session.workspace_id || 'legacy') : draftWorkspaceId.value
     })
+    const selectedWorkspace = computed(() => workspaceGroups.value.find(w => w.id === activeWorkspaceId.value)
+      || { id: activeWorkspaceId.value, title: activeWorkspaceId.value === 'legacy' ? '默认工作区' : '工作区', directory: '' })
+    const currentWorkspace = computed(() => workspaces.value.find(w => w.id === activeWorkspaceId.value))
 
     function toggleWorkspace(id) { collapsedWorkspaces[id] = !collapsedWorkspaces[id] }
 
@@ -3007,7 +3019,7 @@ export default {
       argPairs,
       isSessionStreaming,
       // 新版界面
-      workspaceGroups,
+      workspaceGroups, activeWorkspaceId, selectedWorkspace,
       creatingWorkspace,
       currentWorkspace,
       createWorkspace,
@@ -3265,7 +3277,7 @@ button { font-family: inherit; }
   stroke-linecap: round;
 }
 
-.sb-nav { flex: 1; overflow-y: auto; padding: 8px 8px 12px; }
+.sb-nav { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 12px; }
 .sb-hint { padding: 20px 10px; color: var(--text-3); font-size: 13px; text-align: center; }
 
 .sb-item {
@@ -4639,12 +4651,26 @@ button { font-family: inherit; }
 </style>
 
 <style scoped>
-.sb-workspace { margin-bottom: 12px; }
-.sb-workspace-head { display: flex; align-items: center; gap: 4px; }
-.sb-workspace-toggle { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; border: 0; background: transparent; padding: 10px 8px; color: #666; cursor: pointer; text-align: left; }
-.sb-workspace-count { font-size: 11px; opacity: .65; }
-.sb-workspace-add { border: 0; background: transparent; color: #666; font-size: 20px; cursor: pointer; padding: 4px 8px; }
-.sb-workspace-add:hover { background: #eee; border-radius: 6px; }
+.sb-workspace { position: relative; margin-bottom: 14px; }
+.sb-workspace-sticky { position: sticky; top: 0; z-index: 3; padding: 6px 0; background: var(--sidebar); }
+.sb-workspace-head { display: flex; align-items: center; gap: 2px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg); }
+.sb-workspace.selected .sb-workspace-head { border-color: var(--border-2); background: var(--active); }
+.sb-workspace-toggle { display: flex; align-items: center; gap: 7px; min-width: 0; flex: 1; border: 0; background: transparent; padding: 10px 8px; color: var(--text-2); cursor: pointer; text-align: left; }
+.sb-workspace-toggle .sb-title { font-weight: 600; color: var(--text-2); font-size: 12px; }
+.sb-workspace.selected .sb-workspace-toggle .sb-title { color: var(--text); }
+.sb-workspace-chevron { width: 12px; height: 12px; flex-shrink: 0; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; transition: transform 0.15s; }
+.sb-workspace-chevron.expanded { transform: rotate(90deg); }
+.sb-workspace-folder { width: 18px; height: 18px; flex-shrink: 0; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linejoin: round; }
+.sb-workspace-count { font-size: 10px; color: var(--text-3); padding: 1px 5px; background: var(--fill); border-radius: 5px; }
+.sb-workspace-add { display: grid; place-items: center; width: 26px; height: 28px; flex-shrink: 0; border: 0; border-radius: 6px; background: transparent; color: var(--text-3); font-size: 18px; cursor: pointer; padding: 0; }
+.sb-workspace-add:hover { background: var(--hover); color: var(--text); }
+.sb-workspace-head > :last-child { margin-right: 4px; }
+.main-workspace { display: flex; align-items: center; gap: 7px; min-width: 0; margin-top: 10px; padding-top: 6px; font-size: 11px; color: var(--text-3); }
+.main-workspace svg { width: 15px; height: 15px; flex-shrink: 0; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linejoin: round; }
+.main-workspace-label { flex-shrink: 0; }
+.main-workspace-name { flex-shrink: 1; min-width: 0; max-width: 240px; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.main-workspace-directory { min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-left: 7px; border-left: 1px solid var(--border); font-size: 10px; }
+@media (max-width: 600px) { .main-workspace-name { max-width: 130px; } }
 .sb-workspace .sb-item { margin-left: 16px; }
 </style>
 
