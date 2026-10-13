@@ -23,6 +23,9 @@ from app.db.models import User, Workspace
 from app.db.session import get_db
 
 router = APIRouter(prefix="/api/v1", tags=["sessions"])
+# Registered directly on the app: these two ticket-authorized endpoints must
+# bypass api_router's global JWT dependency. They cannot create workspaces.
+picker_callback_router = APIRouter(prefix="/api/v1", tags=["workspace-picker"])
 
 
 class RenameRequest(BaseModel):
@@ -156,14 +159,87 @@ def create_workspace(req: CreateWorkspaceRequest, user: User = Depends(get_curre
     return _save_workspace(root, user, db)
 
 
+# The deployment uses one worker. Short-lived random tickets let the Windows
+# protocol handler return a selection without receiving the user's login token.
+_picker_requests: dict[str, dict] = {}
+
+
+def _picker_request(ticket, user=None):
+    import time
+    item = _picker_requests.get(ticket)
+    if not item or item["expires"] <= time.monotonic() or (user and item["user_id"] != user.id):
+        if item and item["expires"] <= time.monotonic():
+            _picker_requests.pop(ticket, None)
+        raise HTTPException(status_code=404, detail="目录选择请求已失效，请重新选择")
+    return item
+
+
+class PickerResultRequest(BaseModel):
+    directory: str | None = Field(None, max_length=4096)
+    cancelled: bool = False
+    error: str | None = Field(None, max_length=255)
+
+
+@picker_callback_router.get("/workspaces/picker/{ticket}/ready")
+def workspace_picker_ready(ticket: str):
+    item = _picker_request(ticket)
+    if item["result"] is not None:
+        raise HTTPException(status_code=409, detail="目录选择结果已经提交")
+    return {"ok": True}
+
+
+@picker_callback_router.post("/workspaces/picker/{ticket}/result")
+def finish_workspace_picker(ticket: str, req: PickerResultRequest):
+    # Possession of this single-use, 256-bit ticket authorizes only returning
+    # a result. Workspace creation still requires the initiating user's JWT.
+    item = _picker_request(ticket)
+    if item["result"] is not None:
+        raise HTTPException(status_code=409, detail="目录选择结果已经提交")
+    if req.error:
+        item["result"] = {"error": req.error}
+    elif req.cancelled:
+        item["result"] = {"cancelled": True}
+    elif req.directory:
+        item["result"] = {"directory": req.directory}
+    else:
+        raise HTTPException(status_code=422, detail="缺少目录选择结果")
+    return {"ok": True}
+
+
+@router.get("/workspaces/picker/{ticket}")
+def poll_workspace_picker(ticket: str, user: User = Depends(get_current_user),
+                          db: OrmSession = Depends(get_db)):
+    item = _picker_request(ticket, user)
+    result = item["result"]
+    if result is None:
+        return {"pending": True}
+    if "error" in result:
+        raise HTTPException(status_code=422, detail=result["error"])
+    if result.get("cancelled"):
+        return result
+    if "workspace" not in item:
+        item["workspace"] = create_workspace(CreateWorkspaceRequest(directory=result["directory"]), user, db)
+    return item["workspace"]
+
+
 @router.post("/workspaces/pick-directory")
 async def pick_workspace_directory(user: User = Depends(get_current_user), db: OrmSession = Depends(get_db)):
     import asyncio
     import os
-    import uuid
     from pathlib import Path
     if os.name != "nt":
-        raise HTTPException(status_code=409, detail="目录选择需要在本机 Windows 开发环境运行后端")
+        from app.core.config import settings
+        if not settings.workspace_open_protocol:
+            return {"browser_picker": True}
+        import secrets
+        import time
+        now = time.monotonic()
+        for key in list(_picker_requests):
+            if _picker_requests[key]["expires"] <= now or _picker_requests[key]["user_id"] == user.id:
+                _picker_requests.pop(key, None)
+        ticket = secrets.token_hex(32)
+        _picker_requests[ticket] = {"user_id": user.id, "expires": now + 300, "result": None}
+        return {"ticket": ticket, "open_url": f"agent-harness-workspace://pick/{ticket}"}
     # STA Windows folder picker runs separately so the API stays responsive.
     script = """[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 Add-Type -AssemblyName System.Windows.Forms

@@ -4,13 +4,14 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 from app.db.models import Session as DbSession, Workspace
 from app.api.routes import sessions
 from app.agent import runtime
 
 @pytest.fixture
 def database(monkeypatch, tmp_path):
-    engine = create_engine("sqlite://")
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     DbSession.__table__.create(engine)
     Workspace.__table__.create(engine)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
@@ -163,3 +164,96 @@ def test_browser_rejects_symlink_escape(database, tmp_path, browser_roots):
         sessions.create_workspace(sessions.CreateWorkspaceRequest(directory=str(link / "new"), create=True), user, database)
     assert error.value.status_code == 403
     assert not (outside / "new").exists()
+
+
+@pytest.mark.skipif(__import__("os").name == "nt", reason="Docker protocol path")
+def test_native_picker_ticket_result_and_ownership(database, tmp_path, browser_roots, monkeypatch):
+    import asyncio
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "workspace_open_protocol", True)
+    monkeypatch.setattr(sessions, "_picker_requests", {})
+    user = SimpleNamespace(id="a" * 32)
+    other = SimpleNamespace(id="b" * 32)
+    request = asyncio.run(sessions.pick_workspace_directory(user, database))
+    ticket = request["ticket"]
+    assert len(ticket) == 64
+    assert request["open_url"] == f"agent-harness-workspace://pick/{ticket}"
+    assert sessions.workspace_picker_ready(ticket) == {"ok": True}
+    assert sessions.poll_workspace_picker(ticket, user, database) == {"pending": True}
+    with pytest.raises(HTTPException) as error:
+        sessions.poll_workspace_picker(ticket, other, database)
+    assert error.value.status_code == 404
+    selected = tmp_path / user.id / "project"
+    selected.mkdir(parents=True)
+    assert sessions.finish_workspace_picker(ticket, sessions.PickerResultRequest(directory=str(selected))) == {"ok": True}
+    first = sessions.poll_workspace_picker(ticket, user, database)
+    assert first["directory"] == str(selected)
+    assert sessions.poll_workspace_picker(ticket, user, database) == first
+    assert database.query(Workspace).count() == 1
+    with pytest.raises(HTTPException) as error:
+        sessions.finish_workspace_picker(ticket, sessions.PickerResultRequest(cancelled=True))
+    assert error.value.status_code == 409
+
+
+@pytest.mark.skipif(__import__("os").name == "nt", reason="Docker protocol path")
+def test_native_picker_cancel_expiry_and_path_validation(database, tmp_path, browser_roots, monkeypatch):
+    import asyncio
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "workspace_open_protocol", True)
+    monkeypatch.setattr(sessions, "_picker_requests", {})
+    user = SimpleNamespace(id="a" * 32)
+    def start():
+        return asyncio.run(sessions.pick_workspace_directory(user, database))["ticket"]
+    ticket = start()
+    sessions.finish_workspace_picker(ticket, sessions.PickerResultRequest(cancelled=True))
+    assert sessions.poll_workspace_picker(ticket, user, database) == {"cancelled": True}
+    ticket = start()
+    sessions._picker_requests[ticket]["expires"] = 0
+    with pytest.raises(HTTPException) as error:
+        sessions.workspace_picker_ready(ticket)
+    assert error.value.status_code == 404
+    ticket = start()
+    sessions.finish_workspace_picker(ticket, sessions.PickerResultRequest(directory=str(tmp_path)))
+    with pytest.raises(HTTPException) as error:
+        sessions.poll_workspace_picker(ticket, user, database)
+    assert error.value.status_code == 403
+    ticket = start()
+    sessions.finish_workspace_picker(ticket, sessions.PickerResultRequest(error="Not mounted"))
+    with pytest.raises(HTTPException) as error:
+        sessions.poll_workspace_picker(ticket, user, database)
+    assert error.value.status_code == 422
+    ticket = start()
+    start()
+    with pytest.raises(HTTPException):
+        sessions.workspace_picker_ready(ticket)
+    monkeypatch.setattr(settings, "workspace_open_protocol", False)
+    assert asyncio.run(sessions.pick_workspace_directory(user, database)) == {"browser_picker": True}
+    assert database.query(Workspace).count() == 0
+
+
+@pytest.mark.skipif(__import__("os").name == "nt", reason="Docker protocol path")
+def test_native_callback_actual_app_routing(database, tmp_path, browser_roots, monkeypatch):
+    import asyncio
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.api.deps import get_current_user
+    from app.db.session import get_db
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "workspace_open_protocol", True)
+    monkeypatch.setattr(sessions, "_picker_requests", {})
+    monkeypatch.setattr(app, "dependency_overrides", {get_db: lambda: database})
+    user = SimpleNamespace(id="a" * 32)
+    ticket = asyncio.run(sessions.pick_workspace_directory(user, database))["ticket"]
+    selected = tmp_path / user.id / "project"
+    selected.mkdir(parents=True)
+    client = TestClient(app)
+    assert client.get(f"/api/v1/workspaces/picker/{ticket}/ready").status_code == 200
+    assert client.post(f"/api/v1/workspaces/picker/{ticket}/result", json={"directory": str(selected)}).status_code == 200
+    assert client.get(f"/api/v1/workspaces/picker/{ticket}").status_code == 401
+    assert client.post("/api/v1/workspaces", json={"directory": str(selected)}).status_code == 401
+    assert client.get("/api/v1/workspaces/picker/unknown/ready").status_code == 404
+    app.dependency_overrides[get_current_user] = lambda: user
+    response = client.get(f"/api/v1/workspaces/picker/{ticket}")
+    assert response.status_code == 200
+    assert response.json()["directory"] == str(selected)
+    client.close()

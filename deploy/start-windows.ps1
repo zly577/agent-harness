@@ -140,9 +140,6 @@ try {
             }
             [System.IO.File]::WriteAllText($taskMigrationMarker, 'Imported without replacing existing files.')
         }
-        if (-not $SkipDesktopIntegration) {
-            & (Join-Path $PSScriptRoot 'register-workspace.ps1') -WorkspaceRoot $taskWorkspace
-        }
     }
     $taskComposeArgs = @('compose', '-f', 'docker-compose.yml')
     if ($Sandbox) { $taskComposeArgs += @('-f', 'docker-compose.sandbox.yml') }
@@ -151,6 +148,9 @@ try {
         'Up' {
             Invoke-TaskDocker -DockerArgs ($taskComposeArgs + @('config', '--quiet'))
             Invoke-TaskDocker -DockerArgs ($taskComposeArgs + @('up', '-d', '--build', '--wait', '--wait-timeout', '300'))
+            if (-not $SkipDesktopIntegration) {
+                & (Join-Path $PSScriptRoot 'register-workspace.ps1') -WorkspaceRoot $taskWorkspace
+            }
             Write-Host 'Ready. Open the web address configured by WEB_PORT (default http://localhost:8088).'
             Write-Host 'Find initial administrator credentials in the root .env file.'
         }

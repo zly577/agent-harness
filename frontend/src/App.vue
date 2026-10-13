@@ -33,7 +33,7 @@
         </button>
         <button class="sb-new" :disabled="creatingWorkspace" @click="createWorkspace">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h5l2 2h5v7H2z" /></svg>
-          <span>{{ creatingWorkspace ? '创建中…' : '新建工作区' }}</span>
+          <span>{{ creatingWorkspace ? '请选择目录…' : '新建工作区' }}</span>
         </button>
       </div>
 
@@ -573,6 +573,19 @@
         </div>
       </div>
 
+      <div v-if="nativeWorkspaceTicket" class="overlay">
+        <div class="modal confirm-modal" role="dialog" aria-modal="true">
+          <div class="modal-head">
+            <h3>请在 Windows 窗口中选择目录</h3>
+            <p>首次使用时，请允许浏览器打开 Agent Harness。若窗口未出现，可使用网页选择。</p>
+          </div>
+          <div class="modal-foot">
+            <button class="btn-ghost" @click="cancelNativeWorkspace">取消</button>
+            <button class="btn-ghost" @click="openBrowserWorkspace">使用网页选择</button>
+          </div>
+        </div>
+      </div>
+
       <div v-if="workspacePicker" class="overlay">
         <div class="modal file-modal" role="dialog" aria-modal="true" aria-labelledby="workspace-picker-title">
           <div class="modal-head">
@@ -998,6 +1011,7 @@ export default {
     // ===== 顶栏标题 / 空状态建议词 =====
     const workspaces = ref([])
     const creatingWorkspace = ref(false)
+    const nativeWorkspaceTicket = ref(null)
     const workspacePicker = ref(null)
     const workspaceBrowsing = ref(false)
     const workspacePickerError = ref('')
@@ -2253,10 +2267,56 @@ export default {
       finally { workspaceBrowsing.value = false }
     }
 
-    async function createWorkspace() {
-      if (creatingWorkspace.value || workspaceBrowsing.value) return
+    function cancelNativeWorkspace() {
+      nativeWorkspaceTicket.value = null
+      creatingWorkspace.value = false
+    }
+
+    async function openBrowserWorkspace() {
+      cancelNativeWorkspace()
       workspacePicker.value = { directory: null, parent: null, entries: [] }
       await browseWorkspace()
+    }
+
+    async function createWorkspace() {
+      if (creatingWorkspace.value || workspaceBrowsing.value) return
+      // A Windows protocol is installed on the deployment's host, so remote
+      // browser clients should use the server directory browser instead.
+      if (!['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname)) {
+        await openBrowserWorkspace()
+        return
+      }
+      creatingWorkspace.value = true
+      let ticket = null
+      try {
+        let workspace = await apiPost('/api/v1/workspaces/pick-directory', {})
+        if (workspace.browser_picker) {
+          await openBrowserWorkspace()
+          return
+        }
+        if (workspace.open_url) {
+          ticket = workspace.ticket
+          nativeWorkspaceTicket.value = ticket
+          window.location.href = workspace.open_url
+          const deadline = Date.now() + 300000
+          while (nativeWorkspaceTicket.value === ticket && Date.now() < deadline) {
+            await new Promise(resolve => setTimeout(resolve, 800))
+            if (nativeWorkspaceTicket.value !== ticket) return
+            workspace = await apiGet(`/api/v1/workspaces/picker/${ticket}`)
+            if (nativeWorkspaceTicket.value !== ticket) return
+            if (!workspace.pending) break
+          }
+          if (nativeWorkspaceTicket.value !== ticket) return
+          if (workspace.pending) throw new Error('目录选择已超时，请重试。')
+        }
+        if (workspace.cancelled) return
+        await loadSessions()
+        await newChat(workspace.id)
+      } catch (e) {
+        if (!ticket || nativeWorkspaceTicket.value === ticket) notify(`新建工作区失败：${e.message}`, 'error')
+      } finally {
+        if (!ticket || nativeWorkspaceTicket.value === ticket) cancelNativeWorkspace()
+      }
     }
 
     async function confirmWorkspace() {
@@ -2946,6 +3006,8 @@ export default {
 
     /** 退出登录：清凭证 → 回到登录视图。 */
     function doLogout() {
+      cancelNativeWorkspace()
+      workspacePicker.value = null
       // 停掉本地所有流（后端的运行不受影响，这是的语义：连接断了它继续跑）
       stopAllStreams()
       sessionId.value = null
@@ -3075,6 +3137,7 @@ export default {
       isSessionStreaming,
       // 新版界面
       workspaceGroups, activeWorkspaceId, selectedWorkspace,
+      nativeWorkspaceTicket, cancelNativeWorkspace, openBrowserWorkspace,
       creatingWorkspace, workspacePicker, workspaceBrowsing, workspacePickerError, workspaceFolderName, browseWorkspace, confirmWorkspace,
       currentWorkspace,
       createWorkspace,

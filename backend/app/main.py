@@ -24,6 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.agent.providers import ProviderNotConfigured
 from app.api.routes import api_router
 from app.api.routes import auth as auth_routes
+from app.api.routes.sessions import picker_callback_router
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -171,6 +172,10 @@ app.add_middleware(
 
 # 认证路由（注册/登录/me/改口令）：**不经过** api_router
 app.include_router(auth_routes.router)
+
+# Windows directory selection returns only a short-lived ticket result.
+# Creating or polling a workspace stays on the authenticated business router.
+app.include_router(picker_callback_router)
 
 # 业务路由：全部要求已登录（默认拒绝，见 app/api/routes/__init__.py）
 app.include_router(api_router)
