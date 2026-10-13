@@ -33,7 +33,7 @@
         </button>
         <button class="sb-new" :disabled="creatingWorkspace" @click="createWorkspace">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h5l2 2h5v7H2z" /></svg>
-          <span>{{ creatingWorkspace ? '请选择目录…' : '新建工作区' }}</span>
+          <span>{{ creatingWorkspace ? '创建中…' : '新建工作区' }}</span>
         </button>
       </div>
 
@@ -573,6 +573,32 @@
         </div>
       </div>
 
+      <div v-if="workspacePicker" class="overlay">
+        <div class="modal file-modal" role="dialog" aria-modal="true" aria-labelledby="workspace-picker-title">
+          <div class="modal-head">
+            <h3 id="workspace-picker-title">选择工作区目录</h3>
+            <p>选择已挂载的磁盘目录，或在当前目录中新建文件夹。Docker 路径以容器挂载位置为准。</p>
+          </div>
+          <div class="modal-body file-list">
+            <p class="confirm-path">{{ workspacePicker.directory || '可用目录' }}</p>
+            <button class="btn-ghost" :disabled="workspaceBrowsing || creatingWorkspace" @click="browseWorkspace(workspacePicker.parent)">返回上级</button>
+            <p v-if="workspacePickerError" role="alert">{{ workspacePickerError }}</p>
+            <p v-if="workspaceBrowsing">正在读取目录…</p>
+            <div v-for="entry in workspacePicker.entries" :key="entry.directory">
+              <button class="btn-ghost" :disabled="workspaceBrowsing || creatingWorkspace" @click="browseWorkspace(entry.directory)">📁 {{ entry.name }}</button>
+            </div>
+            <p v-if="!workspaceBrowsing && !workspacePicker.entries.length">此目录没有子文件夹，可以直接选择或新建文件夹。</p>
+            <label v-if="workspacePicker.directory">新文件夹名称（可选）
+              <input v-model="workspaceFolderName" :disabled="creatingWorkspace" placeholder="例如：我的项目" @keyup.enter="confirmWorkspace" />
+            </label>
+          </div>
+          <div class="modal-foot">
+            <button class="btn-ghost" :disabled="creatingWorkspace" @click="workspacePicker = null">取消</button>
+            <button class="btn-primary" :disabled="!workspacePicker.directory || workspaceBrowsing || creatingWorkspace" @click="confirmWorkspace">{{ creatingWorkspace ? '创建中…' : workspaceFolderName.trim() ? '新建并选择' : '选择此目录' }}</button>
+          </div>
+        </div>
+      </div>
+
       <!-- 删除确认：删除不可恢复，所以必须把完整路径摆给用户看，而不是只问"确定吗"。
            目录是**连同内容一起删**，所以单独一句强调。 -->
       <div v-if="pendingDelete" class="overlay">
@@ -972,6 +998,10 @@ export default {
     // ===== 顶栏标题 / 空状态建议词 =====
     const workspaces = ref([])
     const creatingWorkspace = ref(false)
+    const workspacePicker = ref(null)
+    const workspaceBrowsing = ref(false)
+    const workspacePickerError = ref('')
+    const workspaceFolderName = ref('')
     const creatingChat = ref(false)
     const draftWorkspaceId = ref("legacy")
     const collapsedWorkspaces = reactive({})
@@ -2212,15 +2242,40 @@ export default {
       collapsedWorkspaces[workspaceId] = false
     }
 
-    async function createWorkspace() {
-      if (creatingWorkspace.value) return
-      creatingWorkspace.value = true
+    async function browseWorkspace(directory = null) {
+      if (workspaceBrowsing.value) return
+      workspaceBrowsing.value = true
+      workspacePickerError.value = ''
       try {
-        const workspace = await apiPost('/api/v1/workspaces/pick-directory', {})
-        if (workspace.cancelled) return
+        workspacePicker.value = await apiGet('/api/v1/workspaces/directories' + (directory ? `?directory=${encodeURIComponent(directory)}` : ''))
+        workspaceFolderName.value = ''
+      } catch (e) { workspacePickerError.value = e.message }
+      finally { workspaceBrowsing.value = false }
+    }
+
+    async function createWorkspace() {
+      if (creatingWorkspace.value || workspaceBrowsing.value) return
+      workspacePicker.value = { directory: null, parent: null, entries: [] }
+      await browseWorkspace()
+    }
+
+    async function confirmWorkspace() {
+      if (creatingWorkspace.value || workspaceBrowsing.value || !workspacePicker.value?.directory) return
+      const name = workspaceFolderName.value.trim()
+      if (name && (name === '.' || name === '..' || /[\\/:*?"<>|]/.test(name))) {
+        workspacePickerError.value = '请输入有效的文件夹名称，不能包含路径分隔符。'
+        return
+      }
+      creatingWorkspace.value = true
+      workspacePickerError.value = ''
+      try {
+        const base = workspacePicker.value.directory
+        const directory = name ? `${base.replace(/[\\/]$/, '')}/${name}` : base
+        const workspace = await apiPost('/api/v1/workspaces', { directory, create: Boolean(name) })
         await loadSessions()
         await newChat(workspace.id)
-      } catch (e) { notify(`新建工作区失败：${e.message}`, 'error') }
+        workspacePicker.value = null
+      } catch (e) { workspacePickerError.value = e.message }
       finally { creatingWorkspace.value = false }
     }
 
@@ -3020,7 +3075,7 @@ export default {
       isSessionStreaming,
       // 新版界面
       workspaceGroups, activeWorkspaceId, selectedWorkspace,
-      creatingWorkspace,
+      creatingWorkspace, workspacePicker, workspaceBrowsing, workspacePickerError, workspaceFolderName, browseWorkspace, confirmWorkspace,
       currentWorkspace,
       createWorkspace,
       deleteWorkspace,

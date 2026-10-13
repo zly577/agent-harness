@@ -66,6 +66,7 @@ def test_delete_workspace_retains_files(database, tmp_path, monkeypatch):
     assert (selected / "keep.txt").read_text() == "keep"
     assert sessions.list_workspaces(user, database)[0]["name"] == "默认工作区"
 
+@pytest.mark.skipif(__import__("os").name != "nt", reason="Native picker requires Windows")
 def test_directory_picker_cancel_and_name(database, tmp_path, monkeypatch):
     import asyncio
     user = SimpleNamespace(id="a" * 32)
@@ -99,3 +100,66 @@ def test_draft_files_and_first_message_use_selected_directory(database, tmp_path
     with pytest.raises(HTTPException) as error:
         _workspace_root(SimpleNamespace(id="b" * 32), "d" * 32, database)
     assert error.value.status_code == 404
+
+
+@pytest.fixture
+def browser_roots(monkeypatch):
+    from app.agent import opensandbox_backend
+    monkeypatch.setattr(opensandbox_backend, "machine_mounts", lambda: [])
+
+
+def test_browser_workspace_creation_and_isolation(database, tmp_path, browser_roots):
+    user = SimpleNamespace(id="a" * 32)
+    roots = sessions.workspace_directories(user=user)
+    base = roots["entries"][0]["directory"]
+    from pathlib import Path
+    project = Path(base) / "中文项目"
+    request = sessions.CreateWorkspaceRequest(directory=str(project), create=True)
+    first = sessions.create_workspace(request, user, database)
+    assert project.is_dir()
+    assert sessions.create_workspace(request, user, database)["id"] == first["id"]
+    listing = sessions.workspace_directories(base, user)
+    assert listing["parent"] is None
+    assert listing["entries"] == [{"name": "中文项目", "directory": str(project)}]
+    chat = sessions.create_session(sessions.CreateSessionRequest(workspace_id=first["id"]), user, database)
+    assert runtime.session_workspace(chat["id"], user.id) == project
+    other = SimpleNamespace(id="b" * 32)
+    with pytest.raises(HTTPException) as error:
+        sessions.create_workspace(request, other, database)
+    assert error.value.status_code == 403
+    with pytest.raises(HTTPException) as error:
+        sessions.workspace_directories(str(tmp_path), user)
+    assert error.value.status_code == 403
+    with pytest.raises(HTTPException) as error:
+        sessions.create_workspace(sessions.CreateWorkspaceRequest(directory=str(project / "missing")), user, database)
+    assert error.value.status_code == 422
+
+
+def test_browser_mounted_directory(database, tmp_path, monkeypatch):
+    from app.agent import opensandbox_backend
+    mount = tmp_path / "disk"
+    project = mount / "project"
+    project.mkdir(parents=True)
+    monkeypatch.setattr(opensandbox_backend, "machine_mounts", lambda: [("d", mount)])
+    user = SimpleNamespace(id="a" * 32)
+    roots = sessions.workspace_directories(user=user)
+    assert roots["entries"][1] == {"name": "d", "directory": str(mount)}
+    assert sessions.workspace_directories(str(project), user)["parent"] == str(mount)
+    result = sessions.create_workspace(sessions.CreateWorkspaceRequest(directory=str(project)), user, database)
+    assert result["directory"] == str(project)
+
+
+def test_browser_rejects_symlink_escape(database, tmp_path, browser_roots):
+    user = SimpleNamespace(id="a" * 32)
+    from app.core.workspace import ensure_workspace
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    link = ensure_workspace(user.id) / "escape"
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("Directory symlinks unavailable")
+    with pytest.raises(HTTPException) as error:
+        sessions.create_workspace(sessions.CreateWorkspaceRequest(directory=str(link / "new"), create=True), user, database)
+    assert error.value.status_code == 403
+    assert not (outside / "new").exists()

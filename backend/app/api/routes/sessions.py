@@ -82,6 +82,80 @@ def list_workspaces(user: User = Depends(get_current_user), db: OrmSession = Dep
         {"id": w.id, "name": w.name, "directory": w.directory} for w in rows]
 
 
+class CreateWorkspaceRequest(BaseModel):
+    directory: str = Field(..., min_length=1, max_length=4096)
+    create: bool = False
+
+
+def _directory_roots(user):
+    from app.core.workspace import ensure_workspace
+    from app.agent.opensandbox_backend import machine_mounts
+    return [("我的工作区", ensure_workspace(user.id).resolve())] + machine_mounts()
+
+
+def _allowed_directory(directory, user):
+    from pathlib import Path
+    try:
+        root = Path(directory).expanduser().resolve()
+        if not any(root.is_relative_to(base.resolve()) for _, base in _directory_roots(user)):
+            raise HTTPException(status_code=403, detail="只能选择自己的工作区或已启用的磁盘挂载目录")
+        return root
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="目录路径无效") from exc
+
+
+@router.get("/workspaces/directories")
+def workspace_directories(directory: str | None = None, user: User = Depends(get_current_user)):
+    roots = _directory_roots(user)
+    if directory is None:
+        return {"directory": None, "parent": None,
+                "entries": [{"name": name, "directory": str(path)} for name, path in roots]}
+    root = _allowed_directory(directory, user)
+    try:
+        if not root.is_dir():
+            raise HTTPException(status_code=422, detail="请选择有效的目录")
+        entries = []
+        for entry in root.iterdir():
+            try:
+                if entry.is_dir() and any(entry.resolve().is_relative_to(base.resolve()) for _, base in roots):
+                    entries.append({"name": entry.name, "directory": str(entry)})
+            except (OSError, RuntimeError):
+                continue
+        parent = str(root.parent) if root.parent != root and any(
+            root.parent.is_relative_to(base.resolve()) for _, base in roots) else None
+        return {"directory": str(root), "parent": parent,
+                "entries": sorted(entries, key=lambda entry: entry["name"].casefold())}
+    except OSError as exc:
+        raise HTTPException(status_code=403, detail="无法读取该目录，请检查目录权限") from exc
+
+
+def _save_workspace(root, user, db):
+    import os
+    import uuid
+    for existing in db.query(Workspace).filter(Workspace.user_id == user.id).all():
+        if os.path.normcase(existing.directory) == os.path.normcase(str(root)):
+            return {"id": existing.id, "name": existing.name, "directory": existing.directory}
+    row = Workspace(id=uuid.uuid4().hex, user_id=user.id,
+                    name=(root.name or root.anchor)[:255], directory=str(root))
+    db.add(row)
+    db.commit()
+    return {"id": row.id, "name": row.name, "directory": row.directory}
+
+
+@router.post("/workspaces")
+def create_workspace(req: CreateWorkspaceRequest, user: User = Depends(get_current_user),
+                     db: OrmSession = Depends(get_db)):
+    root = _allowed_directory(req.directory, user)
+    try:
+        if req.create:
+            root.mkdir(parents=True, exist_ok=True)
+        if not root.is_dir():
+            raise HTTPException(status_code=422, detail="请选择有效的目录")
+    except OSError as exc:
+        raise HTTPException(status_code=403, detail="无法创建或访问目录，请检查目录权限") from exc
+    return _save_workspace(root, user, db)
+
+
 @router.post("/workspaces/pick-directory")
 async def pick_workspace_directory(user: User = Depends(get_current_user), db: OrmSession = Depends(get_db)):
     import asyncio
@@ -119,13 +193,7 @@ $dialog.Dispose()
     root = Path(selected).resolve()
     if not root.is_dir():
         raise HTTPException(status_code=422, detail="请选择有效的目录")
-    for existing in db.query(Workspace).filter(Workspace.user_id == user.id).all():
-        if os.path.normcase(existing.directory) == os.path.normcase(str(root)):
-            return {"id": existing.id, "name": existing.name, "directory": existing.directory}
-    row = Workspace(id=uuid.uuid4().hex, user_id=user.id, name=root.name or root.anchor, directory=str(root))
-    db.add(row)
-    db.commit()
-    return {"id": row.id, "name": row.name, "directory": row.directory}
+    return _save_workspace(root, user, db)
 
 
 @router.delete("/workspaces/{workspace_id}")
