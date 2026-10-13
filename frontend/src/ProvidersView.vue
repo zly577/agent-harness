@@ -81,6 +81,14 @@
           </label>
 
           <label class="pv-field">
+            <span>图片识别能力</span>
+            <select v-model="form.vision" :disabled="busy">
+              <option value="auto">自动（已知模型；未知模型默认不支持）</option>
+              <option value="yes">支持图片（多模态模型）</option>
+              <option value="no">不支持图片（纯文本模型）</option>
+            </select>
+          </label>
+          <label class="pv-field">
             <span>temperature<em>（可空）</em></span>
             <input v-model="form.temperature" placeholder="0" :disabled="busy" />
           </label>
@@ -201,6 +209,7 @@ const EMPTY_FORM = {
   model: '',
   api_key: '',
   api_key_hint: '',
+  vision: 'auto',
   temperature: '',
   timeout: '',
   max_tokens: '',
@@ -230,6 +239,7 @@ export default {
     /** 把表单里的字符串参数转成后端要的类型；空串 = 不传（用默认值）。 */
     function buildParameters() {
       const p = {}
+      if (form.vision !== 'auto') p.supports_vision = form.vision === 'yes'
       for (const key of ['temperature', 'timeout', 'max_tokens']) {
         const raw = String(form[key] ?? '').trim()
         if (raw === '') continue
@@ -277,6 +287,7 @@ export default {
         model: p.model,
         api_key: '',                 // 绝不回填明文：留空 = 不改
         api_key_hint: p.api_key_hint,
+        vision: typeof p.parameters?.supports_vision === 'boolean' ? (p.parameters.supports_vision ? 'yes' : 'no') : 'auto',
         temperature: p.parameters?.temperature ?? '',
         timeout: p.parameters?.timeout ?? '',
         max_tokens: p.parameters?.max_tokens ?? '',

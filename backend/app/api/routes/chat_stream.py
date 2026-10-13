@@ -39,6 +39,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session as OrmSession
 
+from app.agent.attachments import prepare_content, supports_vision, save_refusal
 from app.agent import runtime
 from app.agent import providers as provider_svc
 from app.agent.runner import run_manager
@@ -127,6 +128,8 @@ async def chat_stream(
     就先校验它属于当前用户（否则 404）。`user_id` 会随本轮运行一起被捕获
     （见 `run_manager.start`），供工作区/长期记忆定位。
     """
+    content, has_images = prepare_content(req)
+
     # 会话解析：无 session_id 则新建；有则校验归属
     if req.session_id is None:
         workspace_id = req.workspace_id if req.workspace_id != "legacy" else None
@@ -156,15 +159,26 @@ async def chat_stream(
             detail="该会话已有一轮回答正在进行中。请等它结束，或先点停止。",
         )
 
+    refusal = False
+    if has_images:
+        from app.agent.providers import resolve_provider
+        cfg, _ = resolve_provider(db, user.id, runtime.session_context(session_id)[1])
+        refusal = not supports_vision(cfg)
+
     async def _gen():
         # 先推 session 事件（前端据此记录 session_id）
         yield sse({"type": "session", "session_id": session_id})
+        if refusal:
+            reply = await save_refusal(session_id, req.message + "\n" + "\n".join("[附件：" + a.name + "]" for a in req.attachments), user.id)
+            yield sse({"type": "result", "content": reply})
+            yield "event: done\ndata: {}\n\n"
+            return
         try:
             # 只在后台起运行 —— 这个生成器只负责"订阅"。
             # user_id 在这里（请求时刻）捕获后传下去：后台 task 里没有"当前用户"。
             run_manager.start(
                 session_id,
-                {"messages": [{"role": "user", "content": req.message}]},
+                {"messages": [{"role": "user", "content": content}]},
                 user_message=req.message,
                 user_id=user.id,
             )

@@ -6,6 +6,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session as OrmSession
 
+from app.agent.attachments import prepare_content, supports_vision, save_refusal
 from app.agent import runtime
 from app.api.deps import get_current_user, owned_session_or_404
 from app.agent.providers import ProviderNotConfigured
@@ -24,6 +25,8 @@ async def chat(
     user: User = Depends(get_current_user),
     db: OrmSession = Depends(get_db),
 ):
+    content, has_images = prepare_content(req)
+
     # 会话解析：无 session_id 则新建（登记 MySQL，绑定当前用户）；有则校验归属
     if req.session_id is None:
         workspace_id = req.workspace_id if req.workspace_id != "legacy" else None
@@ -44,8 +47,15 @@ async def chat(
     # 与流式入口共用同一段逻辑（含归属校验 + agent 重建），行为必须一致
     apply_provider_choice(db, session_id, user, req.provider_id)
 
+    refusal = False
+    if has_images:
+        from app.agent.providers import resolve_provider
+        cfg, _ = resolve_provider(db, user.id, runtime.session_context(session_id)[1])
+        refusal = not supports_vision(cfg)
+
     try:
-        reply = await runtime.run_chat(session_id, req.message, user_id=user.id)
+        reply = (await save_refusal(session_id, req.message + "\n" + "\n".join("[附件：" + a.name + "]" for a in req.attachments), user.id)
+                 if refusal else await runtime.run_chat(session_id, content, user_id=user.id))
     except ProviderNotConfigured:
         # 交给 main.py 的全局处理器转 400（"还没配模型"是用户能自己解决的前置条件）。
         raise

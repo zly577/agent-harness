@@ -826,7 +826,11 @@ async def load_history(session_id: str, user_id: str | None = None) -> list[dict
             for d in delegations:
                 d["result"] = tool_results.get(d["id"], "")
 
-            result.append({"role": "user", "content": user_text})
+            user_images = [b["image_url"]["url"] for b in m.content
+                           if isinstance(b, dict) and b.get("type") == "image_url"
+                           and isinstance(b.get("image_url"), dict)
+                           and b["image_url"].get("url", "").startswith("data:image/")] if isinstance(m.content, list) else []
+            result.append({"role": "user", "content": user_text, "images": user_images})
             result.append({
                 "role": "assistant",
                 "content": assistant_text,

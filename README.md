@@ -191,3 +191,9 @@ npm run dev
 需要验证码时设置 `REGISTRATION_EMAIL_VERIFICATION=true` 并配置 SMTP；注册页面会自动显示验证码输入框。关闭公开注册使用 `ALLOW_REGISTRATION=false`。Windows 个人磁盘部署入口仍关闭公开注册。
 
 本机开发修改 `backend/.env` 后重启后端；Docker 修改根目录 `.env` 后重新运行 `docker compose up -d --build`。已有 `.env` 不会自动覆盖，升级时请按需修改。不要把真实 SMTP 凭证提交到 GitHub。
+
+### 聊天附件
+
+输入框旁的「＋附件」可添加图片、UTF-8 文本/代码、PDF、DOCX，与文字一起发送；也可仅发送附件。最多 5 个附件，单个不超过 5 MB，合计不超过 15 MB。图片支持 PNG、JPEG、WebP、GIF；PDF/DOCX 提取文字后发送，扫描 PDF 请转成图片。文档最多 10 万字，PDF 最多 100 页。
+
+「模型」设置中的「图片识别能力」可选择自动、支持或不支持；未知模型自动视为不支持，请根据供应商实际能力配置。纯文本模型收到图片会在调用供应商前返回「我不是多模态模型，无法识别图片」，并保存拒绝回复。附件内容会随消息发送给当前选择的模型供应商，并保存到会话历史。

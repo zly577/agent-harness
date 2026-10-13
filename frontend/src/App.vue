@@ -206,6 +206,7 @@
           <div class="row-inner">
             <div v-if="m.role === 'user'" class="bubble user">
               <div class="md" v-html="renderMarkdown(m.content)"></div>
+              <div class="attachment-list" v-if="m.images?.length"><img v-for="(src, index) in m.images" :key="index" :src="src" alt="图片附件" /></div>
             </div>
 
             <div v-else class="answer">
@@ -297,11 +298,10 @@
                 :class="{ live: m.streaming }"
               >
                 <span class="meter-time">
-                  <span class="meter-clock"></span>{{ elapsedLabel(m.startedAt) }}
+                  <span class="meter-clock"></span>{{ elapsedLabel(m.startedAt, m.endedAt) }}
                 </span>
                 <span class="meter-sep">·</span>
-                <span class="meter-rate">{{ rateLabel(m) }}</span>
-                <span v-if="meterTokens(m)" class="meter-tokens">{{ meterTokens(m) }}</span>
+                <span class="meter-rate" title="最近 2 秒的生成速度（估算）">{{ rateLabel(m) }}</span>
               </div>
 
               <!-- 工具活动：**同一时刻只展示最新一条**。
@@ -636,7 +636,27 @@
           <span>回到底部</span>
           <span v-if="hasNewBelow" class="jump-dot"></span>
         </button>
+        <div class="composer-shell">
+        <div class="composer-attachments" v-if="attachments.length" aria-label="待发送附件">
+          <div class="attachment-card" v-for="(file, index) in attachments" :key="index">
+            <img v-if="file.preview" class="attachment-thumb" :src="file.preview" :alt="file.name" />
+            <div v-else class="attachment-file-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6M8 13h8M8 17h5" /></svg>
+            </div>
+            <div class="attachment-info">
+              <span class="attachment-name" :title="file.name">{{ file.name }}</span>
+              <span class="attachment-meta">{{ file.preview ? '图片' : '文件' }} · {{ file.size >= 1048576 ? (file.size / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(file.size / 1024)) + ' KB' }}</span>
+            </div>
+            <button type="button" class="attachment-remove" :aria-label="'移除附件：' + file.name" title="移除附件" @click="attachments.splice(index, 1)" :disabled="streaming">
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8" /></svg>
+            </button>
+          </div>
+        </div>
         <div class="composer-inner">
+          <input ref="attachmentInput" type="file" multiple hidden accept=".png,.jpg,.jpeg,.webp,.gif,.txt,.md,.csv,.tsv,.json,.xml,.yaml,.yml,.log,.py,.js,.ts,.html,.css,.pdf,.docx" @change="selectAttachments" />
+          <button class="btn-attach" title="添加图片或文件（每个最多 5 MB）" :disabled="streaming || loadingHistory || readingAttachments" @click="attachmentInput.click()" aria-label="添加图片或文件">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 11-8.5 8.5a6 6 0 0 1-8.5-8.5l9-9a4 4 0 0 1 5.7 5.7l-9 9a2 2 0 0 1-2.8-2.8L15 6" /></svg>
+          </button>
           <textarea
             ref="inputEl"
             v-model="input"
@@ -653,11 +673,12 @@
             v-else
             class="btn-send"
             title="发送"
-            :disabled="!input.trim()"
+            :disabled="(!input.trim() && !attachments.length) || readingAttachments"
             @click="send"
           >
             <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 15.5V5M10 5l-4.5 4.5M10 5l4.5 4.5" /></svg>
           </button>
+        </div>
         </div>
         <p class="disclaimer">{{ accessFull
           ? '完全访问：可修改已挂载磁盘；LocalShell 在后端所在环境执行命令。'
@@ -682,6 +703,7 @@ import {
   streamRunAttach,
 } from './sse'
 import { renderMarkdown } from './markdown'
+import { recordDelta, instantaneousRate, freezeMeter, resumeMeter } from './generationMeter'
 import AuthView from './AuthView.vue'
 import ProvidersView from './ProvidersView.vue'
 import McpView from './McpView.vue'
@@ -836,6 +858,27 @@ export default {
     // 新会话不预置任何消息：空状态由欢迎页承担，不在对话流里塞一条自我介绍
     const messages = reactive([])
     const input = ref('')
+    const attachments = ref([])
+    const attachmentInput = ref(null)
+    const readingAttachments = ref(false)
+    async function selectAttachments(event) {
+      const files = Array.from(event.target.files || [])
+      event.target.value = ''
+      if (attachments.value.length + files.length > 5) return notify('最多添加 5 个附件', 'error')
+      const total = attachments.value.reduce((sum, file) => sum + file.size, 0) + files.reduce((sum, file) => sum + file.size, 0)
+      if (files.some(file => !file.size || file.size > 5 * 1024 * 1024) || total > 15 * 1024 * 1024) return notify('每个附件最多 5 MB，合计最多 15 MB，不能上传空文件', 'error')
+      readingAttachments.value = true
+      try {
+        const added = await Promise.all(files.map(file => new Promise((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onerror = () => reject(new Error('文件读取失败'))
+          reader.onload = () => resolve({ name: file.name, size: file.size, data: String(reader.result).split(',')[1], preview: file.type.startsWith('image/') ? reader.result : null })
+          reader.readAsDataURL(file)
+        })))
+        attachments.value.push(...added)
+      } catch (e) { notify(e.message, 'error') }
+      finally { readingAttachments.value = false }
+    }
     const showTools = ref(true)
     // 待审批弹窗：{ session_id, actions } | null；deciding 表示决策已提交、正在恢复执行
     const approval = ref(null)
@@ -1399,7 +1442,7 @@ export default {
         reasoning: evt.reasoning || 0,
         total: (evt.total || 0) > (prev.total || 0) ? evt.total : prev.total,
       }
-      // 逐步累加生成本轮真正产出的 token（见 turnTokens 的说明）
+      // 保存后端的生成用量；瞬时速度使用流式增量。
       msg.outTokens = (msg.outTokens || 0) + (evt.output || 0)
       if (evt.total) msg.outputTokens = Math.max(msg.outputTokens || 0, evt.output || 0)
     }
@@ -1430,81 +1473,30 @@ export default {
     /** 秒级刷新的心跳：只在有消息在流式输出时才走。 */
     function startTicker() {
       if (ticker) return
-      ticker = setInterval(() => { nowTick.value = Date.now() }, 200)
+      nowTick.value = Date.now()
+      ticker = setInterval(() => { if (anyStreaming()) nowTick.value = Date.now(); else stopTicker() }, 200)
     }
 
     function stopTicker() {
       if (ticker) { clearInterval(ticker); ticker = null }
     }
 
-    /** 该消息是否还需要计时（有任意会话仍在流式输出）。 */
+    // Only the visible conversation drives the UI clock.
     function anyStreaming() {
-      if (streaming.value) return true
-      return Object.keys(sessionStates).some((id) => sessionStates[id]?.streaming)
+      return messages.some(message => message.role === 'assistant' && message.streaming)
     }
-
-    watch(nowTick, () => { if (!anyStreaming()) stopTicker() })
-
-    /**
-     * 本轮已产出的**字符数**：主智能体正文 + 主智能体推理 + 各子智能体的正文与推理。
-     *
-     * 为什么要把推理也算进来：推理阶段是唯一长期没有正文产出的阶段
-     * （实测 26.9s），如果只数正文，这段时间速率恒为 0，界面看起来还是死的。
-     */
-    function turnChars(m) {
-      let n = (m.content || '').length + (m.thinking || '').length
-      for (const d of m.delegations || []) {
-        n += (d.stream || '').length + (d.thinking || '').length
-      }
-      return n
-    }
-
-    /**
-     * 本轮**生成**的 token 合计（主智能体 + 各子智能体）。
-     *
-     * 只累加 `output`（真正生成出来的），**绝不能累加 `total`** ——
-     * `total = input + output`，而每个模型步都会把整段上下文（上万 token）重新算一次 input，
-     * 多步累加会得到"12 万 token / 1600 tok/s"这种没有意义的数字（实测踩过）。
-     */
-    function turnTokens(m) {
-      let n = m.outTokens || 0
-      for (const d of m.delegations || []) n += d.outTokens || 0
-      return n
-    }
-
-    /**
-     * 每秒 token 使用量（实时）。
-     *
-     * - 精确值来自后端每个模型步的 `usage_metadata.output_tokens`，但**步结束才到**，
-     *   所以步内靠字符估算（中文约 1 字 ≈ 1~1.5 token，这里保守按 4 字符≈1 token）。
-     * - 两者取较大者：它们都在估同一件事，取大会让数字单调、不出现"越跑越慢"的假象。
-     * - 完全靠估算时前面加 `≈`，用真实用量时不加，用户能分清哪个是当真数据。
-     */
-    function rateLabel(m) {
-      const started = m.startedAt
-      if (!started) return ''
-      // 读 nowTick（而不是 Date.now()）才能让这个数字每 0.2s 重算一次 ——
-      // 否则没有新 token 时它会一直停在旧值上，"实时"就无从谈起。
-      const secs = Math.max((nowTick.value - started) / 1000, 0.5)
-      const exact = turnTokens(m)
-      const est = Math.round(turnChars(m) / 4)
-      const n = Math.max(exact, est)
-      if (!n) return '0.0 tok/s'
-      return `${est > exact ? '≈' : ''}${(n / secs).toFixed(1)} tok/s`
-    }
-
-    /** token 合计展示：有精确值就用精确值，否则标 ≈ 用估算值。 */
-    function meterTokens(m) {
-      const exact = turnTokens(m)
-      if (exact) return `${exact.toLocaleString()} tokens`
-      const est = Math.round(turnChars(m) / 4)
-      return est ? `≈${est.toLocaleString()} tokens` : ''
+    watch(() => [sessionId.value, anyStreaming()], () => {
+      if (anyStreaming()) startTicker()
+      else stopTicker()
+    })
+    function rateLabel(message) {
+      return `≈${instantaneousRate(message, nowTick.value).toFixed(1)} tok/s`
     }
 
     /** 耗时展示：流式中按 0.2s 刷新，结束后固定。 */
-    function elapsedLabel(startedAt) {
+    function elapsedLabel(startedAt, endedAt = null) {
       if (!startedAt) return ''
-      const end = nowTick.value
+      const end = endedAt || nowTick.value
       const secs = Math.max((end - startedAt) / 1000, 0)
       if (secs < 60) return `${secs.toFixed(1)}s`
       const min = Math.floor(secs / 60)
@@ -1780,6 +1772,7 @@ export default {
      */
     function finishTurn(msg) {
       if (!msg) return
+      freezeMeter(msg)
       ;(msg.delegations || []).forEach((d) => {
         if (d.status === 'running') {
           d.status = 'done'
@@ -1871,6 +1864,10 @@ export default {
     function applyDataEvent(msg, evt) {
       // 任何一个后端事件都算"它还活着"的证据（见 lastEventAt 的注释）
       lastEventAt.value = Date.now()
+      if (msg.streaming && messages.includes(msg)) {
+        if (evt.type === 'token') recordDelta(msg, evt.content || '')
+        if (evt.type === 'thinking' && evt.scope !== 'subagent' && !evt.subagent_id) recordDelta(msg, evt.delta || '')
+      }
       switch (evt.type) {
         case 'token':
           msg.content += evt.content || ''
@@ -1897,6 +1894,7 @@ export default {
           applyUsageEvent(msg, evt)
           return true
         case 'result':
+          freezeMeter(msg)
           if (evt.content) msg.content = evt.content
           return true
         default:
@@ -1918,6 +1916,7 @@ export default {
       if (sid && sessionStates[sid]) sessionStates[sid].approval = payload
       approval.value = payload
       if (target) {
+        freezeMeter(target)
         target.streaming = false
         if (!String(target.content || '').trim()) {
           const n = (evt.actions || []).length
@@ -2337,6 +2336,7 @@ export default {
       messages.splice(0, messages.length) // 清空 → 回到欢迎页
       approval.value = null
       input.value = ''
+      attachments.value = []
       stickToBottom.value = true
       hasNewBelow.value = false    }
 
@@ -2359,8 +2359,8 @@ export default {
     }
 
     async function send() {
-      const text = input.value.trim()
-      if (!text || streaming.value || loadingHistory.value) return
+      const text = input.value.trim() || (attachments.value.length ? '请分析这些附件。' : '')
+      if (!text || streaming.value || loadingHistory.value || readingAttachments.value) return
       if (!sessionId.value && sessions.value.some(s => s._temp && s.workspace_id === draftWorkspaceId.value)) return
 
       // 没有可用的模型就**不要发出去**。
@@ -2376,6 +2376,9 @@ export default {
         showProviders.value = true
         return
       }
+      const sentImages = attachments.value.filter(file => file.preview).map(file => file.preview)
+      const sentAttachments = attachments.value.map(file => ({ name: file.name, data: file.data }))
+      attachments.value = []
       input.value = ''
 
       const controller = new AbortController()
@@ -2409,7 +2412,7 @@ export default {
         sessionMsgs = reactive([...messages])
       }
 
-      const userMsg = { role: 'user', content: text, time: formatTime() }
+      const userMsg = { role: 'user', content: text + sentAttachments.map(file => '\n[附件：' + file.name + ']').join(''), time: formatTime(), images: sentImages }
       const assistantMsg = reactive({
         role: 'assistant',
         content: '',
@@ -2421,7 +2424,7 @@ export default {
         // 计时器与 token 统计
         startedAt: Date.now(),
         usage: null,
-        outTokens: 0,      // 本轮累计生成的 token（见 turnTokens）
+        outTokens: 0,      // 后端生成用量
         outputTokens: 0,
       })
       startTicker()
@@ -2487,7 +2490,7 @@ export default {
             assistantMsg.content = `⚠️ ${evt.detail}`
             assistantMsg.error = true
           }
-        }, chosenProvider.value || null, startingWorkspaceId)
+        }, chosenProvider.value || null, startingWorkspaceId, sentAttachments)
       } catch (e) {
         if (e.name !== 'AbortError') {
           assistantMsg.content = `⚠️ ${e.message}`
@@ -2539,6 +2542,7 @@ export default {
           sessionStates[sid].streaming = true
           sessionStates[sid].controller = controller
         }
+        resumeMeter(target)
         target.streaming = true
         if (!target.startedAt) target.startedAt = Date.now()
         startTicker()
@@ -2773,6 +2777,7 @@ export default {
       if (state?.messages) {
         const last = state.messages[state.messages.length - 1]
         if (last && last.role === 'assistant' && last.streaming) {
+          freezeMeter(last)
           last.streaming = false
           if (!last.content) last.content = '（已停止本轮回答）'
         }
@@ -3126,14 +3131,13 @@ export default {
       runLiveness,
       reconnect,
       rateLabel,
-      meterTokens,
       // 滚动跟随
       stickToBottom,
       hasNewBelow,
       onMessagesScroll,
       onMessagesWheel,
       jumpToBottom,
-      inputEl,
+      inputEl, attachments, attachmentInput, readingAttachments, selectAttachments,
       autoGrow,
       toggleHitlBtn,
       // 权限模式（沙箱内 / 完全访问）
@@ -4318,7 +4322,6 @@ button { font-family: inherit; }
 .meter.live .meter-clock { background: var(--warn); animation: breathe 1.1s ease-in-out infinite; }
 .meter-rate { color: var(--text-2); }
 .meter-sep { color: var(--border-2); }
-.meter-tokens { margin-left: auto; }
 
 /* ===== 空状态（新会话欢迎页） ===== */
 .empty {
@@ -4376,6 +4379,18 @@ button { font-family: inherit; }
 /* ===== 输入区 ===== */
 .composer { flex: 0 0 auto; position: relative; padding: 4px 24px 12px; }
 
+.composer-shell {
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 26px;
+  background: var(--bg);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.04);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.composer-shell:focus-within { border-color: var(--border-2); box-shadow: 0 2px 14px rgba(0, 0, 0, 0.06); }
+
 .composer-inner {
   display: flex;
   align-items: flex-end;
@@ -4383,15 +4398,11 @@ button { font-family: inherit; }
   width: 100%;
   max-width: 760px;
   margin: 0 auto;
-  padding: 8px 8px 8px 16px;
-  border: 1px solid var(--border);
-  border-radius: 26px;
-  background: var(--bg);
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.04);
-  transition: border-color 0.15s, box-shadow 0.15s;
+  padding: 10px;
+  box-sizing: border-box;
 }
 @media (prefers-color-scheme: dark) {
-  .composer-inner { box-shadow: none; }
+  .composer-shell, .composer-shell:focus-within { box-shadow: none; }
 }
 .composer-inner:focus-within { border-color: var(--border-2); }
 
@@ -4400,7 +4411,7 @@ button { font-family: inherit; }
   min-width: 0;
   height: 24px;
   max-height: 200px;
-  padding: 0;
+  padding: 4px 0;
   border: 0;
   outline: 0;
   resize: none;
@@ -4763,4 +4774,28 @@ button { font-family: inherit; }
 
 <style scoped>
 .history-loading { display: grid; place-items: center; height: 100%; color: var(--text-2); font-size: 14px; }
+</style>
+
+<style scoped>
+.attachment-list { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px; }
+.attachment-list span { display: flex; align-items: center; gap: 6px; max-width: 100%; overflow-wrap: anywhere; font-size: 13px; }
+.attachment-list img { width: 48px; height: 48px; object-fit: cover; border-radius: 6px; }
+.composer-attachments { display: flex; gap: 8px; overflow-x: auto; padding: 12px 12px 2px; }
+.attachment-card { display: flex; align-items: center; gap: 10px; flex: 0 0 244px; min-width: 0; padding: 8px; border: 1px solid var(--border); border-radius: 14px; background: var(--fill); }
+.attachment-thumb, .attachment-file-icon { width: 44px; height: 44px; flex-shrink: 0; border-radius: 9px; }
+.attachment-thumb { object-fit: cover; background: var(--bg); }
+.attachment-file-icon { display: grid; place-items: center; background: var(--bg); color: var(--text-2); }
+.attachment-file-icon svg { width: 23px; height: 23px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.attachment-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.attachment-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-size: 12px; font-weight: 500; }
+.attachment-meta { font-size: 11px; color: var(--text-3); }
+.attachment-remove { display: grid; place-items: center; width: 26px; height: 26px; flex-shrink: 0; border: 0; border-radius: 50%; background: transparent; color: var(--text-3); cursor: pointer; transition: background 0.15s, color 0.15s; }
+.attachment-remove svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+.attachment-remove:hover { background: var(--fill-2); color: var(--text); }
+.btn-attach { display: grid; place-items: center; flex: 0 0 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--text-2); cursor: pointer; transition: background 0.15s, color 0.15s; }
+.btn-attach svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.btn-attach:hover { background: var(--fill); color: var(--text); }
+.btn-attach:disabled, .attachment-remove:disabled { opacity: 0.4; cursor: default; }
+.btn-attach:focus-visible, .attachment-remove:focus-visible { outline: 2px solid var(--text-2); outline-offset: 2px; }
+@media (max-width: 600px) { .attachment-card { flex-basis: 210px; } }
 </style>

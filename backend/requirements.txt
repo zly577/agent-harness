@@ -81,3 +81,7 @@ PyYAML>=6.0                      # configs/subagents/*.yaml、configs/skills/*.y
 # ===== 测试 =====
 pytest>=9.1
 # 说明：本项目测试是同步的（TestClient + asyncio.run 探针），**未使用 pytest-asyncio**。
+
+Pillow>=10.4                    # 上传图片格式与完整性验证
+pypdf>=5.0                     # PDF 附件文字提取
+python-docx>=1.1                # Word 附件文字提取

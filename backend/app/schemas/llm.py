@@ -25,7 +25,7 @@ from app.agent.model import PROTOCOL_ANTHROPIC, PROTOCOL_OPENAI, PROTOCOLS
 
 #: 参数 JSON 允许的键（其余原样透传给供应商 SDK，但给出提示便于排错）
 KNOWN_PARAMETER_KEYS = ("temperature", "timeout", "max_tokens", "top_p", "frequency_penalty",
-                        "presence_penalty", "stop", "seed")
+                        "presence_penalty", "stop", "seed", "supports_vision")
 
 
 def _validate_base_url(value: str | None) -> str | None:

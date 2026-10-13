@@ -149,6 +149,7 @@ def effective_parameters(cfg: ProviderConfig) -> tuple[dict[str, Any], list[str]
     params: dict[str, Any] = dict(DEFAULT_PARAMETERS)
     params.update({k: v for k, v in (cfg.parameters or {}).items() if v is not None})
 
+    params.pop("supports_vision", None)  # 本地能力配置，不传给供应商 SDK
     dropped: list[str] = []
     model_lower = (cfg.model or "").lower()
     if any(model_lower.startswith(p) for p in _UNSUPPORTED_TEMPERATURE_PREFIXES):
