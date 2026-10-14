@@ -90,7 +90,10 @@ async def save_refusal(session_id, message, user_id):
     from app.agent import runtime
     from langchain_core.messages import HumanMessage, AIMessage
     agent = await runtime.get_agent(session_id, user_id=user_id, history_only=True)
+    from app.agent.conversation_history import sync_checkpoints
+    await sync_checkpoints(agent, session_id)
     await agent.aupdate_state({"configurable": {"thread_id": session_id}},
                              {"messages": [HumanMessage(content=message), AIMessage(content=REFUSAL)]})
+    await sync_checkpoints(agent, session_id)
     runtime.invalidate_agents(session_id)
     return REFUSAL

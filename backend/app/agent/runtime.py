@@ -258,7 +258,7 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
         # 摘要中间件必须与主模型**同一个实例**：
         # 否则会出现"对话走用户选的供应商、压缩摘要却偷偷走另一个模型"，
         # 而且那条路径在界面上完全不可见（用户只会觉得"摘要质量怎么变了"）。
-        build_summary_middleware(model),
+        build_summary_middleware(model, session_id=session_key),
         LoggingMiddleware(),
         AuditMiddleware(),
         # 硬护栏 —— 拦掉"按进程名杀 python"这类会把 harness 后端自己杀掉的
@@ -689,8 +689,9 @@ async def load_history(session_id: str, user_id: str | None = None) -> list[dict
     _reap_stale_if_idle(session_id)
 
     agent = await get_agent(session_id, user_id=user_id, history_only=True)
-    state = await agent.aget_state({"configurable": {"thread_id": session_id}})
-    msgs = (state.values or {}).get("messages") or []
+    from app.agent.conversation_history import read_messages, sync_checkpoints
+    await sync_checkpoints(agent, session_id)
+    msgs = await read_messages(session_id)
 
     result: list[dict] = []
     i = 0
@@ -781,10 +782,13 @@ async def run_chat(session_id: str, user_message: str, user_id: str | None = Non
     - 输入直接传 user 消息（由 langgraph 转为 BaseMessage）
     """
     agent = await get_agent(session_id, user_id=user_id)
+    from app.agent.conversation_history import sync_checkpoints
+    await sync_checkpoints(agent, session_id)
     result = await agent.ainvoke(
         {"messages": [{"role": "user", "content": user_message}]},
         config={"configurable": {"thread_id": session_id}},
     )
+    await sync_checkpoints(agent, session_id)
     from app.agent.approvals import read_pending_approval
     pending = await read_pending_approval(agent, {"configurable": {"thread_id": session_id}}, user_id=user_id)
     if pending.get("clarifications"):
@@ -1038,6 +1042,9 @@ async def agent_event_stream(session_id: str, agent_input, user_id: str | None =
     agent = await get_agent(session_id, user_id=owner)
     config = {"configurable": {"thread_id": session_id}}
 
+    from app.agent.conversation_history import sync_checkpoints
+    await sync_checkpoints(agent, session_id)
+
     # 新一轮开始前，把上一轮异常中断遗留的 running 记录收尾（否则前端永远转圈）
     mark_stale_tool_calls(session_id)
 
@@ -1076,7 +1083,8 @@ async def agent_event_stream(session_id: str, agent_input, user_id: str | None =
             "intent_label": label, "intent_source": source,
         })
 
-    async for chunk in streaming_astream(agent, agent_input, config):
+    from app.agent.conversation_history import archive_stream
+    async for chunk in archive_stream(streaming_astream(agent, agent_input, config), session_id):
         namespace, msg, metadata = normalize_chunk(chunk)
         node = metadata.get("langgraph_node")
         subagent_id = parse_subagent_namespace(namespace)
@@ -1092,6 +1100,11 @@ async def agent_event_stream(session_id: str, agent_input, user_id: str | None =
                 # 子智能体的用量单独成一个事件名（`subagent_usage`）：
                 # 它必须落到对应委派卡片上，不能混进主智能体的总速率里。
                 yield ("subagent_usage", {**usage, "id": call_id})
+            continue
+
+        if (metadata.get("lc_source") == "summarization"
+                or "langchain:internal" in metadata.get("tags", [])
+                or getattr(msg, "additional_kwargs", {}).get("lc_source") == "summarization"):
             continue
 
         if node not in ("model", "tools"):
@@ -1220,6 +1233,8 @@ async def agent_event_stream(session_id: str, agent_input, user_id: str | None =
         usage = log_usage_event(namespace, msg)
         if usage:
             yield ("usage", usage)
+
+    await sync_checkpoints(agent, session_id)
 
     # 检查是否有（新的）审批中断
     try:

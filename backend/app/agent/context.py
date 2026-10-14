@@ -1,9 +1,9 @@
 """上下文管理与消息历史持久化（异步版）。
 
 分层（详见 docs/P2-storage-design.md）：
-- **消息历史（SQLite checkpoint）**：langgraph `AsyncSqliteSaver` 持久化每个会话的
+- **模型执行态（SQLite checkpoint）**：langgraph `AsyncSqliteSaver` 持久化每个会话的
   BaseMessage（HumanMessage/AIMessage/工具消息）与 graph 执行态，进程重启不丢，
-  通过 `thread_id` 隔离多会话。
+  通过 `thread_id` 隔离多会话。完整展示记录独立存入 conversation_messages，摘要不覆盖它。
 - **短期记忆（SQLite store）**：langgraph `AsyncSqliteStore`，按命名空间存键值，
   供跨节点/跨请求的临时上下文。
 - **上下文压缩**：langgraph 官方 `SummarizationMiddleware`，消息数超过阈值时
@@ -68,7 +68,39 @@ async def get_store() -> AsyncSqliteStore:
     return _store
 
 
-def build_summary_middleware(model=None) -> SummarizationMiddleware:
+class DisplaySafeSummarizationMiddleware(SummarizationMiddleware):
+    """Archive original messages before context compression and after model steps."""
+
+    def __init__(self, *args, session_id=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.session_id = session_id
+
+    @property
+    def name(self):
+        # Preserve the existing checkpoint node name for interrupted sessions.
+        return "SummarizationMiddleware"
+
+    async def _archive(self, state):
+        if self.session_id:
+            from app.agent.conversation_history import archive_messages
+            self._ensure_message_ids(state["messages"])
+            await archive_messages(self.session_id, state["messages"])
+
+    async def abefore_agent(self, state, runtime):
+        await self._archive(state)
+
+    async def abefore_model(self, state, runtime):
+        await self._archive(state)
+        return await super().abefore_model(state, runtime)
+
+    async def aafter_model(self, state, runtime):
+        await self._archive(state)
+
+    async def aafter_agent(self, state, runtime):
+        await self._archive(state)
+
+
+def build_summary_middleware(model=None, *, session_id=None) -> SummarizationMiddleware:
     """上下文压缩中间件：消息超过 context_max_messages 时摘要，保留最近 context_keep_messages 条。
 
     Args:
@@ -81,8 +113,9 @@ def build_summary_middleware(model=None) -> SummarizationMiddleware:
         from app.agent.model import build_llm
 
         model = build_llm()
-    return SummarizationMiddleware(
+    return DisplaySafeSummarizationMiddleware(
         model,
+        session_id=session_id,
         trigger=("messages", settings.context_max_messages),
         keep=("messages", settings.context_keep_messages),
     )
