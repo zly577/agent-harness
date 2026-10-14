@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param([Parameter(Mandatory = $true)][string]$WorkspaceUri, [string]$WorkspaceRoot, [string]$WebOrigin = 'http://127.0.0.1:8088', [switch]$ValidateOnly)
 $ErrorActionPreference = 'Stop'
 # New URLs carry a single-use ticket for the exact authorized directory.
@@ -7,7 +7,10 @@ if ($WorkspaceUri -match '^agent-harness-workspace://open/([0-9a-f]{64})/?$') {
     if ($WebOrigin -notmatch '^http://(?:127\.0\.0\.1|localhost):[0-9]{1,5}$' -or ([uri]$WebOrigin).Port -le 0) {
         throw 'Workspace callback must use a local HTTP origin.'
     }
-    $taskSelection = Invoke-RestMethod -Uri "$WebOrigin/api/v1/files/open-workspace/$taskTicket" -TimeoutSec 10
+    # FastAPI JSON responses use UTF-8 without a charset. Windows PowerShell
+    # 5.1 otherwise decodes them as Latin-1, corrupting Chinese folder names.
+    $taskResponse = Invoke-WebRequest -UseBasicParsing -Uri "$WebOrigin/api/v1/files/open-workspace/$taskTicket" -TimeoutSec 10
+    $taskSelection = [System.Text.Encoding]::UTF8.GetString($taskResponse.RawContentStream.ToArray()) | ConvertFrom-Json
     $taskInspect = & docker inspect agent-harness-backend-1 --format '{{json .Mounts}}' 2>$null
     if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect backend directory mounts.' }
     . (Join-Path $PSScriptRoot 'workspace-paths.ps1')

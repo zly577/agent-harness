@@ -37,12 +37,51 @@ foreach ($taskBadPath in @('/host/d-other/project', '/host/d/../outside', '/unmo
     Assert-Task $taskRejected 'Unsafe or unmounted container directory accepted.'
 }
 # Exercise the actual opener with stubbed HTTP and Docker: no Explorer launch.
-function global:Invoke-RestMethod { @{ directory = '/host/d/project/中文' } }
+function global:Invoke-WebRequest {
+    $taskBytes = [System.Text.Encoding]::UTF8.GetBytes('{"directory":"/host/d/project/中文"}')
+    @{ RawContentStream = [System.IO.MemoryStream]::new($taskBytes) }
+}
 function global:docker { $global:LASTEXITCODE = 0; ConvertTo-Json -InputObject $taskMounts -Compress }
 $taskOpened = & (Join-Path $taskRepo 'deploy/open-workspace.ps1') -WorkspaceUri "agent-harness-workspace://open/$taskTicket" -ValidateOnly
 Assert-Task ($taskOpened -eq 'D:\project\中文') 'Ticket-based opener did not resolve the selected directory.'
-Remove-Item Function:\Invoke-RestMethod
-Remove-Item Function:\docker
+Remove-Item Function:\Invoke-WebRequest
+# Real HTTP response deliberately omits charset, matching FastAPI. Run this
+# test under Windows PowerShell 5.1 as well as PowerShell 7.
+$taskSocket = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0)
+$taskSocket.Start()
+$taskPort = $taskSocket.LocalEndpoint.Port
+$taskSocket.Stop()
+$taskOrigin = "http://127.0.0.1:$taskPort"
+$taskServer = Start-Job -ArgumentList $taskOrigin -ScriptBlock {
+    param($Origin)
+    $listener = [System.Net.HttpListener]::new()
+    $listener.Prefixes.Add("$Origin/")
+    try {
+        $listener.Start()
+        'ready'
+        $context = $listener.GetContext()
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes('{"directory":"/host/d/project/中文"}')
+        $context.Response.ContentType = 'application/json'
+        $context.Response.ContentLength64 = $bytes.Length
+        $context.Response.OutputStream.Write($bytes, 0, $bytes.Length)
+        $context.Response.Close()
+    } finally { $listener.Close() }
+}
+try {
+    $taskReady = $false
+    for ($taskAttempt = 0; $taskAttempt -lt 100; $taskAttempt++) {
+        if ((Receive-Job $taskServer) -contains 'ready') { $taskReady = $true; break }
+        if ($taskServer.State -eq 'Failed') { throw 'HTTP fixture failed.' }
+        Start-Sleep -Milliseconds 100
+    }
+    Assert-Task $taskReady 'HTTP fixture did not start.'
+    $taskOpened = & (Join-Path $taskRepo 'deploy/open-workspace.ps1') -WorkspaceUri "agent-harness-workspace://open/$taskTicket" -WebOrigin $taskOrigin -ValidateOnly
+    Assert-Task ($taskOpened -eq 'D:\project\中文') 'UTF-8 HTTP workspace path was corrupted.'
+} finally {
+    Stop-Job $taskServer
+    Remove-Job $taskServer
+    Remove-Item Function:\docker
+}
 # Compile the exact embedded C# and check the COM interface is available on this
 # Windows installation. No Show call is made during automated validation.
 $taskSource = Get-Content -LiteralPath $taskPicker -Raw
