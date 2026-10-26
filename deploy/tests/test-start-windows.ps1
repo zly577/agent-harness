@@ -40,9 +40,11 @@ Assert-Task ($taskConfig.services.backend.environment.MCP_ENABLED -eq 'true') 'M
 Assert-Task (@($taskConfig.services.backend.volumes | Where-Object { $_.target -eq '/app/workspace' }).Count -eq 1) 'Host workspace bind missing.'
 Assert-Task ($taskConfig.services.backend.environment.ALLOW_REGISTRATION -eq 'false') 'Registration enabled.'
 
-& $taskEntry -Sandbox -SkipDesktopIntegration
+& $taskEntry -SkipDesktopIntegration
 $taskUp = $global:taskDockerCalls[$global:taskDockerCalls.Count - 1] -join ' '
-Assert-Task ($taskUp -match 'docker-compose.sandbox.yml' -and $taskUp -match 'up -d --build --wait') 'Sandbox startup args incorrect.'
+Assert-Task ($taskUp -match 'docker-compose.yml' -and $taskUp -notmatch 'docker-compose.sandbox.yml' -and $taskUp -match 'up -d --build --wait') 'Default startup must use the complete base deployment.'
+& $taskEntry -Sandbox -SkipDesktopIntegration
+Assert-Task (($global:taskDockerCalls[$global:taskDockerCalls.Count - 1] -join ' ') -eq $taskUp) 'Legacy -Sandbox must match default startup.'
 Assert-Task ((Get-Content -LiteralPath (Join-Path $taskFixture '.env') -Raw) -eq 'existing-config') 'Existing .env overwritten.'
 Assert-Task (-not (@($global:taskDockerCalls | Where-Object { $_[0] -eq 'run' }).Count)) 'Environment regenerated despite existing .env.'
 
@@ -78,7 +80,7 @@ foreach ($taskBadUri in @('https://example.com', 'agent-harness-workspace://open
 
 & $taskEntry -Action Down -Sandbox
 $taskDown = $global:taskDockerCalls[$global:taskDockerCalls.Count - 1] -join ' '
-Assert-Task ($taskDown -match 'docker-compose.sandbox.yml' -and $taskDown -match ' down$' -and $taskDown -notmatch ' -v') 'Shutdown does not preserve volumes.'
+Assert-Task ($taskDown -match 'docker-compose.yml' -and $taskDown -match ' down$' -and $taskDown -notmatch ' -v') 'Shutdown does not preserve volumes.'
 & $taskEntry -Action Status
 Assert-Task (($global:taskDockerCalls[$global:taskDockerCalls.Count - 1] -join ' ') -match ' ps$') 'Status args incorrect.'
 

@@ -11,8 +11,8 @@
 // 并在收到 401 时清凭证 + 通知界面回登录页。**SSE 流里的 401 也走同一条路径**，
 // 所以"后端重启导致凭证失效"时用户看到的是回登录页，而不是一个静默断掉的流。
 
-import { apiFetch, apiFetchRaw } from './api'
-import { createSseParser } from './sseParser'
+import { apiFetch, apiFetchRaw, getSessionVersion, assertCurrentSession } from './api.js'
+import { createSseParser } from './sseParser.js'
 
 /**
  * 发起 SSE 流式对话。
@@ -168,6 +168,7 @@ export async function stopRun(sessionId) {
 
 /** POST（或 GET）一个 SSE 端点并逐条派发事件。 */
 async function consumeStream(url, body, signal, onEvent, method = 'POST') {
+  const version = getSessionVersion()
   // apiFetchRaw 已经处理了 401（清凭证 + 通知回登录页）与非 2xx 的中文错误文案；
   // 这里只需要拿到 Response 自己读流。抛出的 ApiError 带 .status，调用方照旧可用。
   const resp = await apiFetchRaw(url, { method, body, signal })
@@ -175,7 +176,12 @@ async function consumeStream(url, body, signal, onEvent, method = 'POST') {
 
   const reader = resp.body.getReader()
   const decoder = new TextDecoder('utf-8')
-  const parser = createSseParser(onEvent)
+  let finished = false
+  const parser = createSseParser(event => {
+    assertCurrentSession(version)
+    if (event.event === 'done') finished = true
+    onEvent(event)
+  })
   try {
     while (true) {
       const { done, value } = await reader.read()
@@ -184,6 +190,19 @@ async function consumeStream(url, body, signal, onEvent, method = 'POST') {
     }
     parser.feed(decoder.decode())
     parser.finish()
+    if (!finished) {
+      const error = new Error('连接已中断，后台任务可能仍在运行，刷新页面可重新接回')
+      error.name = 'StreamDisconnectedError'
+      throw error
+    }
+  } catch (error) {
+    if (error.name === 'AbortError' || error.name === 'StaleSessionError') throw error
+    if (error.name !== 'StreamDisconnectedError') {
+      const disconnected = new Error('连接已中断，后台任务可能仍在运行，刷新页面可重新接回', { cause: error })
+      disconnected.name = 'StreamDisconnectedError'
+      throw disconnected
+    }
+    throw error
   } finally {
     // Closing a subscription leaves the backend run alive.
     await reader.cancel().catch(() => {})

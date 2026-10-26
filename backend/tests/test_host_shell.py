@@ -157,6 +157,19 @@ def test_output_limit_counts_utf8_bytes(tmp_path):
     assert result.truncated and result.output.startswith("中文\n")
 
 
+def test_native_large_stdout_and_stderr_are_drained_with_a_limit(backend):
+    script = Path(backend.cwd) / "large-output.py"
+    script.write_text("import sys\nsys.stdout.buffer.write(b'x' * 2_000_000)\n"
+                      "sys.stdout.flush()\nsys.stderr.buffer.write(b'y' * 2_000_000)\n"
+                      "sys.stderr.flush()\nsys.exit(7)\n", encoding="utf-8")
+    backend._max_output_bytes = 1000
+    result = backend.execute("& " + psquote(sys.executable) + " " + psquote(script), timeout=20)
+    assert result.exit_code == 7, result.output
+    assert result.truncated and result.output.startswith("x" * 1000)
+    assert "Output truncated at 1000 bytes" in result.output
+    assert len(result.output.encode("utf-8")) < 1200
+
+
 def test_positive_timeout_and_nonempty_command(tmp_path):
     backend = HostShellBackend(root_dir=tmp_path)
     assert backend.execute("  ").exit_code == 1

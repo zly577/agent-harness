@@ -34,6 +34,7 @@ POST /api/v1/chat/stream  body: {"message","session_id"}
 """
 import json
 import logging
+import asyncio
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
@@ -52,6 +53,7 @@ from app.schemas.chat import ChatRequest
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["chat-stream"])
+HEARTBEAT_SECONDS = 15.0
 
 #: SSE 响应头：关掉各级缓冲，保证事件逐条到达前端。
 SSE_HEADERS = {
@@ -69,8 +71,19 @@ def sse(obj: dict) -> str:
 
 async def stream_events(events):
     """把事件序列包成 SSE：异常转 error 事件，保证前端一定能收到收尾信号。"""
+    iterator = aiter(events)
+    pending = None
     try:
-        async for evt in events:
+        while True:
+            pending = asyncio.create_task(anext(iterator))
+            while not pending.done():
+                done, _ = await asyncio.wait({pending}, timeout=HEARTBEAT_SECONDS)
+                if not done:
+                    yield ": keep-alive\n\n"
+            try:
+                evt = pending.result()
+            except StopAsyncIteration:
+                break
             yield sse(evt)
         yield "event: done\ndata: {}\n\n"
     except Exception as e:  # 任何异常都要让前端知道，不能静默挂断连接
@@ -78,18 +91,23 @@ async def stream_events(events):
         # 过一遍脱敏：错误信息回给前端，而 SDK 报错里可能带 api_key
         yield sse({"type": "error", "detail": scrub_secrets(f"{type(e).__name__}: {e}")})
         yield "event: done\ndata: {}\n\n"
+    finally:
+        if pending is not None:
+            if not pending.done():
+                pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+        close = getattr(iterator, "aclose", None)
+        if close:
+            await close()
 
 
 async def stream_agent_events(events):
     """兼容旧调用：runtime 的 (kind, data) 流 → SSE（会把事件先映射成字典）。"""
-    try:
+    async def mapped():
         async for kind, data in events:
-            yield sse(to_sse_event(kind, data))
-        yield "event: done\ndata: {}\n\n"
-    except Exception as e:  # noqa: BLE001
-        logger.exception("[sse] stream failed")
-        yield sse({"type": "error", "detail": scrub_secrets(f"{type(e).__name__}: {e}")})
-        yield "event: done\ndata: {}\n\n"
+            yield to_sse_event(kind, data)
+    async for chunk in stream_events(mapped()):
+        yield chunk
 
 
 @router.post("/chat/stream")

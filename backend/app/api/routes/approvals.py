@@ -34,7 +34,7 @@ from sqlalchemy.orm import Session as OrmSession
 from app.agent import approvals, runtime
 from app.agent.runner import run_manager
 from app.api.deps import get_current_user, owned_session_or_404
-from app.api.routes.chat_stream import SSE_HEADERS, sse
+from app.api.routes.chat_stream import SSE_HEADERS, sse, stream_events
 from app.core.crypto import scrub_secrets
 from app.db.models import User
 from app.db.session import get_db
@@ -120,7 +120,7 @@ async def _resume_pending(session_id: str) -> str | None:
         # 走运行管理器：这本来就是该会话的一轮运行（状态诚实 + 可回放）。
         # 然后一直订阅到它收尾 —— 调用方（关闭人工介入开关）需要"中断确实已处理"。
         run = run_manager.start(session_id, runtime.resume_input(resume), user_id=owner)
-        async for _event in run_manager.subscribe(session_id, since=0):
+        async for _event in run_manager.subscribe(session_id, since=0, run=run):
             pass
     except Exception as e:
         return scrub_secrets(f"{type(e).__name__}: {e}")
@@ -210,9 +210,8 @@ async def decide(
             # since=起跑时的缓冲长度：只订阅**本次恢复**的增量。
             # 不回放缓冲 —— 那一轮在审批前已经堆了几千条事件，全量回放
             # 会把整个回合在前端重复渲染一遍。
-            async for evt in run_manager.subscribe(session_id, since=0):
-                yield sse(evt)
-            yield "event: done\ndata: {}\n\n"
+            async for chunk in stream_events(run_manager.subscribe(session_id, since=0, run=run)):
+                yield chunk
         finally:
             _state[session_id] = {"busy": False}
 
@@ -248,7 +247,6 @@ async def answer_question(
     async def events():
         yield sse({"type": "session", "session_id": session_id})
         yield sse({"type": "answer", "interrupt_id": req.interrupt_id, "cancelled": req.cancelled})
-        async for event in run_manager.subscribe(session_id, since=0):
-            yield sse(event)
-        yield "event: done\ndata: {}\n\n"
+        async for chunk in stream_events(run_manager.subscribe(session_id, since=0, run=run)):
+            yield chunk
     return StreamingResponse(events(), media_type="text/event-stream", headers=SSE_HEADERS)

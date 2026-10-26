@@ -88,6 +88,38 @@ exit 0
 """
 
 
+class _BoundedCapture:
+    """Drain a pipe without retaining unbounded command output in memory."""
+
+    def __init__(self, stream, limit: int):
+        self.stream, self.limit = stream, limit
+        self.data = bytearray()
+        self.total = 0
+        self.error = None
+        self.done = threading.Event()
+        self.lock = threading.Lock()
+        self.thread = threading.Thread(target=self._drain, name="harness-shell-output", daemon=True)
+        self.thread.start()
+
+    def _drain(self):
+        try:
+            while chunk := self.stream.read1(8192):
+                with self.lock:
+                    self.total += len(chunk)
+                    remaining = self.limit - len(self.data)
+                    if remaining > 0:
+                        self.data.extend(chunk[:remaining])
+        except (OSError, ValueError) as exc:
+            self.error = exc
+        finally:
+            self.stream.close()
+            self.done.set()
+
+    def snapshot(self):
+        with self.lock:
+            return bytes(self.data), self.total > len(self.data)
+
+
 class HostShellBackend(WorkspacePrefixMixin, LocalShellBackend):
     """Full-access file backend with native, noninteractive host command execution.
 
@@ -101,6 +133,8 @@ class HostShellBackend(WorkspacePrefixMixin, LocalShellBackend):
                  env: dict[str, str] | None = None, prefix: str | None = None,
                  windows_shell: str | None = None, max_output_bytes: int = 100_000) -> None:
         default_timeout = timeout if timeout is not None else (settings.sandbox_default_timeout_seconds or DEFAULT_EXECUTE_TIMEOUT)
+        if max_output_bytes <= 0:
+            raise ValueError("max_output_bytes must be positive")
         super().__init__(root_dir=root_dir, virtual_mode=virtual_mode,
                          timeout=default_timeout, inherit_env=inherit_env, env=env,
                          max_output_bytes=max_output_bytes)
@@ -182,6 +216,7 @@ class HostShellBackend(WorkspacePrefixMixin, LocalShellBackend):
         if effective_timeout <= 0:
             raise ValueError(f"timeout must be positive, got {effective_timeout}")
         process = None
+        captures = []
         try:
             with tempfile.TemporaryDirectory(prefix="harness-shell-") as temporary:
                 args, shell = self._command_args(command, Path(temporary))
@@ -189,6 +224,8 @@ class HostShellBackend(WorkspacePrefixMixin, LocalShellBackend):
                 process = subprocess.Popen(args, shell=shell, cwd=str(self.cwd), env=self._env,
                                            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                            **options)
+                captures = [_BoundedCapture(process.stdout, self._max_output_bytes),
+                            _BoundedCapture(process.stderr, self._max_output_bytes)]
                 deadline = time.monotonic() + effective_timeout
                 reason = None
                 while True:
@@ -199,14 +236,26 @@ class HostShellBackend(WorkspacePrefixMixin, LocalShellBackend):
                     if remaining <= 0:
                         reason = f"Error: Command timed out after {effective_timeout} seconds."
                         break
-                    try:
-                        stdout, stderr = process.communicate(timeout=min(remaining, 0.1))
-                        return self._response(stdout, stderr, process.returncode)
-                    except subprocess.TimeoutExpired:
-                        continue
-                self._terminate(process)
-                stdout, stderr = process.communicate(timeout=2)
-                return self._response(stdout, stderr, 130 if cancelled and cancelled.is_set() else 124, reason)
+                    if process.poll() is not None and all(capture.done.is_set() for capture in captures):
+                        break
+                    if process.poll() is None:
+                        try:
+                            process.wait(timeout=min(remaining, 0.1))
+                        except subprocess.TimeoutExpired:
+                            pass
+                    else:
+                        captures[0].done.wait(min(remaining, 0.05))
+                        captures[1].done.wait(min(remaining, 0.05))
+                if reason:
+                    self._terminate(process)
+                for capture in captures:
+                    capture.thread.join(timeout=1)
+                stdout, out_truncated = captures[0].snapshot()
+                stderr, err_truncated = captures[1].snapshot()
+                code = (130 if cancelled and cancelled.is_set() else 124) if reason else process.returncode
+                if any(capture.error for capture in captures):
+                    code, reason = 1, "Error: Could not read command output."
+                return self._response(stdout, stderr, code, reason, truncated=out_truncated or err_truncated)
         except Exception as exc:
             return ExecuteResponse(output=f"Error: executing command ({type(exc).__name__}): {exc}", exit_code=1, truncated=False)
         finally:
@@ -214,11 +263,12 @@ class HostShellBackend(WorkspacePrefixMixin, LocalShellBackend):
                 if process.poll() is None:
                     process.kill()
                     process.wait(timeout=5)
-                for stream in (process.stdout, process.stderr):
-                    if stream:
-                        stream.close()
+                if not captures:
+                    for stream in (process.stdout, process.stderr):
+                        if stream:
+                            stream.close()
 
-    def _response(self, stdout: bytes, stderr: bytes, code: int, reason: str | None = None) -> ExecuteResponse:
+    def _response(self, stdout: bytes, stderr: bytes, code: int, reason: str | None = None, *, truncated: bool = False) -> ExecuteResponse:
         parts = [reason] if reason else []
         if stdout:
             parts.append(decode_shell_output(stdout))
@@ -226,7 +276,7 @@ class HostShellBackend(WorkspacePrefixMixin, LocalShellBackend):
             parts.extend(f"[stderr] {line}" for line in decode_shell_output(stderr).strip().splitlines())
         output = "\n".join(parts) or "<no output>"
         encoded = output.encode("utf-8")
-        truncated = len(encoded) > self._max_output_bytes
+        truncated = truncated or len(encoded) > self._max_output_bytes
         if truncated:
             output = encoded[:self._max_output_bytes].decode("utf-8", errors="ignore")
             output += f"\n\n... Output truncated at {self._max_output_bytes} bytes."

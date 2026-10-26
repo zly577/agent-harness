@@ -28,6 +28,19 @@ const unauthorizedHandlers = new Set()
 
 let _token = ''
 let _user = null
+let sessionVersion = 0
+
+export class StaleSessionError extends Error {
+  constructor() {
+    super('该请求所属的登录会话已失效')
+    this.name = 'StaleSessionError'
+  }
+}
+
+export const getSessionVersion = () => sessionVersion
+export function assertCurrentSession(version) {
+  if (version !== sessionVersion) throw new StaleSessionError()
+}
 
 function safeParse(raw) {
   try {
@@ -70,11 +83,14 @@ export function isLoggedIn() {
 
 /** 登录成功 / 校验通过后写入。 */
 export function setSession(token, user) {
+  if ((token || '') !== _token || (user?.id || null) !== (_user?.id || null)) sessionVersion += 1
   _token = token || ''
   _user = user || null
   try {
     if (_token) window.localStorage.setItem(TOKEN_KEY, _token)
+    else window.localStorage.removeItem(TOKEN_KEY)
     if (_user) window.localStorage.setItem(USER_KEY, JSON.stringify(_user))
+    else window.localStorage.removeItem(USER_KEY)
   } catch {
     /* localStorage 不可用（隐私模式）时只保留内存态 */
   }
@@ -87,6 +103,7 @@ export function setUser(user) {
 
 /** 清掉登录态。 */
 export function clearSession() {
+  sessionVersion += 1
   _token = ''
   _user = null
   try {
@@ -168,6 +185,7 @@ function describeError(status, body) {
  * @param {boolean} [opts.silent401] 401 时不触发全局登出（用于 /auth/me 的启动探测）
  */
 export async function apiFetchRaw(path, opts = {}) {
+  const version = getSessionVersion()
   const { method = 'GET', body, headers = {}, signal, skipAuth = false, silent401 = false } = opts
 
   const finalHeaders = { ...headers }
@@ -180,6 +198,7 @@ export async function apiFetchRaw(path, opts = {}) {
   }
 
   const resp = await fetch(path, init)
+  assertCurrentSession(version)
 
   if (resp.status === 401) {
     // 先读出 detail（用于提示），再决定要不要动全局登录态
@@ -191,6 +210,7 @@ export async function apiFetchRaw(path, opts = {}) {
     } catch {
       /* 响应不是 JSON（比如网关返回的 HTML）→ 用默认文案 */
     }
+    assertCurrentSession(version)
     if (skipAuth) {
       // 登录/注册接口自己返回的 401（例如密码错）**不是**"凭证失效"，
       // 绝不能顺手把全局登录态清掉 —— 否则用户在登录页输错一次密码，
@@ -224,6 +244,7 @@ export async function apiFetchRaw(path, opts = {}) {
         body = null // 非 JSON（HTML/纯文本）：沿用状态码兜底文案
       }
     }
+    assertCurrentSession(version)
     const message =
       resp.status >= 500 && !text.trim()
         ? '暂时无法连接服务，请稍后再试'
@@ -241,9 +262,12 @@ export async function apiFetchRaw(path, opts = {}) {
  * @throws {ApiError} 非 2xx
  */
 export async function apiFetch(path, opts = {}) {
+  const version = getSessionVersion()
   const resp = await apiFetchRaw(path, opts)
+  assertCurrentSession(version)
   if (resp.status === 204) return null
   const text = await resp.text()
+  assertCurrentSession(version)
   if (!text) return null
   try {
     return JSON.parse(text)
@@ -268,11 +292,13 @@ export async function fetchMe() {
 }
 
 export async function login(email, password) {
+  const version = getSessionVersion()
   const data = await apiFetch('/api/v1/auth/login', {
     method: 'POST',
     body: { email, password },
     skipAuth: true,
   })
+  assertCurrentSession(version)
   setSession(data.access_token, data.user)
   return data
 }

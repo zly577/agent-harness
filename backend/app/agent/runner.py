@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 #: 太短：用户刷新慢一点就看不到刚结束的回答；太长：内存里长期挂着大数组。
 KEEP_SECONDS = 180
 SUBSCRIBER_QUEUE_SIZE = 1024
-RunStatus = Literal["running", "done", "error", "stopped", "awaiting_approval", "awaiting_input"]
+RunStatus = Literal["running", "stopping", "done", "error", "stopped", "awaiting_approval", "awaiting_input"]
 
 
 class RunConflict(RuntimeError):
@@ -97,7 +97,7 @@ class SessionRun:
 
     @property
     def running(self) -> bool:
-        return self.status == "running"
+        return self.status in {"running", "stopping"}
 
     @property
     def suspended(self) -> bool:
@@ -218,25 +218,33 @@ class RunManager:
             self._publish(run, {"type": "stopped", "detail": "已按你的要求停止本轮回答"})
             self._finish(run)
 
-    async def aclose(self, timeout: float = 5.0) -> None:
+    async def aclose(self, timeout: float = 10.0) -> bool:
         """Stop producers before application storage is closed."""
         runs = list(self._runs.values())
         tasks = [run.task for run in runs if run.task and not run.task.done()]
-        for task in tasks:
-            task.cancel()
+        for run in runs:
+            if run.task in tasks:
+                self.stop(run.session_id)
         if tasks:
-            await asyncio.wait(tasks, timeout=timeout)
+            _, pending = await asyncio.wait(tasks, timeout=timeout)
+            if pending:
+                logger.error("[shutdown] %d task(s) still stopping; storage must remain open", len(pending))
+                return False
         for run in runs:
             if run.expiry_handle:
                 run.expiry_handle.cancel()
         self._runs.clear()
+        return True
 
     def stop(self, session_id: str) -> bool:
         """用户明确停止：取消运行 task。返回是否真的有东西被停。"""
         run = self._runs.get(session_id)
         if not run or not run.running:
             return False
+        if run.status == "stopping":
+            return True  # Do not cancel the task again while it is cleaning up.
         if run.task and not run.task.done():
+            run.status = "stopping"
             run.task.cancel()
             logger.info("[runner] 会话 %s 的运行已按用户要求停止", session_id)
             return True
@@ -251,11 +259,14 @@ class RunManager:
             return False
         try:
             await asyncio.wait_for(asyncio.shield(run.task), timeout)
-        except (asyncio.CancelledError, asyncio.TimeoutError):
-            pass
+        except asyncio.TimeoutError:
+            return False
+        except asyncio.CancelledError:
+            if not run.task.done():
+                raise
         except Exception:  # noqa: BLE001
             pass
-        return True
+        return run.task.done()
 
     # ---------- 驱动 ----------
 

@@ -1,37 +1,7 @@
-# 按需叠加：docker compose -f docker-compose.yml -f docker-compose.sandbox.yml up -d --build
+# 兼容旧部署命令；OpenSandbox 服务现已包含在 docker-compose.yml 中。
+# 新部署直接运行 docker compose up -d --build，无需叠加本文件。
 services:
   backend:
     environment:
       SANDBOX_ENABLED: "true"
       SANDBOX_DOMAIN: opensandbox:8080
-    depends_on:
-      opensandbox:
-        condition: service_healthy
-
-  opensandbox:
-    image: opensandbox/server:release-1.1.0
-    restart: unless-stopped
-    environment:
-      SANDBOX_CONFIG_PATH: /etc/opensandbox/config.toml
-      OPENSANDBOX_SERVER_API_KEY: ${SANDBOX_API_KEY:?请先生成根目录 .env}
-    configs:
-      - source: opensandbox_config
-        target: /etc/opensandbox/config.toml
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - sandbox_data:/var/lib/opensandbox
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=4)"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 20s
-
-configs:
-  opensandbox_config:
-    file: ./deploy/docker/opensandbox.toml
-
-volumes:
-  sandbox_data:

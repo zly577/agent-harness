@@ -54,10 +54,11 @@ services:
       HARNESS_ALLOW_FULL_ACCESS: "false"
       HITL_ENABLED: "true"
       MCP_ENABLED: ${MCP_ENABLED:-true}
-      SANDBOX_ENABLED: ${SANDBOX_ENABLED:-false}
-      SANDBOX_DOMAIN: ${SANDBOX_DOMAIN:-host.docker.internal:8080}
-      SANDBOX_PROTOCOL: ${SANDBOX_PROTOCOL:-http}
-      SANDBOX_API_KEY: ${SANDBOX_API_KEY:-}
+      # Docker 部署始终使用内置沙箱，不受旧 .env 中的关闭开关或宿主机地址影响。
+      SANDBOX_ENABLED: "true"
+      SANDBOX_DOMAIN: opensandbox:8080
+      SANDBOX_PROTOCOL: http
+      SANDBOX_API_KEY: ${SANDBOX_API_KEY:?请先生成根目录 .env}
       SANDBOX_IMAGE: ${SANDBOX_IMAGE:-python:3.11}
       SANDBOX_USE_SERVER_PROXY: "true"
       SANDBOX_SYNC_ENABLED: "true"
@@ -71,6 +72,8 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+      opensandbox:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)"]
       interval: 10s
@@ -78,6 +81,27 @@ services:
       retries: 15
       start_period: 60s
     stop_grace_period: 30s
+
+  opensandbox:
+    image: opensandbox/server:release-1.1.0
+    restart: unless-stopped
+    environment:
+      SANDBOX_CONFIG_PATH: /etc/opensandbox/config.toml
+      OPENSANDBOX_SERVER_API_KEY: ${SANDBOX_API_KEY:?请先生成根目录 .env}
+    configs:
+      - source: opensandbox_config
+        target: /etc/opensandbox/config.toml
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - sandbox_data:/var/lib/opensandbox
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
   web:
     build:
@@ -95,8 +119,13 @@ services:
       timeout: 5s
       retries: 5
 
+configs:
+  opensandbox_config:
+    file: ./deploy/docker/opensandbox.toml
+
 volumes:
   mysql_data:
   backend_data:
   workspace_data:
   backend_logs:
+  sandbox_data:

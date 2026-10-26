@@ -24,6 +24,7 @@ reloader 一直等它 → 父进程还占着监听端口、连接也能建立，
 所以 lifespan 收尾会调用本模块的 `aclose()`（见 app/main.py）。
 """
 from pathlib import Path
+import asyncio
 
 import aiosqlite
 from langchain.agents.middleware import SummarizationMiddleware
@@ -38,34 +39,64 @@ logger = logging.getLogger(__name__)
 _saver: AsyncSqliteSaver | None = None
 _store: AsyncSqliteStore | None = None
 _conn: aiosqlite.Connection | None = None
+_resource_lock: asyncio.Lock | None = None
+_resource_loop = None
 
 
-async def _ensure_conn() -> aiosqlite.Connection:
-    """打开 SQLite 异步连接（进程内复用，绑定首次调用所在 event loop）。"""
+def _storage_lock() -> asyncio.Lock:
+    # The server has one loop; tests also open/close storage in sequential loops.
+    global _resource_lock, _resource_loop
+    loop = asyncio.get_running_loop()
+    if _resource_loop is not loop:
+        if _resource_lock is not None and _resource_lock.locked():
+            raise RuntimeError("Storage is already initializing in another event loop")
+        _resource_loop, _resource_lock = loop, asyncio.Lock()
+    return _resource_lock
+
+
+async def _open_conn_unlocked() -> aiosqlite.Connection:
     global _conn
     if _conn is None:
         path = Path(settings.sqlite_path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        _conn = await aiosqlite.connect(str(path))
+        opening = asyncio.ensure_future(aiosqlite.connect(str(path)))
+        try:
+            connection = await asyncio.shield(opening)
+        except asyncio.CancelledError:
+            # aiosqlite starts a worker thread during connect; do not orphan it.
+            connection = await opening
+            await connection.close()
+            raise
+        _conn = connection
     return _conn
+
+
+async def _ensure_conn() -> aiosqlite.Connection:
+    """打开 SQLite 异步连接（进程内复用，绑定首次调用所在 event loop）。"""
+    async with _storage_lock():
+        return await _open_conn_unlocked()
 
 
 async def get_checkpointer() -> AsyncSqliteSaver:
     """langgraph 异步 checkpointer：消息历史 + 会话执行态持久化。"""
     global _saver
-    if _saver is None:
-        _saver = AsyncSqliteSaver(await _ensure_conn())
-        await _saver.setup()
-    return _saver
+    async with _storage_lock():
+        if _saver is None:
+            saver = AsyncSqliteSaver(await _open_conn_unlocked())
+            await saver.setup()
+            _saver = saver
+        return _saver
 
 
 async def get_store() -> AsyncSqliteStore:
     """langgraph 异步 store：短期记忆（键值存储）。"""
     global _store
-    if _store is None:
-        _store = AsyncSqliteStore(await _ensure_conn())
-        await _store.setup()
-    return _store
+    async with _storage_lock():
+        if _store is None:
+            store = AsyncSqliteStore(await _open_conn_unlocked())
+            await store.setup()
+            _store = store
+        return _store
 
 
 class DisplaySafeSummarizationMiddleware(SummarizationMiddleware):
@@ -131,14 +162,15 @@ async def aclose() -> bool:
     """
     global _conn, _saver, _store
 
-    conn, _conn = _conn, None
-    _saver = None
-    _store = None
-    if conn is None:
-        return False
-    try:
-        await conn.close()
-        logger.info("[context] aiosqlite 连接已关闭（进程可以正常退出了）")
-    except Exception as e:  # noqa: BLE001 收尾失败不能让关闭流程崩掉
-        logger.warning("[context] 关闭 aiosqlite 连接失败: %s", e)
-    return True
+    async with _storage_lock():
+        conn, _conn = _conn, None
+        _saver = None
+        _store = None
+        if conn is None:
+            return False
+        try:
+            await conn.close()
+            logger.info("[context] aiosqlite 连接已关闭（进程可以正常退出了）")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[context] 关闭 aiosqlite 连接失败: %s", e)
+        return True

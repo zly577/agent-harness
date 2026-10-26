@@ -144,7 +144,8 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         from app.agent.runner import run_manager
-        await run_manager.aclose()
+        if await run_manager.aclose() is False:
+            raise RuntimeError("后台任务仍在停止，未关闭存储连接；请检查仍在运行的命令")
         await _close_agent_storage()
 
 

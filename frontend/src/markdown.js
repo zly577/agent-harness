@@ -11,6 +11,7 @@ import dos from 'highlight.js/lib/languages/dos'
 import powershell from 'highlight.js/lib/languages/powershell'
 import { boundedUrlExtension, boundedUrlTokenizer } from './chatPresentation'
 import katex from 'katex'
+import { createRenderCache } from './renderCache'
 import 'katex/dist/katex.min.css'
 
 hljs.registerLanguage('dos', dos)
@@ -189,8 +190,9 @@ function injectMath(html, mathStore) {
 // ---------------------------------------------------------------------------
 // 三、对外入口（带记忆化：流式输出会反复以同一段文本调用）
 // ---------------------------------------------------------------------------
-const cache = new Map()
-const CACHE_MAX = 240
+const cache = createRenderCache()
+
+export function clearMarkdownCache() { cache.clear() }
 
 export function renderMarkdown(text) {
   if (!text) return ''
@@ -207,7 +209,6 @@ export function renderMarkdown(text) {
   const html = DOMPurify.sanitize(marked.parse(src))
   const out = injectMath(html, mathStore)
 
-  if (cache.size >= CACHE_MAX) cache.clear()
   cache.set(text, out)
   return out
 }

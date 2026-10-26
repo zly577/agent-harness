@@ -2,11 +2,11 @@
 
 ## 1. 部署内容
 
-基础模式：Nginx/Vue 前端 + FastAPI 后端 + MySQL 8.0。可选模式额外启动 OpenSandbox 服务，由它创建会话执行容器。
+默认部署完整的四个服务：Nginx/Vue 前端、FastAPI 后端、MySQL 8.0 和 OpenSandbox。OpenSandbox 创建每会话的临时执行容器，支持沙箱代码执行，无需额外启用步骤。
 
 不需要在宿主机安装 Conda、Node、MySQL，也不需要运行任何 .bat 或 systemd 安装脚本。首次构建需要从 Docker Hub、PyPI、npm 下载依赖。
 
-支持 Docker Engine + Compose v2（Linux）或 Docker Desktop（Windows/macOS，Linux 容器）。建议至少 4GB 可用内存；启用沙箱时每个沙箱默认还有 2Gi 内存额度，应按并发增加资源。
+支持 Docker Engine + Compose v2（Linux）或 Docker Desktop（Windows/macOS，Linux 容器）。建议至少 4GB 可用内存；每个执行沙箱默认还有 2Gi 内存额度，应按并发增加资源。
 
 ## 2. 获取代码与生成配置
 
@@ -51,7 +51,7 @@ docker run --rm --user "$(id -u):$(id -g)" --mount "type=bind,source=$(pwd),targ
 
 根目录 `.env` 专用于 Compose；`backend/.env` 属于本机开发，**不会打进镜像，也不会用于 Docker 启动**。添加其他后端配置时，需要同时在 Compose 的 backend.environment 显式传入。
 
-## 3. 启动基础服务
+## 3. 启动完整服务
 
 Windows 个人电脑如果需要自动读取全部当前可用的本地硬盘/移动盘、切换完全访问、打开本机工作区，可改用 `powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\start-windows.ps1`。默认文件工具只读磁盘，完全访问可写并使用后端容器的 LocalShell；详细说明见 [README 的 Windows 个人部署](../README.md#windows-个人部署自动读取本机磁盘)。其他平台及多人部署使用本节的基础命令。
 
@@ -60,7 +60,7 @@ docker compose up -d --build
 docker compose ps
 ```
 
-首次安装依赖、MySQL 初始化和健康检查需要时间。顺序为：MySQL 可用 → 后端迁移数据库并引导管理员 → 前端启动。后端使用非 root 用户、一个 worker。
+首次安装依赖、MySQL 初始化和健康检查需要时间。顺序为：MySQL 与 OpenSandbox 健康 → 后端迁移数据库并引导管理员 → 前端启动。`docker compose ps` 应列出 `mysql`、`opensandbox`、`backend`、`web` 四个服务。后端使用非 root 用户、一个 worker。
 
 打开 **http://localhost:8088**。使用根目录 `.env` 中的管理员账户登录，然后：
 
@@ -75,7 +75,7 @@ docker compose ps
 python deploy/smoke-test.py
 ```
 
-它检查页面、健康接口、管理员登录与当前用户，并确认注册策略和 full 模式禁用状态。它不会调用模型或修改用户文件。
+它检查页面、健康接口、管理员登录、注册与权限策略，并从后端实际创建临时沙箱、运行 Python、核对输出，最后销毁测试容器。它不会调用模型或修改用户文件。Windows 个人部署运行 `python deploy/smoke-test.py --personal`，以检查允许手动切换 full 的个人部署策略。
 
 Windows 个人部署点击侧栏「新建工作区」会调用 Windows 原生文件夹选择窗口（带地址栏、导航和新建文件夹功能）。`start-windows.ps1` 会自动注册本机协议；已有部署更新后运行 `powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\register-workspace.ps1` 更新注册。首次使用请允许浏览器打开 Agent Harness。选中的宿主目录会自动转换成对应容器挂载路径；未挂载的目录无法选择。目录回传使用短时一次性票据，不传递登录令牌。
 
@@ -83,18 +83,18 @@ Windows 个人部署点击侧栏「新建工作区」会调用 Windows 原生文
 
 普通 Docker 部署或远程浏览器访问使用网页目录选择器，可在当前用户的持久化工作区中新建文件夹。原生窗口未出现时，点击等待界面的「使用网页选择」也可继续。
 
-基础模式支持对话、消息历史和工作区文件工具，`execute` 会提示沙箱未启用。启用完整代码执行见下一节。
+默认部署支持对话、消息历史、工作区文件工具和 OpenSandbox 代码执行。页面或 `/health` 可用不能代替完整冒烟检查。
 
-## 4. 启用 OpenSandbox
+## 4. 默认启用的 OpenSandbox
 
-在根目录 `.env` 中保留生成的 `SANDBOX_API_KEY`。运行：
+在根目录 `.env` 中保留生成的 `SANDBOX_API_KEY`。标准启动命令已经包含 OpenSandbox：
 
 ```sh
-docker compose -f docker-compose.yml -f docker-compose.sandbox.yml up -d --build
-docker compose -f docker-compose.yml -f docker-compose.sandbox.yml ps
+docker compose up -d --build
+docker compose ps
 ```
 
-叠加文件会自动设置 `SANDBOX_ENABLED=true` 和 `SANDBOX_DOMAIN=opensandbox:8080`，不用手动更改这两项。后续启动、更新、关闭也使用同样的两个 `-f` 参数。
+基础 Compose 固定传入 `SANDBOX_ENABLED=true`、`SANDBOX_DOMAIN=opensandbox:8080` 和 `SANDBOX_PROTOCOL=http`，不会被旧 `.env` 中的 `false` 或宿主机地址覆盖。Windows 入口不再要求 `-Sandbox`。旧 `docker-compose.sandbox.yml` 和 `-Sandbox` 参数只为兼容旧命令保留；后续启动、更新、关闭都不再需要它们。
 
 OpenSandbox 的生命周期服务不向宿主机发布管理端口；后端经 Compose 内网连接它。执行容器由它通过 Docker socket 创建，按 OpenSandbox 官方的容器代理方案，经过 `host.docker.internal` 访问执行端点。服务镜像固定为官方推荐修复此网络路径的 `opensandbox/server:release-1.1.0`。
 
@@ -115,22 +115,13 @@ docker pull opensandbox/execd:v1.1.0
 - `python:3.11` 沙箱只带基础 Python。需要 pandas、文档工具等时构建自己的沙箱镜像，把根目录 `.env` 的 `SANDBOX_IMAGE` 改为该镜像名。沙箱 Python 和后端 Python 是两套环境。
 - 普通服务器 Compose 不启用「完全访问」；Windows 个人入口允许切换。该模式绕过 OpenSandbox，在后端容器里执行命令，不能当作多人部署的隔离方案。
 
-也可以使用**已有或独立机器上的 OpenSandbox**：只启动基础 Compose，把根目录 `.env` 设置为：
-
-```dotenv
-SANDBOX_ENABLED=true
-SANDBOX_DOMAIN=你的沙箱服务地址:8080
-SANDBOX_PROTOCOL=http
-SANDBOX_API_KEY=与服务端一致的密钥
-```
-
-然后运行 `docker compose up -d`。同机服务可用 `host.docker.internal:8080`，但服务端必须监听后端容器能访问的接口；`127.0.0.1` 在后端容器内表示后端容器自身。
+标准 Docker 部署统一使用内置 OpenSandbox。如需接入独立服务，需自行提供 Compose 覆盖文件调整后端地址、协议和密钥，并重新验证容器网络及执行链路；仅修改根目录 `.env` 的 `SANDBOX_DOMAIN` 不会改变标准部署。
 
 参考：[OpenSandbox 单机网络说明](https://open-sandbox.ai/architecture/network/single-host-network)、[官方 Compose 示例](https://github.com/opensandbox-group/OpenSandbox/blob/main/server/docker-compose.example.yaml)、[配置参考](https://open-sandbox.ai/getting-started/configuration)。
 
 ## 5. 日常管理
 
-基础模式：
+四个服务使用同一组管理命令：
 
 ```sh
 docker compose logs -f backend
@@ -151,7 +142,7 @@ git pull
 docker compose up -d --build
 ```
 
-启用沙箱时，以上 Compose 命令都加上两个 `-f` 参数。后端启动会自动执行 Alembic 迁移；旧版本回退前必须确认数据库迁移兼容，必要时从整套备份恢复。
+从旧版升级时保留原 `.env` 和数据卷。确认 `.env` 中有非空 `SANDBOX_API_KEY`；若旧配置缺少这一项，只补充随机密钥，不要重新生成整份配置。后端启动会自动执行 Alembic 迁移；旧版本回退前必须确认数据库迁移兼容，必要时从整套备份恢复。
 
 ## 6. 数据与备份
 
@@ -161,7 +152,7 @@ docker compose up -d --build
 | `backend_data` | SQLite 消息历史、checkpoint、store |
 | `workspace_data` | 按 user_id 划分的工作区与长期记忆 |
 | `backend_logs` | 后端滚动日志 |
-| `sandbox_data`（可选） | OpenSandbox 服务状态；不替代用户工作区备份 |
+| `sandbox_data` | OpenSandbox 服务状态；不替代用户工作区备份 |
 
 Windows 个人入口把 `/app/workspace` 改为绑定仓库的 `workspace/`；此时需备份本机整个 `workspace` 目录，旧 `workspace_data` 卷只保留切换前的数据。首次切换会停止旧后端并从默认项目名的旧卷复制数据，不覆盖已有文件，也不删除旧卷。
 
@@ -172,14 +163,14 @@ Windows 个人入口把 `/app/workspace` 改为绑定仓库的 `workspace/`；�
 ```sh
 mkdir -p backups
 docker compose stop
-for volume in mysql_data backend_data workspace_data backend_logs; do
+for volume in mysql_data backend_data workspace_data backend_logs sandbox_data; do
   docker run --rm --mount "type=volume,source=agent-harness_${volume},target=/data,readonly" --mount "type=bind,source=$(pwd)/backups,target=/backup" alpine:3.22 tar -czf "/backup/${volume}.tar.gz" -C /data .
 done
 cp .env backups/deployment.env
 docker compose start
 ```
 
-启用沙箱时，停止/启动使用两个 `-f` 参数，卷列表加上 `sandbox_data`。本命令假设默认项目名，执行前用 `docker volume ls` 确认实际名称。备份目录含密钥与用户文件，需限制访问并复制到另一台机器。
+本命令假设默认项目名，执行前用 `docker volume ls` 确认实际名称。备份目录含密钥与用户文件，需限制访问并复制到另一台机器。
 
 恢复时先停止服务，把对应归档解压回**对应卷**，恢复同一份 `.env`，然后启动。MySQL 的物理卷备份应恢复到兼容的 MySQL 8.0 版本。数据库、SQLite、workspace 和 Fernet 密钥必须配套；不要只拷贝聊天 SQLite 文件。
 
@@ -187,7 +178,7 @@ docker compose start
 
 ## 7. 给其他人部署和对外发布
 
-你需要提交这些文件：前后端 Dockerfile、两套 Compose、.dockerignore、根目录 .env.example、deploy/init-env.py、deploy/docker 配置、部署说明，以及禁止 full 的代码修改。**不要提交生成的 .env、数据卷、workspace、API Key。**
+你需要提交这些文件：前后端 Dockerfile、默认 Compose、兼容旧命令的沙箱叠加文件、.dockerignore、根目录 .env.example、deploy/init-env.py、deploy/docker 配置、部署说明，以及禁止 full 的代码修改。**不要提交生成的 .env、数据卷、workspace、API Key。**
 
 其他人只需克隆更新后的仓库、生成各自的配置、启动 Compose，并在网页填自己的模型信息。他们不需要你本机的盘符、Conda 环境或 .bat。
 
@@ -203,12 +194,10 @@ docker compose start
 - **页面能开但模型不可用**：登录后配置个人模型，根目录没有系统级 DeepSeek Key 是正常的。
 - **SSE 不流式**：检查外层反向代理也关闭缓冲并增加读取超时；项目自带 Nginx 已配置。
 - **管理员密码无效**：引导密码只用于 users 表为空时创建账户；已有账户需通过改密码接口处理。
-- **execute 不可用**：基础模式默认关闭；沙箱模式检查 OpenSandbox 日志、镜像下载和代理端点连通性。
+- **execute 不可用**：默认部署应启动 OpenSandbox；检查四个服务状态、`docker compose logs opensandbox backend`、镜像下载和代理端点连通性，再运行完整冒烟检查。
 - **改 full 返回 400**：Docker 部署主动禁用，使用 OpenSandbox 执行代码。
 
-GitHub 的 `Docker smoke` workflow 验证基础镜像构建、服务启动、健康检查与登录，并静态校验沙箱叠加配置。它不调用真实模型，也不宣称验证 OpenSandbox 端到端执行。
-
-GitHub CI 已验证基础 Docker 构建、启动与登录。Windows 入口在 CI 中使用替身 Docker 检查配置、升级命令和协议路径校验，不会挂载 CI 磁盘或打开资源管理器；真实桌面协议打开与 OpenSandbox 端到端执行需要在部署者电脑上验证。
+GitHub 的 `Docker smoke` workflow 构建并启动默认四个服务，检查新配置和旧开关兼容性，验证页面、登录和真实 OpenSandbox Python 执行。检查不调用真实模型或 SMTP。Windows 入口在 CI 中使用替身 Docker 检查配置、升级命令和协议路径校验，不会挂载 CI 磁盘或打开资源管理器；真实桌面协议打开仍需在部署者电脑上验证。
 
 
 常见发件邮箱预设（QQ、163、企业邮箱、微软 OAuth）及连接/收信验证步骤见 [邮件服务配置](README-smtp.md)。

@@ -1,7 +1,7 @@
 # Windows PowerShell 5.1 / PowerShell 7. No Python or .bat required.
 [CmdletBinding()]
 param(
-    [switch]$Sandbox,
+    [switch]$Sandbox, # Compatibility only: Docker deployments always enable OpenSandbox.
     [switch]$ConfigureOnly,
     [switch]$SkipDesktopIntegration,
     [ValidateSet('Up', 'Down', 'Status', 'Logs')]
@@ -142,7 +142,6 @@ try {
         }
     }
     $taskComposeArgs = @('compose', '-f', 'docker-compose.yml')
-    if ($Sandbox) { $taskComposeArgs += @('-f', 'docker-compose.sandbox.yml') }
     $taskComposeArgs += @('-f', 'docker-compose.host.generated.yml')
     switch ($Action) {
         'Up' {

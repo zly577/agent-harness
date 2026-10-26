@@ -3,6 +3,7 @@
 !backend/
 !backend/Dockerfile
 !backend/requirements.txt
+!backend/requirements-lock.txt
 !backend/alembic.ini
 !backend/app/**
 !backend/configs/**

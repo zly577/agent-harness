@@ -140,7 +140,7 @@ export function useMessageEvents({ messages, sessionId, sessionStates, approval 
       if (t.status === 'running' || t.status === 'generating') {
         t.status = 'interrupted'
         t.ok = null
-        t.reason = '本轮被中断，未收到结果'
+        t.reason = msg.connectionLost ? '连接断开，后台状态待确认' : '本轮被中断，未收到结果'
         if (!t.result) t.result = '（本轮运行被中断，工具没有返回结果）'
         orphan += 1
       }

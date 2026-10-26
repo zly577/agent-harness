@@ -1,5 +1,13 @@
 import { nextTick, ref, watch } from 'vue'
 
+export function scrollSignature(messages) {
+  const last = messages.at(-1)
+  if (!last) return [messages.length]
+  return [messages.length, last.content?.length, last.thinking?.length, last.streaming,
+    ...(last.toolCalls || []).flatMap(tool => [tool.id, tool.status, tool.result?.length, tool.progress?.chars]),
+    ...(last.delegations || []).flatMap(task => [task.id, task.status, task.stream?.length, task.thinking?.length, task.result?.length, task.tools?.length])]
+}
+
 export function useMessageScroll(messages, scroller) {
   // ===== 滚动跟随：贴底才自动跟随，用户一上滑就停手 =====
   //
@@ -73,10 +81,10 @@ export function useMessageScroll(messages, scroller) {
   }
 
   // 内容变化：还在跟随就滚到底；已经停手就只标记"下面有新内容"
-  watch(messages, () => {
+  watch(() => scrollSignature(messages), () => {
     if (stickToBottom.value) nextTick(() => scrollToBottom())
     else hasNewBelow.value = true
-  }, { deep: true })
+  }, { flush: 'post' })
 
   return { stickToBottom, hasNewBelow, onMessagesScroll, onMessagesWheel, scrollToBottom, jumpToBottom }
 }

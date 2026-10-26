@@ -19,13 +19,15 @@ Windows 上若 Python 命令为 `py`，第三步用 `py deploy/init-env.py`。�
 
 浏览器打开 **http://localhost:8088**。用根目录 `.env` 中的 `BOOTSTRAP_ADMIN_EMAIL` 和 `BOOTSTRAP_ADMIN_PASSWORD` 登录，再在界面「模型」里添加自己的供应商、API Key 和模型名称。
 
-基础部署包含前端、后端、MySQL，支持聊天与文件读写；**代码执行还需 OpenSandbox**：
+**Docker 默认部署前端、后端、MySQL 和 OpenSandbox，包含沙箱代码执行能力。** 无需额外叠加 Compose 文件或设置启用开关。启动后运行完整检查（不需要模型 API Key）：
 
 ```sh
-docker compose -f docker-compose.yml -f docker-compose.sandbox.yml up -d --build
+python deploy/smoke-test.py
 ```
 
-OpenSandbox 服务通过 Docker socket 创建临时执行容器。普通服务器 Compose 部署禁用「完全访问」；下面的 Windows 个人部署入口允许用户手动切换。网络与公网部署注意事项见 [部署手册](deploy/README-docker.md)。
+检查会验证页面、登录和真实沙箱 Python 执行，完成后销毁测试容器。OpenSandbox 服务通过 Docker socket 创建临时执行容器。普通服务器 Compose 部署禁用「完全访问」；下面的 Windows 个人部署入口允许用户手动切换。网络与公网部署注意事项见 [部署手册](deploy/README-docker.md)。
+
+升级旧部署时保留 `.env` 和数据卷，直接重新运行 `docker compose up -d --build`；旧 `SANDBOX_ENABLED=false` 不会关闭内置沙箱，`docker-compose.sandbox.yml` 仅为兼容旧命令保留。
 
 > 本仓库已提供源码构建部署文件。预构建镜像尚未发布到镜像仓库，首次启动会下载基础镜像并安装依赖。构建需要可访问 Docker Hub、PyPI 和 npm。
 
@@ -40,16 +42,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\start-windows.ps1
 此入口不使用 `.bat`，也不要求宿主机安装 Python。它自动识别当前可用的本地硬盘和移动盘，生成支持双模式的挂载配置；首次启动用 Docker 生成 `.env`，然后构建并启动应用。已有 `.env` 不会被覆盖。
 
 - C、D 等盘在模型侧对应 `/mnt/c`、`/mnt/d`；可让智能体「查看 `/mnt/d/资料`」。
-- **默认模式**：工作区可读写，文件工具只读磁盘；即使 OpenSandbox 关闭也能读取磁盘。
-- **完全访问**：在顶栏确认后启用，文件工具可修改/删除已挂载磁盘中的文件，命令由 LocalShell 执行；不依赖 OpenSandbox 是否启用。重启回到默认模式。
+- **默认模式**：工作区可读写，文件工具只读磁盘，命令在默认启用的 OpenSandbox 中执行。
+- **完全访问**：在顶栏确认后启用，文件工具可修改/删除已挂载磁盘中的文件，命令由 LocalShell 执行。重启回到默认模式。
 - 为支持运行时切换，Docker 挂载本身可写，默认只读由应用文件后端强制实施；不能把该模式当作操作系统级只读隔离。Windows 系统权限仍然有效。
 - 该目录对已有应用账户共享，适合个人部署。此入口关闭自助注册；不要给不信任的人登录或把入口公开到公网。
 - 自动挂载的是**运行脚本那台电脑**的磁盘，不是远程网页访问者的电脑。网络盘、光驱和未就绪设备不自动挂载。
 - 新增/移除磁盘后重新运行入口更新配置
-需要同时启用沙箱代码执行，追加 `-Sandbox`：
+此入口同样默认部署 OpenSandbox，旧 `-Sandbox` 参数继续兼容。个人部署完整检查使用：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\start-windows.ps1 -Sandbox
+python deploy/smoke-test.py --personal
 ```
 
 默认模式的执行工具进入本机 Docker 上的 OpenSandbox，沙箱只同步 `/workspace`，需先把执行所需脚本/数据复制到工作区。完全访问模式的 LocalShell 则运行在后端 Linux 容器里，可通过 `/host/c`、`/host/d` 等真实挂载路径处理宿主机文件；它不执行 Windows 系统的 cmd/PowerShell 命令。仅浏览器切换权限才启用 full，不会在启动时自动切换。
@@ -68,7 +70,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\start-windows.ps1 -
 
 如果不需要桌面协议注册，启动时加 `-SkipDesktopIntegration`。协议注册指向当前仓库目录；移动仓库后重新运行入口。恢复为普通服务器部署可用基础 Compose；那会重新使用原工作区卷，新产生的本机工作区文件不会自动复制回原卷。
 
-后续查看状态、日志或关闭，使用相同入口；启用了沙箱时同样保留 `-Sandbox`：
+后续查看状态、日志或关闭，使用相同入口，无需追加沙箱参数：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\start-windows.ps1 -Action Status
@@ -88,7 +90,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\start-windows.ps1 -
           ├─ MySQL：用户、会话元信息、供应商、MCP、审计与工具日志
           ├─ SQLite：LangGraph 消息历史、checkpoint 与 store
           ├─ workspace/<user_id>：用户文件与 Agent.md 长期记忆
-          └─ OpenSandbox（可选）：每会话执行容器，执行前后同步工作区
+          └─ OpenSandbox（Docker 默认启用）：每会话执行容器，执行前后同步工作区
 ```
 
 普通 Docker 部署的工作区位于持久化卷，**不是访问网页那个人的电脑磁盘**。Windows 个人入口把工作区绑定到本机目录，同时把部署者的磁盘映射为 `/mnt/c`、`/mnt/d`，按当前权限模式控制文件修改；普通 Compose 启动不会自动挂载磁盘。
@@ -149,9 +151,8 @@ npm run dev
 
 | 部署方式 | 文件工具 | execute |
 |---|---|---|
-| Docker 基础部署 | 用户持久化工作区 | 未启用 |
-| Docker + OpenSandbox | 用户持久化工作区 | 临时沙箱容器，工作区双向同步 |
-| Windows Docker 个人入口，默认模式 | 工作区可写，宿主磁盘只读 | OpenSandbox；未开启时不可执行 |
+| Docker 默认部署 | 用户持久化工作区 | OpenSandbox 临时沙箱容器，工作区双向同步 |
+| Windows Docker 个人入口，默认模式 | 工作区可写，宿主磁盘只读 | 默认启用的 OpenSandbox |
 | Windows Docker 个人入口，完全访问 | 工作区与宿主磁盘可写 | 后端 Linux 容器内 LocalShell，不依赖 OpenSandbox |
 | 本机开发，sandbox 模式 | 工作区；按配置可额外挂载本机目录 | OpenSandbox |
 | 本机开发，full 模式 | 同上 | 后端所在机器的 shell |
@@ -164,6 +165,7 @@ npm run dev
 - [项目结构与后续整理建议](docs/PROJECT-OVERVIEW.md)
 - [维护重构的模块边界与测试方式](docs/refactoring.md)
 - [Windows LocalShell：PowerShell 与 cmd 配置](docs/windows-localshell.md)
+- [稳定性与性能优化说明、依赖更新流程](docs/stability-improvements.md)
 - [存储设计](docs/P2-storage-design.md)
 - [OpenSandbox 混合后端](docs/P11-opensandbox-hybrid-design.md)
 - [认证与多租户](docs/P18-auth-multitenant-multiprovider-plan.md)

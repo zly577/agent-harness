@@ -7,6 +7,7 @@
 #     opensandbox/mcp/pywin32 都曾属于这一类，换台机器一定翻车）。
 #  2. 版本下限 = 本机 agent_env 实测通过的版本，不写 `==`（便于打补丁版本升级）；
 #     **上限只在真有兼容性雷时写**（目前仅 mcp）。
+#     发布/CI 使用 requirements-lock.txt 固定完整依赖；本文件维护兼容范围。
 #  3. 标注 [可选] 的按需安装，不装不影响主流程；不装的路径必须是显式降级，
 #     不能是 ImportError 糊在脸上。
 #  4. 每项后面注明**谁在用它**，避免下次清理时误删。
@@ -17,7 +18,8 @@
 #       | cut -d. -f1 | sort -u
 #
 # 安装：
-#   C:\Users\Administrator\anaconda3\envs\agent_env\python.exe -m pip install -r requirements.txt
+#   python -m pip install -r requirements-lock.txt
+#   更新流程见 ../docs/stability-improvements.md。
 # ============================================================================
 
 # ===== Web 框架 =====

@@ -1,4 +1,4 @@
--r requirements.txt
-# 开发/测试额外依赖：目前没有 —— pytest 已在 requirements.txt 里（版本统一为 >=9.1，
-# 避免两处声明漂移）。本文件保留，便于 CI/新机器直接 `pip install -r requirements-dev.txt`。
+-r requirements-lock.txt
+# 开发/测试使用与发布一致的锁定依赖；pytest 已包含在清单中。
+# 本文件保留，便于 CI/新机器直接 `pip install -r requirements-dev.txt`。
 # 注意：不要加 pytest-asyncio —— 本项目测试是同步的（TestClient + asyncio.run）。

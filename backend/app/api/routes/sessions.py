@@ -10,7 +10,7 @@
 漏了会红。
 """
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session as OrmSession
 
@@ -280,6 +280,9 @@ async def delete_workspace(workspace_id: str, user: User = Depends(get_current_u
     rows = db.query(DbSession).filter(DbSession.user_id == user.id, DbSession.workspace_id == workspace_id).all()
     for row in rows:
         await run_manager.stop_and_wait(row.id)
+    if any(run_manager.is_running(row.id) for row in rows):
+        raise HTTPException(status_code=409, detail="工作区内仍有任务正在停止，请稍后再删除")
+    for row in rows:
         runtime.invalidate_agents(row.id)
         db.delete(row)
     db.delete(workspace)
@@ -408,14 +411,15 @@ async def stream_session_run(
     """
     owned_session_or_404(db, session_id, user)
 
+    run = run_manager.current(session_id)
     async def _gen():
-        if run_manager.current(session_id) is None:
+        if run is None:
             # 没有可接的运行：直接收尾，前端据此回到"空闲"状态
             yield sse({"type": "result", "content": "", "resumed": False})
             yield "event: done\ndata: {}\n\n"
             return
         yield sse({"type": "resumed", "session_id": session_id})
-        async for chunk in stream_events(run_manager.subscribe(session_id)):
+        async for chunk in stream_events(run_manager.subscribe(session_id, run=run)):
             yield chunk
 
     return StreamingResponse(_gen(), media_type="text/event-stream", headers=SSE_HEADERS)
@@ -431,6 +435,10 @@ async def stop_session_run(
     owned_session_or_404(db, session_id, user)
     stopped = await run_manager.stop_and_wait(session_id)
     if not stopped:
+        run = run_manager.current(session_id)
+        if run and run.running:
+            return JSONResponse(status_code=202, content={"ok": True, "stopped": False,
+                "status": "stopping", "detail": "已请求停止，后台任务仍在收尾，请稍候"})
         # 没有在跑也不算错误：前端可能在"刚好跑完"的一瞬间点了停止
         return {"ok": True, "stopped": False, "detail": "该会话当前没有正在进行的回答"}
     return {"ok": True, "stopped": True}
@@ -445,6 +453,8 @@ async def delete_session(
     """删除会话（业务元信息；checkpoint 历史保留在 SQLite 中）。"""
     s = owned_session_or_404(db, session_id, user)
     await run_manager.stop_and_wait(session_id)
+    if run_manager.is_running(session_id):
+        raise HTTPException(status_code=409, detail="任务仍在停止，请稍后再删除会话")
     runtime.invalidate_agents(session_id)
     db.delete(s)
     db.commit()

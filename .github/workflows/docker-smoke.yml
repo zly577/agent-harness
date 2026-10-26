@@ -18,7 +18,7 @@ jobs:
         shell: powershell
         run: .\deploy\tests\test-start-windows.ps1
 
-  basic-deployment:
+  full-deployment:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -29,9 +29,14 @@ jobs:
         run: |
           docker compose config --quiet
           docker compose -f docker-compose.yml -f docker-compose.sandbox.yml config --quiet
-      - name: Build and start basic deployment
+          python3 -m unittest discover -s deploy/tests -p 'test_*.py' -v
+      - name: Pull sandbox execution images
+        run: |
+          docker pull python:3.11
+          docker pull opensandbox/execd:v1.1.0
+      - name: Build and start complete deployment with OpenSandbox
         run: docker compose up -d --build --wait --wait-timeout 300
-      - name: Check web, authentication and deployment policy
+      - name: Check web, authentication, policy and real sandbox execution
         run: python3 deploy/smoke-test.py
       - name: Check email registration and SMTP delivery
         run: |

@@ -14,7 +14,7 @@ test('App setup and login screen render after extracting composables', async () 
         // Markdown sanitization requires a browser DOM. This smoke test checks
         // component setup and template bindings, so replace only that boundary.
         if (id.replaceAll('\\', '/').endsWith('/src/markdown.js')) {
-          return 'export const renderMarkdown = () => ""; export const renderTerminal = () => "";'
+          return 'export const renderMarkdown = () => ""; export const renderTerminal = () => ""; export const clearMarkdownCache = () => {};'
         }
       },
     }],

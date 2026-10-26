@@ -774,7 +774,7 @@ import {
   streamChat,
   streamRunAttach,
 } from './sse'
-import { renderMarkdown, renderTerminal } from './markdown'
+import { renderMarkdown, renderTerminal, clearMarkdownCache } from './markdown'
 import { resizeComposer } from './chatPresentation'
 import { instantaneousRate, freezeMeter, resumeMeter } from './generationMeter'
 import { useSidebarResize } from './composables/useSidebarResize'
@@ -794,6 +794,7 @@ import {
   fetchAvailableProviders,
   fetchMe,
   getUser,
+  getSessionVersion,
   logout as apiLogout,
   onUnauthorized,
   setSession,
@@ -855,10 +856,14 @@ export default {
     })
 
     async function loadProviders() {
+      const version = getSessionVersion()
       providersLoading.value = true
       try {
-        providers.value = await fetchAvailableProviders()
-      } catch {
+        const data = await fetchAvailableProviders()
+        if (version !== getSessionVersion()) return
+        providers.value = data
+      } catch (error) {
+        if (error.name === 'StaleSessionError' || version !== getSessionVersion()) return
         // 401 已由 api 层统一处理；其它错误就让选择器显示为空（不打断对话）
         providers.value = []
       }
@@ -1176,9 +1181,11 @@ export default {
     function fileSessionQuery() { return `&workspace_id=${encodeURIComponent(activeWorkspaceId.value)}` + (sessionId.value ? `&session_id=${encodeURIComponent(sessionId.value)}` : '') }
 
     async function loadSessions() {
+      const version = getSessionVersion()
       loadingSessions.value = true
       try {
         const [data, workspaceData] = await Promise.all([apiGet('/api/v1/sessions'), apiGet('/api/v1/workspaces')])
+        if (version !== getSessionVersion()) return
         workspaces.value = workspaceData
         const serverList = Array.isArray(data) ? data : []
         // 保留前端乐观创建的临时项（尚未收到真实 session_id 的新会话）
@@ -1187,7 +1194,7 @@ export default {
       } catch {
         // 忽略网络错误，保留旧列表（401 已由 api 层统一处理为回登录页）
       }
-      loadingSessions.value = false
+      if (version === getSessionVersion()) loadingSessions.value = false
     }
 
     // ===== 与后端运行"重连" =====
@@ -1325,7 +1332,9 @@ export default {
           }
         })
       } catch (e) {
-        if (e.name !== 'AbortError') {
+        if (e.name === 'StreamDisconnectedError') {
+          markConnectionLost(fresh, e)
+        } else if (e.name !== 'AbortError' && e.name !== 'StaleSessionError') {
           fresh.content = fresh.content || `⚠️ 接回失败：${e.message}`
         }
       }
@@ -1678,7 +1687,9 @@ export default {
           }
         }, chosenProvider.value || null, startingWorkspaceId, sentAttachments)
       } catch (e) {
-        if (e.name !== 'AbortError') {
+        if (e.name === 'StreamDisconnectedError') {
+          markConnectionLost(assistantMsg, e)
+        } else if (e.name !== 'AbortError' && e.name !== 'StaleSessionError') {
           assistantMsg.content = `⚠️ ${e.message}`
           assistantMsg.error = true
         }
@@ -1699,6 +1710,12 @@ export default {
       if (!anyStreaming()) stopTicker()
 
       loadSessions() // 刷新侧边栏（新会话标题/更新时间）
+    }
+
+    function markConnectionLost(message, error) {
+      message.connectionLost = true
+      message.error = true
+      message.content = `${message.content || ''}${message.content ? '\n\n' : ''}⚠️ ${error.message}`
     }
 
     async function decide(approve) {
@@ -1759,7 +1776,10 @@ export default {
             }
           })
         } catch (e) {
-          if (e.name !== 'AbortError') state.error = e.message
+          if (e.name === 'StreamDisconnectedError') {
+            markConnectionLost(target, e)
+            notify(e.message, 'error')
+          } else if (e.name !== 'AbortError' && e.name !== 'StaleSessionError') state.error = e.message
         }
 
         target.streaming = false
@@ -1850,8 +1870,10 @@ export default {
     }
 
     async function loadHitlConfig() {
+      const version = getSessionVersion()
       try {
         const cfg = await fetchHitlConfig()
+        if (version !== getSessionVersion()) return
         hitlOn.value = !!cfg.enabled
       } catch {
         // 读取失败就保持默认（不影响对话）
@@ -1865,8 +1887,10 @@ export default {
      * 影响用户对"命令跑在哪、会不会弹审批"的判断，宁可显示保守值。
      */
     async function loadAccessConfig() {
+      const version = getSessionVersion()
       try {
         const cfg = await fetchAccessConfig()
+        if (version !== getSessionVersion()) return
         accessMode.value = cfg.mode === 'full' ? 'full' : 'sandbox'
         accessAllowFull.value = (cfg.valid_modes || []).includes('full')
       } catch {
@@ -1961,7 +1985,11 @@ export default {
       if (!sid) return
       const state = sessionStates[sid]
       try {
-        await stopRun(sid)
+        const result = await stopRun(sid)
+        if (result.status === 'stopping') {
+          notify(result.detail || '任务正在停止，请稍候')
+          return
+        }
       } catch (e) {
         notify(`停止失败：${e.message}`, 'error')
         return
@@ -2147,18 +2175,23 @@ export default {
      * 以及（将来）切换用户 —— 三处都必须做同样的事，写两遍必然漏一处。
      */
     async function startAuthedSession() {
+      const version = getSessionVersion()
       useLastSessionKeyFor(user.value)
       await loadHitlConfig()
+      if (version !== getSessionVersion()) return
       // 权限模式也要在进入界面时拉一次（后端是内存态，重启后回到沙箱内；
       // 不拉的话界面会继续显示上一次的"完全访问"，与后端实际状态不符）。
       await loadAccessConfig()
+      if (version !== getSessionVersion()) return
       // 先把可用供应商拉出来 —— 会话列表里要显示/恢复各自的模型绑定，
       // 而且"一个都没有"时欢迎页要给引导。
       await loadProviders()
+      if (version !== getSessionVersion()) return
       // 刷新 / 关掉再打开：回到上次在看的会话。
       // 如果那一轮回答还在后端跑着，openSession 里会自动接回来 —— 这就是
       // "刷新不打断回答"的用户可见效果。
       await loadSessions()
+      if (version !== getSessionVersion()) return
       const last = readLastSession()
       if (last && sessions.value.some((s) => s.id === last)) {
         openSession(last)
@@ -2203,6 +2236,7 @@ export default {
       messages.splice(0, messages.length)
       approval.value = null
       resetProviderState()
+      resetPrivateState()
       apiLogout()
       user.value = null
     }
@@ -2233,8 +2267,27 @@ export default {
       messages.splice(0, messages.length)
       approval.value = null
       resetProviderState()
+      resetPrivateState()
       user.value = null
       authNotice.value = detail || '登录已失效，请重新登录'
+    }
+
+    function resetPrivateState() {
+      sessionViewVersion += 1
+      filesViewVersion += 1
+      cancelNativeWorkspace()
+      workspacePicker.value = null
+      for (const key of Object.keys(sessionStates)) delete sessionStates[key]
+      for (const key of Object.keys(collapsedWorkspaces)) delete collapsedWorkspaces[key]
+      attachments.value = []
+      fileList.value = []
+      filePath.value = '/workspace'
+      pendingDelete.value = null
+      showFilePanel.value = false
+      loadingFiles.value = false
+      providersLoading.value = false
+      accessMode.value = 'sandbox'
+      clearMarkdownCache()
     }
 
     let stopAuthWatch = null
@@ -2252,9 +2305,9 @@ export default {
           const me = await fetchMe()
           user.value = me
           setUser(me)
-        } catch {
+        } catch (error) {
           // 失效：api 层已清掉本地凭证，这里只需回到登录视图
-          user.value = null
+          if (error.name !== 'StaleSessionError') user.value = null
         }
       }
       authBootstrapping.value = false

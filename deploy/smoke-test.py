@@ -1,15 +1,21 @@
-"""检查 Docker 基础部署，无需第三方依赖或模型 API Key。"""
+"""检查完整 Docker 部署，包括真实沙箱执行；无需模型 API Key。"""
+import argparse
 import json
 import os
 from pathlib import Path
+import subprocess
 import urllib.error
 import urllib.request
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--personal", action="store_true", help="检查 Windows 个人部署的权限策略")
+    args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
     config = {}
-    for line in (root / ".env").read_text(encoding="utf-8").splitlines():
+    env_file = Path(os.environ.get("SMOKE_ENV_FILE", root / ".env"))
+    for line in env_file.read_text(encoding="utf-8-sig").splitlines():
         if line and not line.startswith("#") and "=" in line:
             key, value = line.split("=", 1)
             config[key] = value
@@ -43,8 +49,11 @@ def main() -> None:
     token = json.loads(body)["access_token"]
     status, body = request("/api/v1/auth/me", token=token)
     assert status == 200 and json.loads(body)["role"] == "admin", "管理员身份检查失败"
-    status, body = request("/api/v1/access/config", {"mode": "full"}, token, "PUT")
-    assert status == 400 and "禁用完全访问" in json.loads(body)["detail"], "full 模式没有被禁用"
+    status, body = request("/api/v1/access/config", token=token)
+    assert status == 200, "权限配置检查失败"
+    access = json.loads(body)
+    assert access["mode"] == "sandbox", "默认权限不是 sandbox"
+    assert ("full" in access["valid_modes"]) == args.personal, "完全访问策略与部署方式不符"
     if config.get("ALLOW_REGISTRATION", "false").lower() == "false":
         status, _ = request("/api/v1/auth/register", {
             "email": "docker-smoke@example.com", "password": "smoke-check-password",
@@ -55,7 +64,26 @@ def main() -> None:
             "email": "docker-smoke@example.com",
         })
         assert status == 403, f"注册关闭时仍可请求验证码：HTTP {status}"
-    print("Docker 冒烟检查通过：页面、健康、登录、权限与注册策略。")
+    # 服务健康并不代表执行容器可用：实际经过后端 SDK、服务代理和 execd 执行 Python。
+    sandbox_check = '''
+import uuid
+from app.core.config import settings
+from app.agent.opensandbox_backend import OpenSandboxBackend, registry
+assert settings.sandbox_enabled, "OpenSandbox is disabled"
+assert settings.sandbox_domain == "opensandbox:8080", "Internal sandbox address is not configured"
+key = "deployment-smoke-" + uuid.uuid4().hex
+try:
+    result = OpenSandboxBackend(key).execute('python -c "print(6 * 7)"', timeout=30)
+    assert result.exit_code == 0 and "42" in result.output, "Sandbox Python execution failed"
+    print("OpenSandbox Python execution: PASS")
+finally:
+    registry.destroy(key)
+'''
+    subprocess.run(
+        ["docker", "compose", "exec", "-T", "backend", "python", "-"],
+        input=sandbox_check, text=True, cwd=root, check=True, timeout=420,
+    )
+    print("Docker 冒烟检查通过：页面、健康、登录、权限、注册策略与 OpenSandbox Python 执行。")
 
 
 if __name__ == "__main__":

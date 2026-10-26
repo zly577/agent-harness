@@ -327,11 +327,11 @@ def full_access_prompt_section(*, workspace: Path | None = None) -> str:
     windows = is_windows()
     docker = not windows and Path("/.dockerenv").exists()
     location = "后端 Linux 容器" if docker else "后端所在电脑"
-    shell = resolve_windows_shell(settings.harness_windows_shell).label if windows else "POSIX shell（ls/cat/python）"
+    shell = resolve_windows_shell(settings.harness_windows_shell).label if windows else "POSIX shell（/bin/sh）"
     lines = [
         f"\n## 运行环境：完全访问模式（LocalShell，{location}）\n",
         f"execute 在{location}内通过 {shell} 执行，没有 OpenSandbox 沙箱、不做文件同步，也不弹审批。\n",
-        "工作目录是当前会话选定的工作区；用相对路径执行工作区脚本。文件工具使用 /workspace 和 /mnt 虚拟路径，命令使用下列真实路径。\n",
+        "工作目录是当前会话选定的工作区；用相对路径执行工作区脚本。文件工具使用 /workspace/... 和 /mnt/<名称>/... 虚拟路径，命令使用下列真实路径。\n",
     ]
     if windows:
         lines.append(windows_command_guidance(settings.harness_windows_shell) + "\n")

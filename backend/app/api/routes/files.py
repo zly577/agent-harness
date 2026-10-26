@@ -30,7 +30,9 @@ import os
 import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
+from starlette.concurrency import run_in_threadpool
+from starlette.background import BackgroundTask
 
 from app.agent.opensandbox_backend import MACHINE_MOUNT_ROOT
 from app.agent.runtime import get_main_backend
@@ -39,6 +41,7 @@ from app.api.deps import get_current_user, owned_session_or_404
 from app.db.session import get_db
 from sqlalchemy.orm import Session as OrmSession
 from app.db.models import User
+from app.services.files import prepare_download
 
 router = APIRouter(prefix="/api/v1/files", tags=["files"])
 desktop_callback_router = APIRouter(prefix="/api/v1/files", tags=["desktop"])
@@ -172,9 +175,9 @@ async def list_files(
 ):
     """列出**当前用户**工作区中指定目录下的文件和子目录。"""
     norm = _normalize_path(path)
-    backend = _user_backend(user, session_id, db, workspace_id)
+    backend = await run_in_threadpool(_user_backend, user, session_id, db, workspace_id)
     try:
-        result = backend.ls(norm)
+        result = await run_in_threadpool(backend.ls, norm)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"列出文件失败: {e}")
     return {"path": norm, "entries": result.entries}
@@ -188,6 +191,7 @@ def _content_disposition(filename: str) -> str:
     另留 ASCII filename 作回退。
     """
     ascii_fallback = filename.encode("ascii", "ignore").decode("ascii") or "download"
+    ascii_fallback = re.sub(r'[\x00-\x1f\x7f"\\]', '_', ascii_fallback)
     encoded = quote(filename, safe="")
     return f'attachment; filename="{ascii_fallback}"; filename*=UTF-8\'\'{encoded}'
 
@@ -203,22 +207,13 @@ async def download_file(
     """下载**当前用户**工作区中的指定文件，返回原始字节流。"""
     norm = _normalize_path(path)
 
-    backend = _user_backend(user, session_id, db, workspace_id)
+    backend = await run_in_threadpool(_user_backend, user, session_id, db, workspace_id)
     try:
-        results = backend.download_files([norm])
+        source = await run_in_threadpool(prepare_download, backend, norm)
+    except (FileNotFoundError, PermissionError, ValueError, IsADirectoryError) as exc:
+        raise HTTPException(status_code=404, detail="文件不存在或不可访问") from exc
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"下载文件失败: {e}")
-
-    if not results:
-        raise HTTPException(status_code=404, detail="文件不存在")
-
-    item = results[0]
-    if item.error:
-        raise HTTPException(status_code=404, detail=f"文件不存在: {item.error}")
-
-    content = item.content
-    if content is None:
-        raise HTTPException(status_code=404, detail="文件内容为空")
 
     filename = norm.rsplit("/", 1)[-1] or "download"
     # 简单根据扩展名推断 content-type
@@ -240,14 +235,23 @@ async def download_file(
     }
     media_type = content_type_map.get(ext, "application/octet-stream")
 
-    return Response(
-        content=content,
-        media_type=media_type,
-        headers={
-            "Content-Disposition": _content_disposition(filename),
-            "Content-Length": str(len(content)),
-        },
-    )
+    headers = {"Content-Disposition": _content_disposition(filename), "Content-Length": str(source.size)}
+    if source.file is None:
+        return Response(content=source.content, media_type=media_type, headers=headers)
+
+    async def chunks():
+        try:
+            remaining = source.size
+            while remaining > 0:
+                chunk = await run_in_threadpool(source.file.read, min(remaining, 64 * 1024))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+                yield chunk
+        finally:
+            await run_in_threadpool(source.file.close)
+    return StreamingResponse(chunks(), media_type=media_type, headers=headers,
+                             background=BackgroundTask(source.file.close))
 
 
 @router.delete("")
@@ -265,9 +269,9 @@ async def delete_file(
     norm = _normalize_path(path)
     _assert_deletable(norm)
 
-    backend = _user_backend(user, session_id, db, workspace_id)
+    backend = await run_in_threadpool(_user_backend, user, session_id, db, workspace_id)
     try:
-        result = backend.delete(norm)
+        result = await run_in_threadpool(backend.delete, norm)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"删除失败: {e}")
 

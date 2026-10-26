@@ -168,8 +168,10 @@ def clarification_client(monkeypatch):
     def start(sid,command,**kwargs):
         if manager.running: raise RuntimeError("正在处理中")
         manager.running=True;manager.commands.append(command)
-        return SimpleNamespace(events=[])
-    async def subscribe(*args,**kwargs):
+        manager.started=SimpleNamespace(events=[])
+        return manager.started
+    async def subscribe(sid, *, since, run):
+        assert since == 0 and run is manager.started
         yield {"type":"result","content":"已继续"}
     manager.start=start;manager.subscribe=subscribe
     def owned(db,sid,user):
