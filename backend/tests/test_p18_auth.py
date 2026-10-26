@@ -21,6 +21,7 @@ from tests.helpers import TEST_EMAIL_DOMAIN, TEST_PASSWORD, create_user, unique_
 
 @pytest.fixture
 def registration_code(anon_client, monkeypatch):
+    monkeypatch.setattr(settings, "registration_email_verification", True)
     captured = {}
     monkeypatch.setattr("app.api.routes.auth.send_registration_code", lambda email, code: captured.update({email: code}))
     def send(email):
@@ -81,10 +82,18 @@ def test_openapi_declares_authorization_for_all_business_paths():
     from app.main import app
 
     missing = []
+    # These public callbacks use short-lived, single-use desktop tickets.
+    ticket_callbacks = {
+        ("get", "/api/v1/workspaces/picker/{ticket}/ready"),
+        ("post", "/api/v1/workspaces/picker/{ticket}/result"),
+        ("get", "/api/v1/files/open-workspace/{ticket}"),
+    }
     for path, ops in app.openapi()["paths"].items():
         if not path.startswith("/api/v1") or path.startswith("/api/v1/auth"):
             continue
         for method, op in ops.items():
+            if (method, path) in ticket_callbacks:
+                continue
             names = [p.get("name") for p in op.get("parameters", [])]
             if "authorization" not in names:
                 missing.append(f"{method.upper()} {path}")

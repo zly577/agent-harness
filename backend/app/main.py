@@ -140,8 +140,15 @@ async def lifespan(app: FastAPI):
 
     run_bootstrap()
 
-    yield
+    try:
+        yield
+    finally:
+        from app.agent.runner import run_manager
+        await run_manager.aclose()
+        await _close_agent_storage()
 
+
+async def _close_agent_storage() -> None:
     # ---- 收尾：关掉 checkpointer/store 的全局 SQLite 连接 ----
     # 不关的话解释器退出会挂住（实测 30s+ 退不出去），于是 `uvicorn --reload`
     # 换代码时旧 worker 关不掉：父进程还占着端口、连接也能建，但没人应答 HTTP，

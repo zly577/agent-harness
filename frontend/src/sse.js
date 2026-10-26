@@ -12,6 +12,7 @@
 // 所以"后端重启导致凭证失效"时用户看到的是回登录页，而不是一个静默断掉的流。
 
 import { apiFetch, apiFetchRaw } from './api'
+import { createSseParser } from './sseParser'
 
 /**
  * 发起 SSE 流式对话。
@@ -174,39 +175,18 @@ async function consumeStream(url, body, signal, onEvent, method = 'POST') {
 
   const reader = resp.body.getReader()
   const decoder = new TextDecoder('utf-8')
-  let buffer = ''
-
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-
-    // 按 SSE 空行切分
-    const chunks = buffer.split('\n\n')
-    buffer = chunks.pop() // 最后一段可能不完整
-    for (const chunk of chunks) {
-      parseChunk(chunk, onEvent)
+  const parser = createSseParser(onEvent)
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      parser.feed(decoder.decode(value, { stream: true }))
     }
+    parser.feed(decoder.decode())
+    parser.finish()
+  } finally {
+    // Closing a subscription leaves the backend run alive.
+    await reader.cancel().catch(() => {})
+    reader.releaseLock()
   }
-  // 处理剩余 buffer
-  if (buffer.trim()) {
-    parseChunk(buffer, onEvent)
-  }
-}
-
-function parseChunk(chunk, onEvent) {
-  let dataLine = null
-  let eventName = 'message'
-  for (const line of chunk.split('\n')) {
-    if (line.startsWith('data:')) {
-      dataLine = line.slice(5).trim()
-    } else if (line.startsWith('event:')) {
-      eventName = line.slice(6).trim()
-    }
-  }
-  if (dataLine === null || dataLine === '') return
-  let parsed = null
-  try { parsed = JSON.parse(dataLine) } catch { parsed = { raw: dataLine } }
-  parsed.event = eventName
-  onEvent(parsed)
 }

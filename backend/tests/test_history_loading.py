@@ -54,6 +54,7 @@ def test_offline_graph_reconstructs_delta_messages(monkeypatch, tmp_path):
         state = await graph.aget_state(config)
         assert [m.content for m in state.values["messages"]] == [text for i in range(3) for text in (f"question {i}", f"answer {i}")]
         assert "offline-history-test" not in runtime._agents
+        assert not (tmp_path / "Agent.md").exists()
     asyncio.run(check())
 
 

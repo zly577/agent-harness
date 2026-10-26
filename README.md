@@ -162,6 +162,8 @@ npm run dev
 
 - [Docker 部署、升级、备份与排障](deploy/README-docker.md)
 - [项目结构与后续整理建议](docs/PROJECT-OVERVIEW.md)
+- [维护重构的模块边界与测试方式](docs/refactoring.md)
+- [Windows LocalShell：PowerShell 与 cmd 配置](docs/windows-localshell.md)
 - [存储设计](docs/P2-storage-design.md)
 - [OpenSandbox 混合后端](docs/P11-opensandbox-hybrid-design.md)
 - [认证与多租户](docs/P18-auth-multitenant-multiprovider-plan.md)

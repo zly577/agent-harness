@@ -464,7 +464,7 @@ def test_agent_event_stream_labels_every_tool_call():
             assert INTENT_FIELD not in json.dumps(c["args"], ensure_ascii=False)
 
         # 验收 ③：工具实现只看到业务参数
-        assert seen_args == [{"value": "a"}, {"value": "b"}]
+        assert sorted(seen_args, key=lambda args: args["value"]) == [{"value": "a"}, {"value": "b"}]
 
         # 事件 / 事件存储 / 读模型三处一致
         db = SessionLocal()
@@ -702,13 +702,15 @@ def test_frontend_escapes_intent_label():
     """
     src = (Path(__file__).resolve().parent.parent.parent
            / "frontend" / "src" / "App.vue").read_text(encoding="utf-8")
-    assert "{{ g.intent }}" in src
+    assert '{{ g.intent || g.verb }}' in src
     assert "{{ activityLatest(m).intent }}" in src
     for match in re.finditer(r'v-html="([^"]*)"', src):
         assert "intent" not in match.group(1).lower(), \
             f"意图标签不允许走 v-html：{match.group(1)}"
     # 渲染层要能同时读实时事件（snake_case）与回放（camelCase）两种字段名
-    assert "intent_label" in src and "intentLabel" in src
+    activity = (Path(__file__).resolve().parent.parent.parent
+                / "frontend" / "src" / "composables" / "useToolActivity.js").read_text(encoding="utf-8")
+    assert "intent_label" in activity and "intentLabel" in activity
 
 
 def test_backfill_is_idempotent():

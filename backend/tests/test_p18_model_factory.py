@@ -197,9 +197,10 @@ def test_empty_model_raises():
         build_llm(ProviderConfig(protocol=PROTOCOL_OPENAI, model="  ", api_key="k"))
 
 
-def test_build_llm_without_config_uses_env_bootstrap():
+def test_build_llm_without_config_uses_env_bootstrap(monkeypatch):
     """无参调用保持向后兼容（既有测试/探针都是这么用的）。"""
     from langchain_deepseek import ChatDeepSeek
+    monkeypatch.setattr("app.agent.model.settings.deepseek_api_key", "sk-test-placeholder")
 
     cfg = env_bootstrap_config()
     llm = build_llm()

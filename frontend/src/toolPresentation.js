@@ -32,3 +32,15 @@ export function taskPlan(message) {
   })).filter(item => item.text)
   return plan.length && plan.some(item => item.status !== 'completed') ? plan : []
 }
+
+
+/** Show the physical destination without changing the tool's virtual argument. */
+export function workspacePath(key, value, directory) {
+  if (!directory || typeof value !== 'string' || !/^(file_path|path|paths|cwd|\d+)$/.test(key)) return ''
+  if (value !== '/workspace' && !value.startsWith('/workspace/')) return ''
+  const parts = value.slice('/workspace'.length).split('/').filter(Boolean)
+  if (parts.some(part => part === '..' || part === '.')) return ''
+  const separator = directory.includes('\\') ? '\\' : '/'
+  const root = directory.replace(/[\\/]+$/, '')
+  return parts.length ? root + separator + parts.join(separator) : directory
+}

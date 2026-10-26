@@ -42,13 +42,25 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Callable, Literal
+
+from app.agent.events import to_sse_event
 
 logger = logging.getLogger(__name__)
 
 #: 一轮结束（done/error/stopped）后，事件缓冲保留多久供回放。
 #: 太短：用户刷新慢一点就看不到刚结束的回答；太长：内存里长期挂着大数组。
 KEEP_SECONDS = 180
+SUBSCRIBER_QUEUE_SIZE = 1024
+RunStatus = Literal["running", "done", "error", "stopped", "awaiting_approval", "awaiting_input"]
+
+
+class RunConflict(RuntimeError):
+    """A session already has an active or suspended run."""
+
+
+class RunStopped(RuntimeError):
+    """A caller waiting for a reply had its run explicitly stopped."""
 
 #: 缓冲里可以被合并的增量事件类型（value 是要拼接的字段）
 _DELTA_FIELDS = {
@@ -57,58 +69,6 @@ _DELTA_FIELDS = {
     "subagent_token": "delta",
     "subagent_thinking": "delta",
 }
-
-
-def to_sse_event(kind: str, data: Any) -> dict:
-    """runtime 事件 (kind, data) → 前端事件字典（前后端契约就在这里）。
-
-    从 `api/routes/chat_stream.py` 搬过来：事件形状是 **agent 侧**的契约，
-    路由层只负责把它序列化成 `data: {...}\n\n`。
-    """
-    if kind == "token":
-        return {"type": "token", "content": data}
-    if kind == "thinking":
-        return {"type": "thinking", **data}
-    if kind == "tool_call":
-        return {"type": "tool_call", **data}
-    if kind == "tool_result":
-        return {"type": "tool_result", **data}
-    # 工具参数**还在生成**时的节流心跳（大参数要几十秒到几分钟）。
-    # 它存在理由和 `thinking` 一样：那段时间本来一个事件都没有，用户无法区分
-    # "在写参数"和"挂了"。**不含 args 正文**，只有体积/耗时，所以可以直接推给前端。
-    if kind == "tool_args":
-        return {"type": "tool_args", **data}
-    # 子智能体过程（把 task 委派的内部进展暴露给前端）
-    if kind == "subagent_start":
-        return {"type": "subagent_start", **data}
-    if kind == "subagent_token":
-        return {"type": "subagent_token", **data}
-    if kind == "subagent_thinking":
-        return {"type": "subagent_thinking", **data}
-    if kind == "subagent_tool":
-        return {"type": "subagent_tool", **data}
-    if kind == "subagent_end":
-        return {"type": "subagent_end", **data}
-    if kind == "subagent_usage":
-        return {"type": "subagent_usage", **data}
-    if kind == "usage":
-        return {"type": "usage", **data}
-    if kind in {"approval", "clarification"}:
-        return {
-            "type": kind,
-            "clarifications": data.get("clarifications") or [],
-            "interrupts": data.get("interrupts") or [],
-            "pending": bool(data.get("pending")),
-            "actions": data.get("actions") or [],
-            # 停在审批上时，模型可能已经说过一段话了：把它带出去让前端落进气泡，
-            # 否则用户看到的只有"弹窗"+"空气泡"（观感：工具都跑完了却什么都没说）。
-            "text": data.get("text") or "",
-        }
-    if kind == "result":
-        return {"type": "result", "content": data}
-    if kind == "error":
-        return {"type": "error", "detail": data}
-    return {"type": kind, "content": data}
 
 
 @dataclass
@@ -123,8 +83,7 @@ class SessionRun:
     #: 它的用途是给工作区/长期记忆定位，以及给审计留痕；
     #: **授权判定仍然以「sessions.user_id」为唯一事实来源**（见 subscribe 的说明）。
     user_id: str | None = None
-    #: running | done | error | stopped
-    status: str = "running"
+    status: RunStatus = "running"
     error: str = ""
     #: 已发生的事件（**已合并**的增量），供回放
     events: list[dict] = field(default_factory=list)
@@ -133,6 +92,8 @@ class SessionRun:
     task: asyncio.Task | None = None
     started_at: float = field(default_factory=time.time)
     finished_at: float | None = None
+    exception: Exception | None = field(default=None, repr=False)
+    expiry_handle: asyncio.TimerHandle | None = field(default=None, repr=False)
 
     @property
     def running(self) -> bool:
@@ -163,8 +124,8 @@ class RunManager:
 
     def __init__(self) -> None:
         self._runs: dict[str, SessionRun] = {}
-        #: 运行启动/停止的互斥；subscribe 不参与（它只读快照 + 收队列）
-        self._lock = asyncio.Lock()
+        # start() performs its check and reservation without an await, so they
+        # are atomic on the application's single event loop.
 
     # ---------- 查询 ----------
 
@@ -184,7 +145,8 @@ class RunManager:
     # ---------- 启动 / 停止 ----------
 
     def start(self, session_id: str, agent_input, user_message: str = "",
-              user_id: str | None = None) -> SessionRun:
+              user_id: str | None = None, *,
+              event_stream: Callable[[], AsyncIterator[tuple[str, Any]]] | None = None) -> SessionRun:
         """起一轮运行（后台 task，不属于任何请求）。
 
         Args:
@@ -201,17 +163,73 @@ class RunManager:
 
         existing = self.current(session_id)
         if existing and existing.running:
-            raise RuntimeError("该会话已有一轮回答正在进行中")
+            raise RunConflict("该会话已有一轮回答正在进行中")
         if existing and existing.suspended:
             from langgraph.types import Command
             if not isinstance(agent_input, Command):
-                raise RuntimeError("请先回答待澄清的问题或处理待审批操作")
+                raise RunConflict("请先回答待澄清的问题或处理待审批操作")
+
+        if existing and existing.expiry_handle:
+            existing.expiry_handle.cancel()
 
         run = SessionRun(session_id=session_id, user_message=user_message, user_id=user_id)
         self._runs[session_id] = run
-        run.task = asyncio.ensure_future(self._drive(run, agent_input, _runtime))
+        run.task = asyncio.create_task(self._drive(run, agent_input, _runtime, event_stream))
+        run.task.add_done_callback(lambda task: self._task_done(run, task))
         logger.info("[runner] 会话 %s 开始新一轮（后台运行，与连接解耦）", session_id)
         return run
+
+    async def wait_result(self, run: SessionRun) -> str:
+        """Wait for the same background run used by SSE, without cancelling it."""
+        if run.task:
+            try:
+                await asyncio.shield(run.task)
+            except asyncio.CancelledError:
+                if run.status != "stopped":
+                    raise
+        if run.status == "stopped":
+            raise RunStopped("已按你的要求停止本轮回答")
+        if run.exception is not None:
+            raise run.exception
+        for event in reversed(run.events):
+            if event["type"] == "result":
+                return event.get("content") or ""
+            if event["type"] == "clarification":
+                return "等待你补充信息：" + "；".join(item["question"] for item in event.get("clarifications", []))
+            if event["type"] == "approval":
+                return "任务已暂停，等待操作审批。"
+        return ""
+
+    def _expire(self, run: SessionRun) -> None:
+        run.expiry_handle = None
+        if self._runs.get(run.session_id) is run and not run.running and not run.suspended:
+            self._runs.pop(run.session_id, None)
+
+    def _finish(self, run: SessionRun) -> None:
+        run.finished_at = time.time()
+        self._close(run)
+        if not run.suspended:
+            run.expiry_handle = asyncio.get_running_loop().call_later(KEEP_SECONDS, self._expire, run)
+
+    def _task_done(self, run: SessionRun, task: asyncio.Task) -> None:
+        # A task cancelled before its first step never enters _drive's finally.
+        if task.cancelled() and run.finished_at is None:
+            run.status = "stopped"
+            self._publish(run, {"type": "stopped", "detail": "已按你的要求停止本轮回答"})
+            self._finish(run)
+
+    async def aclose(self, timeout: float = 5.0) -> None:
+        """Stop producers before application storage is closed."""
+        runs = list(self._runs.values())
+        tasks = [run.task for run in runs if run.task and not run.task.done()]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.wait(tasks, timeout=timeout)
+        for run in runs:
+            if run.expiry_handle:
+                run.expiry_handle.cancel()
+        self._runs.clear()
 
     def stop(self, session_id: str) -> bool:
         """用户明确停止：取消运行 task。返回是否真的有东西被停。"""
@@ -241,12 +259,12 @@ class RunManager:
 
     # ---------- 驱动 ----------
 
-    async def _drive(self, run: SessionRun, agent_input, runtime_mod) -> None:
+    async def _drive(self, run: SessionRun, agent_input, runtime_mod, event_stream=None) -> None:
         """后台跑完一轮：事件广播给订阅者、缓冲供回放。"""
         try:
-            async for kind, data in runtime_mod.agent_event_stream(
-                run.session_id, agent_input, user_id=run.user_id
-            ):
+            events = event_stream() if event_stream else runtime_mod.agent_event_stream(
+                run.session_id, agent_input, user_id=run.user_id)
+            async for kind, data in events:
                 self._publish(run, to_sse_event(kind, data))
         except asyncio.CancelledError:
             # 用户点了停止 / 进程在收尾
@@ -255,6 +273,7 @@ class RunManager:
             raise
         except Exception as e:  # noqa: BLE001
             run.status = "error"
+            run.exception = e
             # ⚠️ 这个字符串会作为 error 事件推给前端（并留在可回放缓冲里），
             # 所以必须过 scrub_secrets：模型/SDK 的报错可能带 api_key。
             from app.agent.providers import ProviderNotConfigured
@@ -276,17 +295,28 @@ class RunManager:
             last_type = run.events[-1].get("type") if run.events else ""
             run.status = {"approval": "awaiting_approval", "clarification": "awaiting_input"}.get(last_type, "done")
         finally:
-            run.finished_at = time.time()
-            self._close(run)
+            self._finish(run)
 
     def _publish(self, run: SessionRun, evt: dict) -> None:
         """广播给订阅者（细粒度）并把事件并入回放缓冲（相邻增量已合并）。"""
         for q in list(run.subscribers):
             try:
                 q.put_nowait(evt)
+            except asyncio.QueueFull:
+                # Slow clients can reconnect and replay; never block the agent
+                # or retain an unbounded per-connection copy of its output.
+                self._disconnect_slow_subscriber(q)
+                run.subscribers.discard(q)
             except Exception:  # noqa: BLE001 订阅者自己出问题，不能连累运行
                 run.subscribers.discard(q)
         self._buffer(run, evt)
+
+    @staticmethod
+    def _disconnect_slow_subscriber(queue: asyncio.Queue) -> None:
+        while not queue.empty():
+            queue.get_nowait()
+        queue.put_nowait({"type": "error", "detail": "连接接收过慢，请刷新页面以恢复运行进度"})
+        queue.put_nowait(None)
 
     @staticmethod
     def _buffer(run: SessionRun, evt: dict) -> None:
@@ -317,12 +347,15 @@ class RunManager:
         for q in list(run.subscribers):
             try:
                 q.put_nowait(None)
+            except asyncio.QueueFull:
+                self._disconnect_slow_subscriber(q)
             except Exception:  # noqa: BLE001
                 pass
 
     # ---------- 订阅（回放 + 直播） ----------
 
-    async def subscribe(self, session_id: str, since: int | None = None) -> AsyncIterator[dict]:
+    async def subscribe(self, session_id: str, since: int | None = None, *,
+                        run: SessionRun | None = None) -> AsyncIterator[dict]:
         """订阅某会话的当前运行：先回放已有事件，再接收后续直播。
 
         Args:
@@ -338,20 +371,24 @@ class RunManager:
                 yield sse(evt)
         运行已结束（且在保留期内）时：回放完就断，调用方据此收尾。
         """
-        run = self.current(session_id)
+        run = run if run is not None else self.current(session_id)
         if run is None:
             return
+        if run.session_id != session_id:
+            raise ValueError("订阅的运行与会话不匹配")
 
-        queue: asyncio.Queue = asyncio.Queue()
+        queue: asyncio.Queue = asyncio.Queue(maxsize=SUBSCRIBER_QUEUE_SIZE)
         # 先订阅、再回放：否则回放期间产生的新事件会丢
         run.subscribers.add(queue)
         try:
             # 回放的是快照副本，避免迭代过程中缓冲被 _buffer 修改
-            events = list(run.events)
+            events = [dict(event) for event in run.events]
             start = 0 if since is None else max(0, min(int(since), len(events)))
             for evt in events[start:]:
                 yield evt
-            if not run.running:
+            # A run may finish while the replay is being sent. Its final live
+            # events and end sentinel are already queued and must be drained.
+            if not run.running and queue.empty():
                 return
             while True:
                 item = await queue.get()
@@ -366,4 +403,4 @@ class RunManager:
 run_manager = RunManager()
 
 
-__all__ = ["KEEP_SECONDS", "RunManager", "SessionRun", "run_manager", "to_sse_event"]
+__all__ = ["KEEP_SECONDS", "RunConflict", "RunStopped", "RunManager", "SessionRun", "run_manager", "to_sse_event"]

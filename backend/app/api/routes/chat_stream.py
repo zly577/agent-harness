@@ -35,19 +35,18 @@ POST /api/v1/chat/stream  body: {"message","session_id"}
 import json
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session as OrmSession
 
-from app.agent.attachments import prepare_content, supports_vision, save_refusal
-from app.agent import runtime
-from app.agent import providers as provider_svc
 from app.agent.runner import run_manager
 from app.agent.runner import to_sse_event  # noqa: F401  re-export：事件契约的归属地
-from app.api.deps import get_current_user, owned_session_or_404
+from app.api.deps import get_current_user
 from app.core.crypto import scrub_secrets
 from app.db.models import User
 from app.db.session import get_db
+from app.services.chat import prepare_chat, start_chat
+from app.services.chat import apply_provider_choice as apply_provider_choice  # compatibility export
 from app.schemas.chat import ChatRequest
 
 logger = logging.getLogger(__name__)
@@ -66,29 +65,6 @@ SSE_HEADERS = {
 def sse(obj: dict) -> str:
     """把事件字典编码成一条 SSE data 行。"""
     return f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
-
-
-def apply_provider_choice(
-    db: OrmSession,
-    session_id: str,
-    user: User,
-    provider_id: str | None,
-) -> None:
-    """把本轮指定的模型供应商写回会话（含归属校验与 agent 重建）。
-
-    放在这里（而不是 agent 层）是因为它要抛 HTTP 语义的错：
-    用户传了一个不存在/别人的/已停用的 provider → 404，而不是静默用旧的
-    （"我换了模型但它没换"比报错难查得多）。
-
-    `chat.py`（非流式）也复用它 —— 两条入口必须行为一致，
-    否则"脚本调的那条能用、界面这条不能用"这种问题会很难解释。
-    """
-    if provider_id is None:
-        return
-    row = provider_svc.get_owned_provider(db, provider_id, user.id)
-    if row is None or not row.enabled:
-        raise HTTPException(status_code=404, detail="provider not found or disabled")
-    runtime.set_session_provider(session_id, provider_id)
 
 
 async def stream_events(events):
@@ -128,76 +104,14 @@ async def chat_stream(
     就先校验它属于当前用户（否则 404）。`user_id` 会随本轮运行一起被捕获
     （见 `run_manager.start`），供工作区/长期记忆定位。
     """
-    content, has_images = prepare_content(req)
-
-    # 会话解析：无 session_id 则新建；有则校验归属
-    if req.session_id is None:
-        workspace_id = req.workspace_id if req.workspace_id != "legacy" else None
-        if workspace_id:
-            from app.db.models import Workspace
-            workspace = db.get(Workspace, workspace_id)
-            if not workspace or workspace.user_id != user.id:
-                raise HTTPException(status_code=404, detail="工作区不存在")
-        session_id = runtime.create_session(user.id, runtime.session_title(req.message), workspace_id=workspace_id)
-    else:
-        row = owned_session_or_404(db, req.session_id, user)
-        if row.title == "新会话":
-            row.title = runtime.session_title(req.message)
-            db.commit()
-        session_id = req.session_id
-        runtime.touch_session(session_id)
-
-    from app.agent.approvals import read_pending_approval
-    from app.agent.runner import run_manager
-    if run_manager.is_running(session_id):
-        raise HTTPException(status_code=409, detail="该会话已有一轮回答正在进行中")
-    if req.session_id:
-        agent = await runtime.get_agent(session_id, user_id=user.id, history_only=True)
-        pending = await read_pending_approval(agent, {"configurable": {"thread_id": session_id}}, user_id=user.id)
-        if pending.get("pending"):
-            raise HTTPException(status_code=409, detail="请先回答待澄清的问题或处理待审批操作，再发送新消息")
-
-    # 本轮指定的供应商（可选）。先确认用户能用它，再写回会话 + 重建 agent。
-    # 顺序很重要：**必须在起运行之前**，否则这一轮会先用旧模型跑起来。
-    if req.provider_id is not None:
-        apply_provider_choice(db, session_id, user, req.provider_id)
-
-    # 同一会话不允许两轮并行：会同时改同一份 checkpoint
-    if run_manager.is_running(session_id):
-        raise HTTPException(
-            status_code=409,
-            detail="该会话已有一轮回答正在进行中。请等它结束，或先点停止。",
-        )
-
-    refusal = False
-    if has_images:
-        from app.agent.providers import resolve_provider
-        cfg, _ = resolve_provider(db, user.id, runtime.session_context(session_id)[1])
-        refusal = not supports_vision(cfg)
+    prepared = await prepare_chat(req, user, db)
+    # Reserve before returning headers: conflicts remain HTTP 409, and a client
+    # disconnecting before the first SSE frame cannot discard the request.
+    run = start_chat(prepared)
 
     async def _gen():
-        # 先推 session 事件（前端据此记录 session_id）
-        yield sse({"type": "session", "session_id": session_id})
-        if refusal:
-            reply = await save_refusal(session_id, req.message + "\n" + "\n".join("[附件：" + a.name + "]" for a in req.attachments), user.id)
-            yield sse({"type": "result", "content": reply})
-            yield "event: done\ndata: {}\n\n"
-            return
-        try:
-            # 只在后台起运行 —— 这个生成器只负责"订阅"。
-            # user_id 在这里（请求时刻）捕获后传下去：后台 task 里没有"当前用户"。
-            run_manager.start(
-                session_id,
-                {"messages": [{"role": "user", "content": content}]},
-                user_message=req.message,
-                user_id=user.id,
-            )
-        except RuntimeError as e:
-            # 竞态：刚好在两次检查之间起来了另一轮
-            yield sse({"type": "error", "detail": str(e)})
-            yield "event: done\ndata: {}\n\n"
-            return
-        async for chunk in stream_events(run_manager.subscribe(session_id)):
+        yield sse({"type": "session", "session_id": prepared.session_id})
+        async for chunk in stream_events(run_manager.subscribe(prepared.session_id, run=run)):
             yield chunk
 
     return StreamingResponse(_gen(), media_type="text/event-stream", headers=SSE_HEADERS)

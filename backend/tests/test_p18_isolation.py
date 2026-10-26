@@ -363,15 +363,12 @@ def test_user_without_provider_gets_400_not_500():
     assert r.status_code == 400, f"发消息应 400（实际 {r.status_code}）：{r.text[:200]}"
     assert "模型" in r.json()["detail"]
 
-    # 读历史：**同样**要 400 —— 以前这条路径会裸 500（"服务端错误"），
-    # 用户完全看不出其实只是没配模型。
+    # History and pending-state reads are offline operations: users can still
+    # inspect old conversations after removing or disabling their provider.
     r = client.get(f"/api/v1/sessions/{sid}/messages")
-    assert r.status_code == 400, f"读历史应 400（实际 {r.status_code}）：{r.text[:200]}"
-    assert "模型" in r.json()["detail"]
-
-    # 审批查询同理
+    assert r.status_code == 200 and r.json() == []
     r = client.get(f"/api/v1/approvals/{sid}")
-    assert r.status_code == 400
+    assert r.status_code == 200 and not r.json()["pending"]
 
     # 而且他的列表里是空的 —— 看不到别人的模型配置
     assert client.get("/api/v1/llm/providers").json() == []

@@ -305,3 +305,123 @@ def test_file_panel_and_open_directory_follow_workspace(database, tmp_path, monk
     assert client.post("/api/v1/files/open-workspace", params={"workspace_id": "d" * 32}).status_code == 409
     assert not selected.exists()
     client.close()
+
+
+@pytest.mark.parametrize("mode", ["sandbox", "full"])
+def test_agent_memory_and_tools_share_selected_root(database, tmp_path, monkeypatch, mode):
+    import asyncio
+    from app.agent.history_model import HistoryModel
+    from app.agent import prompt
+    from app.core.config import settings
+    from langgraph.checkpoint.memory import InMemorySaver
+    from langgraph.store.memory import InMemoryStore
+    user=SimpleNamespace(id="a"*32)
+    project=tmp_path/"selected-project";project.mkdir()
+    database.add(Workspace(id="d"*32,user_id=user.id,name="selected",directory=str(project)))
+    database.commit()
+    session=sessions.create_session(sessions.CreateSessionRequest(workspace_id="d"*32),user,database)
+    default=runtime.workspace_for(user.id);default.mkdir(parents=True)
+    (default/"Agent.md").write_text("DEFAULT MEMORY MUST NOT LOAD",encoding="utf-8")
+    captured={}
+    def create(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(nodes={})
+    async def get_saver(): return InMemorySaver()
+    async def get_store(): return InMemoryStore()
+    async def seed(backend): pass
+    monkeypatch.setattr(settings,"harness_machine_access",False)
+    monkeypatch.setattr(settings,"sandbox_enabled",False)
+    monkeypatch.setattr(settings,"mcp_enabled",False)
+    monkeypatch.setattr(runtime.access,"access_mode",lambda *args:mode)
+    monkeypatch.setattr(runtime,"_resolve_provider_for_agent",lambda *args:None)
+    monkeypatch.setattr(runtime,"build_llm",lambda *args:HistoryModel())
+    monkeypatch.setattr(runtime,"create_deep_agent",create)
+    monkeypatch.setattr(runtime,"compile_all_skills",lambda:None)
+    monkeypatch.setattr(runtime,"seed_skills",seed)
+    monkeypatch.setattr(runtime,"get_checkpointer",get_saver)
+    monkeypatch.setattr(runtime,"get_store",get_store)
+    try:
+        asyncio.run(runtime.get_agent(session["id"],user_id=user.id))
+        assert (project/"Agent.md").is_file()
+        assert "DEFAULT MEMORY" not in (project/"Agent.md").read_text(encoding="utf-8")
+        assert (default/"Agent.md").read_text(encoding="utf-8")=="DEFAULT MEMORY MUST NOT LOAD"
+        assert captured["memory"]==["/workspace/Agent.md"]
+        assert str(project) in captured["system_prompt"]
+        assert "不是项目默认 workspace 文件夹" in captured["system_prompt"]
+        (project/"selected.txt").write_text("selected project",encoding="utf-8")
+        backend=runtime.get_main_backend(session["id"],user.id)
+        assert "selected project" in backend.read('/workspace/selected.txt').file_data["content"]
+        assert "Agent 记忆" in backend.read('/workspace/Agent.md').file_data["content"]
+    finally:
+        runtime.invalidate_agents(session["id"])
+
+
+def test_selected_memory_preserved_and_scoped(tmp_path):
+    from app.agent.prompt import memory_sources
+    first=tmp_path/"first";second=tmp_path/"second"
+    first.mkdir();second.mkdir()
+    memory_sources("user",workspace=first)
+    (first/"Agent.md").write_text("PROJECT ONE MEMORY",encoding="utf-8")
+    memory_sources("user",workspace=first)
+    memory_sources("user",workspace=second)
+    assert (first/"Agent.md").read_text(encoding="utf-8")=="PROJECT ONE MEMORY"
+    assert "PROJECT ONE" not in (second/"Agent.md").read_text(encoding="utf-8")
+
+
+def test_memory_absent_during_history_is_not_created(tmp_path):
+    from app.agent.prompt import memory_sources,build_system_prompt
+    assert memory_sources("user",workspace=tmp_path,create=False)==[]
+    assert not (tmp_path/"Agent.md").exists()
+    text=build_system_prompt(workspace=tmp_path,memory_available=False)
+    assert "当前工作区没有可加载" in text
+    assert "已在启动时加载" not in text
+
+
+@pytest.mark.parametrize("case",["deleted", "wrong-owner", "missing-directory"])
+def test_invalid_selected_workspace_does_not_fall_back(database,tmp_path,case):
+    user=SimpleNamespace(id="a"*32)
+    database.add(DbSession(id="c"*32,user_id=user.id,workspace_id="d"*32,title="bound",status="active"))
+    if case!="deleted":
+        database.add(Workspace(id="d"*32,user_id=("b"*32 if case=="wrong-owner" else user.id),name="project",directory=str(tmp_path/"missing")))
+    database.commit()
+    with pytest.raises(RuntimeError,match="工作区"):
+        runtime.session_workspace("c"*32,user.id)
+    assert not (runtime.workspace_for(user.id)/"workspaces"/('d'*32)).exists()
+
+
+def test_subagent_workspace_context(tmp_path):
+    from app.agent.subagents import SubAgentConfig,build_subagent
+    spec=build_subagent(SubAgentConfig(name="worker",description="test",system_prompt="test"),workspace=tmp_path,mode="full")
+    assert str(tmp_path) in spec["system_prompt"]
+    assert "execute 的真实工作目录" in spec["system_prompt"]
+
+
+@pytest.mark.parametrize("cached_empty",[False,True])
+def test_real_memory_loading_and_old_empty_checkpoint(tmp_path,monkeypatch,cached_empty):
+    import asyncio
+    from deepagents import create_deep_agent
+    from langchain_core.messages import AIMessage
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+    from app.agent.prompt import memory_sources
+    from app.agent.workspace_memory import WorkspaceMemoryRepairMiddleware
+    from app.agent.sandbox import build_main_backend
+    from app.core.config import settings
+    class Model(FakeMessagesListChatModel):
+        def bind_tools(self,tools,**kwargs):return self
+    project=tmp_path/"project";project.mkdir()
+    (project/"Agent.md").write_text("CURRENT PROJECT MEMORY",encoding="utf-8")
+    monkeypatch.setattr(settings,"harness_machine_access",False)
+    monkeypatch.setattr(settings,"sandbox_enabled",False)
+    backend=build_main_backend(session_key="memory-test",workspace=project,mode="sandbox")
+    sources=memory_sources("user",workspace=project)
+    from langgraph.checkpoint.memory import InMemorySaver
+    g=create_deep_agent(model=Model(responses=[AIMessage(content="ok")]),backend=backend,memory=sources,
+        middleware=[WorkspaceMemoryRepairMiddleware(backend,sources)],checkpointer=InMemorySaver())
+    async def run():
+        config={"configurable":{"thread_id":"memory-test"}}
+        if cached_empty:
+            await g.aupdate_state(config,{"memory_contents":{}},as_node="model")
+        await g.ainvoke({"messages":[{"role":"user","content":"hi"}]},config)
+        snapshot=await g.aget_state(config)
+        assert snapshot.values["memory_contents"]["/workspace/Agent.md"]=="CURRENT PROJECT MEMORY"
+    asyncio.run(run())

@@ -55,12 +55,10 @@ from __future__ import annotations
 
 import asyncio
 import atexit
-import locale
 import logging
 import os
 import re
 import shlex
-import subprocess
 import tempfile
 import threading
 from dataclasses import dataclass, field
@@ -69,10 +67,8 @@ from pathlib import Path
 from typing import Final
 
 from deepagents.backends import (
-    DEFAULT_EXECUTE_TIMEOUT,
     CompositeBackend,
     FilesystemBackend,
-    LocalShellBackend,
 )
 from deepagents.backends.protocol import (
     BackendProtocol,
@@ -90,122 +86,15 @@ from deepagents.backends.protocol import (
     WriteResult,
 )
 
+from app.agent.host_shell import HostShellBackend, decode_shell_output  # compatibility exports
+from app.agent.path_mapping import PathMapper, anchored_glob_args, translate_command
+from app.agent.workspace_files import WorkspacePrefixMixin
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 #: 本机磁盘在模型侧的挂载根：`/mnt/<名称>/...`。
 MACHINE_MOUNT_ROOT: Final[str] = "/mnt"
-
-
-def anchored_glob_args(pattern: str, path: str | None) -> tuple[str, str | None]:
-    """把「绝对模式 + search path」归一成 `FilesystemBackend.glob` 真正认的组合。
-
-    背景（实测，见 `_probe/p12_glob_probe.py`）：`FilesystemBackend.glob` 的匹配是拿
-    **相对 search path** 的路径去比对模式的。所以
-
-        glob('/proj/*.py', path='/proj')   →  []            # 绝对模式 vs 相对比对
-        glob('*.py',      path='/proj')   →  ['/proj/existing.py']
-
-    而模型给的是绝对路径。这里在调用前把绝对模式按 search path 折成相对模式
-    （模式在 search path 之外时，退化成"以根为锚"解释，等价于 path=None 的行为）。
-
-    Args:
-        pattern: 已折掉工具前缀的模式（如 `/proj/*.py`；挂载点已折掉 `/mnt/<名>`）。
-        path: 已折掉工具前缀的搜索目录（如 `/proj`），或 None。
-
-    Returns:
-        `(pattern, path)`：可直接传给 `FilesystemBackend.glob`。
-    """
-    if not pattern or not pattern.startswith("/"):
-        return pattern, path  # 相对模式：本来就是相对 search path 的
-
-    search = (path or "/").rstrip("/") or "/"
-    if search == "/":
-        # 以根为锚：去掉开头的 `/` 就是"相对根目录"的模式
-        return (pattern.lstrip("/") or "**"), "/"
-    if pattern == search or pattern.startswith(search + "/"):
-        rel = pattern[len(search):].lstrip("/")
-        return (rel or "**"), search
-    # 模式指向 search path 之外：按根锚解释（忽略 path，比返回空更符合直觉）
-    return (pattern.lstrip("/") or "**"), "/"
-
-# ============================================================================
-# 路径映射：虚拟绝对路径  <->  沙箱真实路径
-# ============================================================================
-
-# 工具/系统目录不参与映射（否则 `ls /bin` 会被改写成 `/workspace/bin`）
-_SYSTEM_ROOTS: Final[frozenset[str]] = frozenset(
-    {"/bin", "/sbin", "/usr", "/lib", "/lib64", "/etc", "/proc", "/sys", "/dev", "/var", "/opt"}
-)
-_PATH_TOKEN: Final = re.compile(r"(?<![\w./-])/[A-Za-z0-9_./\-]*")
-
-
-def translate_command(command: str, root: str) -> str:
-    """把命令里的虚拟绝对路径改写成沙箱真实路径。
-
-    例（root=/workspace）：`python /scripts/a.py` → `python /workspace/scripts/a.py`
-
-    跳过：系统目录（`_SYSTEM_ROOTS`）、`/`、`//`、以及已带 root 前缀的路径（避免二次改写）。
-    注：装了 `prefix=/workspace` 之后，模型的路径本来就是容器路径，这个函数通常什么都不改；
-    它保留是为了兼容 `prefix=None` 的部署形态。
-    """
-    root = root.rstrip("/")
-
-    def _sub(m: re.Match[str]) -> str:
-        tok = m.group(0)
-        if tok in ("/", "//") or tok.startswith(root + "/"):
-            return tok
-        head = "/" + tok.lstrip("/").split("/", 1)[0]
-        if head in _SYSTEM_ROOTS:
-            return tok
-        return root + tok
-
-    return _PATH_TOKEN.sub(_sub, command)
-
-
-class PathMapper:
-    """虚拟路径（模型看到的 `/workspace/a/b.txt`）与沙箱路径（`/workspace/a/b.txt`）互转。
-
-    两种情况：
-    - **无工具前缀**（`prefix=None`）：沙箱根 = `settings.sandbox_root`（如 `/workspace`），
-      模型的 `/a.txt` 在容器里是 `/workspace/a.txt`。
-    - **有工具前缀**（`prefix="/workspace"`）：模型路径本身就带 `/workspace`，容器根仍是
-      `/workspace`，所以前缀外的部分是**同一个字符串** —— 模型不需要做路径翻译。
-    """
-
-    def __init__(self, root: str, prefix: str | None = None) -> None:
-        self.root = "/" + root.strip("/")
-        self.prefix = PathMapper._norm(prefix)
-
-    @staticmethod
-    def _norm(prefix: str | None) -> str | None:
-        if not prefix:
-            return None
-        norm = "/" + prefix.strip("/")
-        return None if norm == "/" else norm
-
-    def to_sandbox(self, virtual_path: str) -> str:
-        """虚拟路径 → 沙箱内真实路径（幂等）。"""
-        if virtual_path in ("", "/"):
-            return self.root
-        if virtual_path == self.root or virtual_path.startswith(self.root + "/"):
-            return virtual_path  # 已经是容器路径（含带 prefix 的情形）
-        if self.prefix and (virtual_path == self.prefix or virtual_path.startswith(self.prefix + "/")):
-            # `/workspace/a.txt` → 去掉 prefix 后落到容器根：`/workspace/a.txt`
-            return self.root + virtual_path[len(self.prefix):]
-        return self.root + "/" + virtual_path.lstrip("/")
-
-    def to_virtual(self, sandbox_path: str) -> str:
-        """沙箱内真实路径 → 虚拟路径（带 prefix 的模型视角）。"""
-        inner = sandbox_path
-        if sandbox_path == self.root:
-            inner = "/"
-        elif sandbox_path.startswith(self.root + "/"):
-            inner = sandbox_path[len(self.root):]
-        if self.prefix and inner != "/":
-            return self.prefix + inner
-        return inner or "/"
 
 
 # ============================================================================
@@ -610,134 +499,6 @@ def _exit_code(execution) -> int | None:
 # ============================================================================
 # 混合 default 后端：文件→本地磁盘，execute→OpenSandbox，并做同步
 # ============================================================================
-
-
-class WorkspacePrefixMixin:
-    r"""把「带工作区前缀的工具路径」折进本地根目录的公共路径层。
-
-    ## 为什么需要这一层
-
-    `FilesystemBackend(root_dir=<root>, virtual_mode=True)` 的标准语义是
-    `/a.txt` → `<root>/a.txt`（模型看到 `/` 就是 root）。但本项目模型侧的路径统一带
-    工作区前缀（`/workspace/a.txt`），而且**这个前缀必须与容器内的工作目录同名** ——
-    否则"文件工具看到的路径"和"`execute` 在容器里看到的路径"就不是同一个字符串，
-    模型得在两套路径体系之间手工翻译（这正是的老毛病）。
-
-    于是需要一层很薄的翻译：
-
-    - 进入 backend **之前**把 `/workspace` 折掉（`_strip_prefix`）；
-    - 返回给模型 **之前**再补回来（`_display_path`，否则会把宿主绝对路径漏给模型）。
-
-    ## 为什么抽成 mixin
-
-    这层逻辑被两个后端共用，它们的区别**只在"谁来执行命令"**：
-
-    | backend | 文件操作 | execute |
-    |---------|---------|---------|
-    | `HybridDefaultBackend` | 本地磁盘 | OpenSandbox 容器（默认权限） |
-    | `HostShellBackend` | 本地磁盘 | 本机 shell（完全访问） |
-
-    路径语义必须完全一致，所以放在这里；谁执行命令那部分各自实现。
-    """
-
-    #: 工具路径前缀（`PathMapper`）；None 表示模型直接看到 `/a.txt`。
-    _prefix: "PathMapper | None"
-
-    # ---- 工具路径 → FilesystemBackend 内部的虚拟路径（去掉 prefix） ----
-    def _strip_prefix(self, key: str) -> str:
-        """把 `/workspace/a.txt` 折成 `/a.txt`；prefix 之外的路径原样返回。
-
-        纯字符串操作（不做文件系统检查）：会被 `_resolve_path`/`ls`/`glob` 高频调用。
-        """
-        if self._prefix is None or self._prefix.root == "/":
-            return key
-        root = self._prefix.root
-        if key == root:
-            return "/"
-        if key.startswith(root + "/"):
-            return key[len(root):]
-        return key
-
-    # ---- 覆写 FilesystemBackend 的全部路径入口，统一先折 prefix ----
-    def _resolve_path(self, key: str) -> Path:
-        return super()._resolve_path(self._strip_prefix(key))
-
-    def _display_path(self, path: Path) -> str:
-        """把本地真实路径还原成带 prefix 的工具路径（否则会把宿主绝对路径泄露给模型）。"""
-        if self._prefix is None or self._prefix.root == "/":
-            return super()._display_path(path)
-        try:
-            return self._prefix.root + "/" + path.resolve().relative_to(self.cwd).as_posix()
-        except (ValueError, OSError, RuntimeError):
-            return path.name or "/"
-
-    def ls(self, path: str) -> LsResult:
-        return super().ls(self._strip_prefix(path))
-
-    async def als(self, path: str) -> LsResult:
-        return await asyncio.to_thread(self.ls, path)
-
-    def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
-        return super().read(self._strip_prefix(file_path), offset=offset, limit=limit)
-
-    async def aread(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
-        return await asyncio.to_thread(self.read, file_path, offset, limit)
-
-    def write(self, file_path: str, content: str) -> WriteResult:
-        return super().write(self._strip_prefix(file_path), content)
-
-    async def awrite(self, file_path: str, content: str) -> WriteResult:
-        return await asyncio.to_thread(self.write, file_path, content)
-
-    def edit(self, file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> EditResult:
-        return super().edit(self._strip_prefix(file_path), old_string, new_string, replace_all=replace_all)
-
-    async def aedit(self, file_path: str, old_string: str, new_string: str, replace_all: bool = False) -> EditResult:
-        return await asyncio.to_thread(self.edit, file_path, old_string, new_string, replace_all)
-
-    def delete(self, file_path: str) -> DeleteResult:
-        return super().delete(self._strip_prefix(file_path))
-
-    async def adelete(self, file_path: str) -> DeleteResult:
-        return await asyncio.to_thread(self.delete, file_path)
-
-    def grep(
-        self,
-        pattern: str,
-        path: str | None = None,
-        glob: str | None = None,
-        *,
-        max_count: int | None = None,
-        **kwargs,
-    ) -> GrepResult:
-        return super().grep(
-            pattern,
-            self._strip_prefix(path) if path else path,
-            glob,
-            max_count=max_count,
-            **kwargs,
-        )
-
-    async def agrep(self, pattern: str, path: str | None = None, glob: str | None = None, **kwargs) -> GrepResult:
-        return await asyncio.to_thread(self.grep, pattern, path, glob, **kwargs)
-
-    def glob(self, pattern: str, path: str | None = None) -> GlobResult:
-        """模式里的 prefix 也要剥掉：`/workspace/**/*.py` → `**/*.py`。
-
-        `FilesystemBackend.glob` 会把首尾的 `/` 去掉再按"相对根目录"匹配，所以带 prefix
-        的锚定模式必须先去前缀，否则匹配不到任何文件。
-
-        另外：`path` 给定时，匹配是**相对 search path** 的（实测见 `anchored_glob_args`），
-        所以 `glob('/workspace/notes/*.py', '/workspace/notes')` 这种"双绝对"写法也要
-        归一化，不然同样是空结果。
-        """
-        raw_pattern = self._strip_prefix(pattern)
-        search = self._strip_prefix(path) if path else None
-        sub_pattern, sub_path = anchored_glob_args(raw_pattern, search)
-        return super().glob(sub_pattern, sub_path)
-
-    async def aglob(self, pattern: str, path: str | None = None) -> GlobResult:
-        return await asyncio.to_thread(self.glob, pattern, path)
 
 
 class HybridDefaultBackend(WorkspacePrefixMixin, FilesystemBackend, SandboxBackendProtocol):
@@ -1263,173 +1024,6 @@ def build_machine_routes(*, read_only: bool = True) -> dict[str, BackendProtocol
     # `/mnt` 这一层本身（否则 ls /mnt 会落到工作区，见 MachineRootsBackend 的说明）
     routes[f"{MACHINE_MOUNT_ROOT}/"] = MachineRootsBackend([name for name, _ in mounts])
     return routes
-
-
-def decode_shell_output(raw: bytes | None) -> str:
-    r"""把本机 shell 的原始输出字节解码成文本（**只用于完全访问模式**）。
-
-    ## 为什么不能交给 `subprocess(text=True)`
-
-    `text=True` 走 `locale`/UTF-8 解码，遇到**混编码输出**会直接在读取线程里抛
-    `UnicodeDecodeError`。实测（本机 Windows 中文系统）：`dir` 的输出是 GBK，
-    而进程默认解码器是 UTF-8 ⇒ 异常发生在 reader 线程里、`subprocess.run` 照常返回，
-    结果是 **stdout 变空、退出码 0** —— 工具把"什么都不输出"当成成功回给模型。
-    这正是最坏的一类故障（熔断器也不会计数，模型只会反复换招）。
-
-    ## 策略
-
-    1. 先按 UTF-8 严格解码（`python` 子进程、多数 CLI 工具、`PYTHONUTF8=1` 的场景）；
-    2. 失败则按**操作系统 ANSI 代码页**（中文 Windows = cp936/GBK）解码，坏字节降级成 `?`。
-
-    ⚠️ 第 2 步必须用 `locale.getencoding()` 而**不是** `getpreferredencoding(False)`：
-    后者在 UTF-8 模式（`PYTHONUTF8=1`，本项目的运行环境就是）下会返回 `utf-8`，
-    于是 GBK 字节被当成坏字节全部替换成 U+FFFD（实测 `dir` 的中文全变成 `?`）。
-    `getencoding()` 拿的是真正的系统代码页，不受 UTF-8 模式影响。
-
-    两种主流来源都能正常显示，且**永不抛异常**。
-    """
-    if not raw:
-        return ""
-    try:
-        return raw.decode("utf-8")
-    except UnicodeDecodeError:
-        pass
-    try:
-        getter = getattr(locale, "getencoding", None)  # Python 3.11+
-        fallback = (getter() if getter else locale.getpreferredencoding(False)) or "utf-8"
-    except Exception:  # noqa: BLE001 极端环境下拿不到 locale 也不该让命令"失败"
-        fallback = "utf-8"
-    return raw.decode(fallback, errors="replace")
-
-
-class HostShellBackend(WorkspacePrefixMixin, LocalShellBackend):
-    r"""**完全访问权限**后端：文件走本地磁盘，`execute` 直接在本机 shell 里跑。
-
-    这是「默认权限（沙箱内）」的对照物 —— 两者的**文件层完全相同**（都落本地磁盘、
-    都用 `WorkspacePrefixMixin` 折叠 `/workspace` 前缀），区别只在"谁来执行命令"：
-
-    | | 文件操作 | execute | 隔离 |
-    |---|---|---|---|
-    | `HybridDefaultBackend` | 本地磁盘 | OpenSandbox 容器（+ 前后同步） | 有（容器） |
-    | `HostShellBackend`（本类） | 本地磁盘 | **本机 `subprocess`** | **无** |
-
-    ## 为什么继承 `LocalShellBackend` 而不是自己写 subprocess
-
-    1. 它就是 deepagents 自带的"本机 shell"后端，用户要的就是它；
-    2. 超时、输出截断（100KB）、stderr 逐行标 `[stderr]`、
-       `stdin=DEVNULL`（防 `cat`/`python` 这类命令读 stdin 挂死）这些细节它都处理好了，
-       自己写一遍只会漏掉其中几条。
-
-    ## 为什么还需要 `CompositeBackend` 包一层
-
-    模型侧的路径约定带 `/workspace` 前缀（与容器内工作目录同名），这需要
-    `WorkspacePrefixMixin` 折叠；另外 `/mnt/<盘>/` 挂载路由要继续可用
-    （见 `build_full_access_backend`）。所以本类作为 `CompositeBackend` 的 `default` 使用。
-
-    ## ⚠️ `virtual_mode=True` 只管文件工具，**管不住 shell**
-
-    `virtual_mode` 把 `read_file`/`write_file` 等限制在 `root_dir` 与已挂载路由内；
-    但 `execute("cat D:/a.txt")` 照样能读全盘 —— 命令是 `shell=True` 直接交给系统 shell 的。
-    这正是"完全访问"的本意，也是它必须**由用户显式选择、且默认关闭**的原因。
-
-    ## ⚠️ `inherit_env` 必须为 True
-
-    `LocalShellBackend` 默认 `inherit_env=False` 且 `env={}` ⇒ 子进程拿到的是**空环境变量**，
-    连 `PATH` 都没有，`python`/`node`/`git` 全部"不是内部或外部命令"。本机开发场景下这是
-    纯粹的坑（沙箱里不存在这个问题，因为容器有完整的系统 PATH），所以这里默认继承。
-    """
-
-    def __init__(
-        self,
-        *,
-        root_dir: str | Path,
-        virtual_mode: bool = True,
-        timeout: int | None = None,
-        inherit_env: bool = True,
-        env: dict[str, str] | None = None,
-        prefix: str | None = None,
-    ) -> None:
-        super().__init__(
-            root_dir=root_dir,
-            virtual_mode=virtual_mode,
-            timeout=int(timeout or settings.sandbox_default_timeout_seconds or DEFAULT_EXECUTE_TIMEOUT),
-            inherit_env=inherit_env,
-            env=env,
-        )
-        self._prefix = PathMapper(prefix) if prefix else None
-        # 让子进程（尤其是 python）统一吐 UTF-8：本机 Windows 默认是 GBK，命令输出经常
-        # 混着两种编码。把 python 侧钉死成 UTF-8，未知来源再走 decode_shell_output 的兜底。
-        # 用 setdefault —— 用户显式配置的编码优先。
-        self._env.setdefault("PYTHONIOENCODING", "utf-8")
-        self._env.setdefault("PYTHONUTF8", "1")
-
-    def execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
-        r"""在**本机**执行 shell 命令（`shell=True`，工作目录 = 工作区根）。
-
-        与父类 `LocalShellBackend.execute` 的唯一区别是**输出解码**：父类用
-        `text=True`，在中文 Windows 上会让 `dir` 这类命令的输出解码异常发生在读取线程里，
-        最终表现为"stdout 为空 + 退出码 0"（静默失败）。这里改成先拿 bytes 再
-        `decode_shell_output()` 解码，其余语义（超时、`[stderr]` 标注、截断、
-        追加 `Exit code: N`）与父类保持一致。
-
-        ⚠️ 命令不做任何路径翻译：这是**本机** shell，模型应当用本机真实路径
-        （`D:\proj\a.py` 或 `D:/proj/a.py`），而不是沙箱里的 `/workspace/...`。
-        """
-        if not command or not isinstance(command, str):
-            return ExecuteResponse(
-                output="Error: Command must be a non-empty string.",
-                exit_code=1,
-                truncated=False,
-            )
-
-        effective_timeout = timeout if timeout is not None else self._default_timeout
-        if effective_timeout <= 0:
-            msg = f"timeout must be positive, got {effective_timeout}"
-            raise ValueError(msg)
-
-        try:
-            result = subprocess.run(  # noqa: S602 本机 shell 是本后端的定义（完全访问）
-                command,
-                check=False,
-                shell=True,
-                capture_output=True,
-                stdin=subprocess.DEVNULL,  # 防 `cat`/`python` 这类读 stdin 的命令挂死
-                timeout=effective_timeout,
-                env=self._env,
-                cwd=str(self.cwd),
-            )
-        except subprocess.TimeoutExpired:
-            if timeout is not None:
-                msg = f"Error: Command timed out after {effective_timeout} seconds (custom timeout). The command may be stuck or require more time."
-            else:
-                msg = f"Error: Command timed out after {effective_timeout} seconds. For long-running commands, re-run using the timeout parameter."
-            return ExecuteResponse(output=msg, exit_code=124, truncated=False)
-        except Exception as e:  # noqa: BLE001 执行异常一律摊平成可读结果，不炸整轮对话
-            return ExecuteResponse(
-                output=f"Error executing command ({type(e).__name__}): {e}",
-                exit_code=1,
-                truncated=False,
-            )
-
-        out_text = decode_shell_output(result.stdout)
-        err_text = decode_shell_output(result.stderr)
-        parts: list[str] = []
-        if out_text:
-            parts.append(out_text)
-        if err_text.strip():
-            parts.extend(f"[stderr] {line}" for line in err_text.strip().split("\n"))
-        output = "\n".join(parts) if parts else "<no output>"
-
-        truncated = False
-        if len(output) > self._max_output_bytes:
-            output = output[: self._max_output_bytes]
-            output += f"\n\n... Output truncated at {self._max_output_bytes} bytes."
-            truncated = True
-
-        if result.returncode != 0:
-            output = f"{output.rstrip()}\n\nExit code: {result.returncode}"
-
-        return ExecuteResponse(output=output, exit_code=result.returncode, truncated=truncated)
 
 
 def build_full_access_backend(

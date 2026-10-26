@@ -252,6 +252,7 @@ def test_create_deep_agent_with_subagents_and_permissions(workspace, monkeypatch
     "does not yet support permissions with backends that provide command execution"。
     """
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test-placeholder")
+    monkeypatch.setattr("app.agent.model.settings.deepseek_api_key", "sk-test-placeholder")
     from deepagents import create_deep_agent
 
     from app.agent.model import build_llm

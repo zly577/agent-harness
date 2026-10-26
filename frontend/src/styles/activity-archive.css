@@ -1,0 +1,9 @@
+.act { box-sizing: border-box; }
+.step-number { display: grid; place-items: center; flex: 0 0 20px; height: 20px; border-radius: 6px; background: var(--fill); color: var(--text-3); font-family: var(--mono); font-size: 10px; }
+.act.running .step-number, .act.generating .step-number { color: var(--text); }
+.archived-step > summary { cursor: pointer; list-style: none; }
+.archived-step > summary::-webkit-details-marker { display: none; }
+.archived-step > summary:hover { background: var(--hover); }
+.archived-step > .tool-detail { margin-left: 29px; }
+.archived-step:not([open]) { display: block; }
+.operation-output > summary { cursor: pointer; font-size: 11px; color: var(--text-3); margin-bottom: 6px; }

@@ -54,44 +54,16 @@ def test_session_row_in_mysql():
 
 
 def test_sqlite_checkpoint_metadata():
-    """确认 SQLite 会话历史表确实会落盘（进程重启可用）。"""
+    """Checkpoint and store tables must exist in the configured isolated file."""
     import asyncio
+    from contextlib import closing
+    from app.agent.context import get_checkpointer, get_store
+    from app.core.config import settings
 
-    from app.agent.context import get_checkpointer
-    # 只验证能构建 & 建表，不真的发消息
-    async def _probe():
-        cp = await get_checkpointer()
-        return cp
-    asyncio.run(_probe())
-    conn = sqlite3.connect("data/harness.sqlite")
-    try:
-        tables = {r[0] for r in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        )}
-        assert "checkpoints" in tables
-        assert "writes" in tables
-        assert "store" in tables
-    finally:
-        conn.close()
-
-
-def test_sqlite_checkpoint_metadata():
-    """确认 SQLite 会话历史表确实会落盘（进程重启可用）。"""
-    import asyncio
-
-    from app.agent.context import get_checkpointer
-    # 只验证能构建 & 建表，不真的发消息
-    async def _probe():
-        cp = await get_checkpointer()
-        return cp
-    asyncio.run(_probe())
-    conn = sqlite3.connect("data/harness.sqlite")
-    try:
-        tables = {r[0] for r in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        )}
-        assert "checkpoints" in tables
-        assert "writes" in tables
-        assert "store" in tables
-    finally:
-        conn.close()
+    async def probe():
+        await get_checkpointer()
+        await get_store()
+    asyncio.run(probe())
+    with closing(sqlite3.connect(settings.sqlite_path)) as conn:
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert {"checkpoints", "writes", "store"} <= tables

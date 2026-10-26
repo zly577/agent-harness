@@ -130,7 +130,7 @@ def load_all_subagents_cfg() -> list[SubAgentConfig]:
     return result
 
 
-def build_subagent(cfg: SubAgentConfig):
+def build_subagent(cfg: SubAgentConfig, *, workspace: Path | None = None, mode: str = "sandbox", backend=None):
     """把配置构建为 deepagents SubAgent（省略 model 以继承主 Agent 模型）。
 
     权限路径会经 `_to_route_path()` 统一到 `/workspace` 前缀内 —— 这是硬性要求：
@@ -143,6 +143,13 @@ def build_subagent(cfg: SubAgentConfig):
 
     from app.agent.middleware import build_intent_strip_middleware, build_self_kill_guard_middleware
 
+    system_prompt = cfg.system_prompt + "\n\n" + CLARIFICATION_POLICY
+    if workspace is not None:
+        from app.agent.prompt import current_workspace_prompt_section
+        system_prompt += current_workspace_prompt_section(workspace, mode)
+    if mode == "full":
+        from app.agent.prompt import full_access_prompt_section
+        system_prompt += full_access_prompt_section(workspace=workspace)
     permissions = []
     if cfg.permissions_allow_read:
         permissions.append(
@@ -164,7 +171,7 @@ def build_subagent(cfg: SubAgentConfig):
     return SubAgent(
         name=cfg.name,
         description=cfg.description,
-        system_prompt=cfg.system_prompt + "\n\n" + CLARIFICATION_POLICY,
+        system_prompt=system_prompt,
         permissions=permissions or None,
         # 只剥离 `_intent`，不注入 schema。
         # 子智能体的工具调用走 `subagent_tool` 事件（不在这期的契约里），所以
@@ -175,13 +182,21 @@ def build_subagent(cfg: SubAgentConfig):
         # 护栏必须**单独挂**（子智能体不继承主 Agent 的中间件栈）。少了这一行，
         # 子智能体照样能跑 `Stop-Process -Name python -Force` 把后端杀掉 ——
         # 而"调用者是谁"对后果毫无影响：死的是同一个进程。
-        middleware=[build_intent_strip_middleware(), ClarificationMiddleware(), build_self_kill_guard_middleware()],
+        middleware=[build_intent_strip_middleware(), ClarificationMiddleware(), build_self_kill_guard_middleware()]
+        + _host_filesystem_middleware(backend, permissions, mode),
     )
 
 
-def load_all_subagents() -> list:
+def _host_filesystem_middleware(backend, permissions, mode):
+    if mode != "full" or backend is None:
+        return []
+    from app.agent.host_shell import host_filesystem_middleware
+    return host_filesystem_middleware(backend, permissions)
+
+
+def load_all_subagents(*, workspace: Path | None = None, mode: str = "sandbox", backend=None) -> list:
     """加载所有子智能体，返回 deepagents SubAgent 对象列表（供 create_deep_agent(subagents=...))."""
-    return [build_subagent(c) for c in load_all_subagents_cfg()]
+    return [build_subagent(c, workspace=workspace, mode=mode, backend=backend) for c in load_all_subagents_cfg()]
 
 
 @lru_cache

@@ -1,20 +1,15 @@
-"""对话路由（MySQL 持久化会话校验；归属隔离）。
-
-一次性的非流式对话接口（`POST /api/v1/chat`）。前端走的是流式那条
-（`/api/v1/chat/stream`），这个端点主要给脚本/探针用。
-"""
+"""JSON chat transport; preparation and execution are shared with SSE."""
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session as OrmSession
 
-from app.agent.attachments import prepare_content, supports_vision, save_refusal
-from app.agent import runtime
-from app.api.deps import get_current_user, owned_session_or_404
 from app.agent.providers import ProviderNotConfigured
-from app.api.routes.chat_stream import apply_provider_choice
+from app.agent.runner import RunStopped, run_manager
+from app.api.deps import get_current_user
 from app.core.crypto import scrub_secrets
 from app.db.models import User
 from app.db.session import get_db
 from app.schemas.chat import ChatRequest, ChatResponse
+from app.services.chat import prepare_chat, start_chat
 
 router = APIRouter(prefix="/api/v1", tags=["chat"])
 
@@ -25,56 +20,17 @@ async def chat(
     user: User = Depends(get_current_user),
     db: OrmSession = Depends(get_db),
 ):
-    content, has_images = prepare_content(req)
-
-    # 会话解析：无 session_id 则新建（登记 MySQL，绑定当前用户）；有则校验归属
-    if req.session_id is None:
-        workspace_id = req.workspace_id if req.workspace_id != "legacy" else None
-        if workspace_id:
-            from app.db.models import Workspace
-            workspace = db.get(Workspace, workspace_id)
-            if not workspace or workspace.user_id != user.id:
-                raise HTTPException(status_code=404, detail="工作区不存在")
-        session_id = runtime.create_session(user.id, runtime.session_title(req.message), workspace_id=workspace_id)
-    else:
-        row = owned_session_or_404(db, req.session_id, user)
-        if row.title == "新会话":
-            row.title = runtime.session_title(req.message)
-            db.commit()
-        session_id = req.session_id
-        runtime.touch_session(session_id)
-
-    from app.agent.approvals import read_pending_approval
-    from app.agent.runner import run_manager
-    if run_manager.is_running(session_id):
-        raise HTTPException(status_code=409, detail="该会话已有一轮回答正在进行中")
-    if req.session_id:
-        agent = await runtime.get_agent(session_id, user_id=user.id, history_only=True)
-        pending = await read_pending_approval(agent, {"configurable": {"thread_id": session_id}}, user_id=user.id)
-        if pending.get("pending"):
-            raise HTTPException(status_code=409, detail="请先回答待澄清的问题或处理待审批操作，再发送新消息")
-
-    # 与流式入口共用同一段逻辑（含归属校验 + agent 重建），行为必须一致
-    apply_provider_choice(db, session_id, user, req.provider_id)
-
-    refusal = False
-    if has_images:
-        from app.agent.providers import resolve_provider
-        cfg, _ = resolve_provider(db, user.id, runtime.session_context(session_id)[1])
-        refusal = not supports_vision(cfg)
-
+    prepared = await prepare_chat(req, user, db)
+    run = start_chat(prepared)
     try:
-        reply = (await save_refusal(session_id, req.message + "\n" + "\n".join("[附件：" + a.name + "]" for a in req.attachments), user.id)
-                 if refusal else await runtime.run_chat(session_id, content, user_id=user.id))
+        reply = await run_manager.wait_result(run)
     except ProviderNotConfigured:
-        # 交给 main.py 的全局处理器转 400（"还没配模型"是用户能自己解决的前置条件）。
         raise
-    except Exception as e: # 其它模型/运行时错误统一转 500（兜底；中间件细化）
-        # ⚠️ 必须过 scrub_secrets：供应商 SDK 的报错里可能带请求头或 URL
-        # （见过 `...?api_key=sk-xxx` 这种），而这条 detail 会原样回给前端。
+    except RunStopped as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
         raise HTTPException(
             status_code=500,
-            detail=scrub_secrets(f"agent error: {type(e).__name__}: {e}"),
-        )
-
-    return ChatResponse(session_id=session_id, reply=reply)
+            detail=scrub_secrets(f"agent error: {type(exc).__name__}: {exc}"),
+        ) from exc
+    return ChatResponse(session_id=prepared.session_id, reply=reply)

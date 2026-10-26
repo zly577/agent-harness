@@ -53,7 +53,7 @@ class AttachmentTests(unittest.TestCase):
 
     def test_refusal_persisted_without_invoking_model(self):
         agent = AsyncMock()
-        with patch("app.agent.runtime.get_agent", AsyncMock(return_value=agent)), patch("app.agent.runtime.invalidate_agents") as invalidate:
+        with patch("app.agent.runtime.get_agent", AsyncMock(return_value=agent)), patch("app.agent.runtime.invalidate_agents") as invalidate, patch("app.agent.conversation_history.sync_checkpoints", AsyncMock()):
             reply = asyncio.run(save_refusal("sid", "[附件：photo.png]", "uid"))
         self.assertEqual(reply, REFUSAL)
         agent.ainvoke.assert_not_called()
@@ -64,32 +64,43 @@ class AttachmentTests(unittest.TestCase):
 
     def test_routes_refuse_before_model_call(self):
         from app.api.routes import chat, chat_stream
+        from app.services import chat as service
+        from app.agent.runner import RunManager
         data = io.BytesIO()
         Image.new("RGB", (2, 2)).save(data, format="PNG")
         req = request("photo.png", data.getvalue())
         req.session_id = "sid"
         for route in [chat, chat_stream]:
             with self.subTest(route=route.__name__), ExitStack() as stack:
-                stack.enter_context(patch.object(route, "owned_session_or_404", return_value=SimpleNamespace(title="existing")))
-                stack.enter_context(patch.object(route.runtime, "touch_session"))
-                stack.enter_context(patch.object(route.runtime, "session_context", return_value=("uid", "pid")))
+                manager = RunManager()
+                stack.enter_context(patch.object(service, "run_manager", manager))
+                stack.enter_context(patch.object(route, "run_manager", manager))
+                stack.enter_context(patch.object(service, "owned_session_or_404", return_value=SimpleNamespace(title="existing")))
+                stack.enter_context(patch.object(service.runtime, "touch_session"))
+                stack.enter_context(patch.object(service.runtime, "get_agent", AsyncMock()))
+                stack.enter_context(patch.object(service, "read_pending_approval", AsyncMock(return_value={"pending": False})))
+                stack.enter_context(patch.object(service.runtime, "session_context", return_value=("uid", "pid")))
                 stack.enter_context(patch("app.agent.providers.resolve_provider", return_value=(ProviderConfig(model="deepseek-chat"), "session")))
-                stack.enter_context(patch.object(route, "save_refusal", AsyncMock(return_value=REFUSAL)))
-                invoke = stack.enter_context(patch.object(route.runtime, "run_chat", AsyncMock()))
+                save = stack.enter_context(patch.object(service, "save_refusal", AsyncMock(return_value=REFUSAL)))
+                invoke = stack.enter_context(patch.object(service.runtime, "agent_event_stream"))
                 if route is chat_stream:
-                    stack.enter_context(patch.object(route.run_manager, "is_running", return_value=False))
-                    start = stack.enter_context(patch.object(route.run_manager, "start"))
                     async def collect():
                         response = await route.chat_stream(req, SimpleNamespace(id="uid"), None)
-                        return "".join([part async for part in response.body_iterator])
+                        output = "".join([part async for part in response.body_iterator])
+                        await manager.aclose()
+                        return output
                     output = asyncio.run(collect())
                     self.assertIn(REFUSAL, output)
                     self.assertIn("event: done", output)
-                    start.assert_not_called()
                 else:
-                    response = asyncio.run(route.chat(req, SimpleNamespace(id="uid"), None))
+                    async def collect_reply():
+                        response = await route.chat(req, SimpleNamespace(id="uid"), None)
+                        await manager.aclose()
+                        return response
+                    response = asyncio.run(collect_reply())
                     self.assertEqual(response.reply, REFUSAL)
                 invoke.assert_not_called()
+                save.assert_awaited_once()
 
     def test_word_text_extraction(self):
         from docx import Document

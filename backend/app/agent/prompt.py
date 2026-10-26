@@ -181,8 +181,8 @@ SEED_MEMORY = f"""# Agent 记忆
 """
 
 
-def memory_file_path(user_id: str | None = None) -> Path:
-    """本地磁盘上 Agent.md 的真实路径（= **该用户**工作区根下的 Agent.md）。
+def memory_file_path(user_id: str | None = None, *, workspace: Path | None = None) -> Path:
+    """本地磁盘上 Agent.md 的真实路径（当前会话工作区根下；未指定则使用用户默认目录）。
 
     按用户隔离：`<base>/<user_id>/Agent.md`。
     这是"长期记忆不泄漏"的关键落点 —— 以前它是全用户共享的一篇文章，
@@ -190,20 +190,26 @@ def memory_file_path(user_id: str | None = None) -> Path:
     """
     from app.core.workspace import workspace_for
 
-    return workspace_for(user_id) / "Agent.md"
+    return (Path(workspace) if workspace is not None else workspace_for(user_id)) / "Agent.md"
 
 
-def ensure_memory_file(user_id: str | None = None) -> Path:
-    """确保该用户的 Agent.md 存在（不存在就用种子内容创建），返回其路径。
+def ensure_memory_file(user_id: str | None = None, *, workspace: Path | None = None) -> Path:
+    """确保当前工作区的 Agent.md 存在（不存在就用种子内容创建），返回其路径。
 
     幂等：已存在则**绝不覆盖**（那会抹掉智能体积累的记忆）。
     """
-    path = memory_file_path(user_id)
+    path = memory_file_path(user_id, workspace=workspace)
     try:
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(SEED_MEMORY, encoding="utf-8")
+            # Exclusive creation prevents concurrent sessions overwriting user-authored memory.
+            with path.open("x", encoding="utf-8") as memory:
+                memory.write(SEED_MEMORY.replace(
+                    "- 产出文件统一放在 `/workspace/` 下",
+                    "- `/workspace/` 是当前选定工作区的虚拟路径，产出文件保存在该目录"))
             logger.info("[memory] 已创建长期记忆文件: %s", path)
+    except FileExistsError:
+        pass
     except OSError as e:  # 磁盘异常不能让建 Agent 失败
         logger.warning("[memory] 创建 %s 失败: %s", path, e)
     return path
@@ -265,7 +271,7 @@ def machine_mount_prompt_section() -> str:
     return "".join(lines)
 
 
-def build_system_prompt(locale: str | None = None, mode: str = "sandbox") -> str:
+def build_system_prompt(locale: str | None = None, mode: str = "sandbox", *, workspace: Path | None = None, memory_available: bool = True) -> str:
     """返回主 Agent 的系统提示词（框架规则；偏好由 memory 通道注入）。
 
     本机磁盘挂载说明是**按当前配置动态生成**的（列出真实挂载点），
@@ -293,30 +299,43 @@ def build_system_prompt(locale: str | None = None, mode: str = "sandbox") -> str
             _PROMPT_HEAD
             + _FS_TOOLS_FULL
             + _PROMPT_TAIL
-            + full_access_prompt_section()
+            + full_access_prompt_section(workspace=workspace)
         )
     else:
         prompt = BASE_SYSTEM_PROMPT + machine_mount_prompt_section()
         if not settings.sandbox_enabled:
             prompt += "\n当前 OpenSandbox 未启用，默认模式的 execute 不可用。文件工具仍可用；需要执行代码时提示用户启用沙箱或切换完全访问。\n"
+    if not memory_available:
+        prompt = prompt.replace(
+            f"- 你的长期记忆文件是 `{AGENT_MEMORY_PATH}`，它已在启动时加载进这段提示词。",
+            f"- 当前工作区没有可加载的长期记忆文件 `{AGENT_MEMORY_PATH}`。不要为读取缺失的记忆文件反复调用工具。需要保存偏好时先创建此文件。")
+    else:
+        prompt = prompt.replace("它已在启动时加载进这段提示词。", "它会自动加载进提示词，无需在每次任务开始时重复读取。")
+    if workspace is not None:
+        prompt += current_workspace_prompt_section(workspace, resolved)
     if getattr(settings, "intent_label_enabled", True):
         prompt += render_intent_prompt_section(locale or getattr(settings, "intent_locale", "zh"))
     return prompt
 
 
-def full_access_prompt_section() -> str:
+def full_access_prompt_section(*, workspace: Path | None = None) -> str:
     """按后端实际操作系统说明 LocalShell 的执行位置与真实路径。"""
-    import os
+    from app.agent.host_shell import is_windows, resolve_windows_shell, windows_command_guidance
+    from app.core.config import settings
     from app.agent.opensandbox_backend import machine_mounts
 
-    docker = Path("/.dockerenv").exists()
+    windows = is_windows()
+    docker = not windows and Path("/.dockerenv").exists()
     location = "后端 Linux 容器" if docker else "后端所在电脑"
-    shell = "Windows cmd（dir/type/python）" if os.name == "nt" else "POSIX shell（ls/cat/python）"
+    shell = resolve_windows_shell(settings.harness_windows_shell).label if windows else "POSIX shell（ls/cat/python）"
     lines = [
         f"\n## 运行环境：完全访问模式（LocalShell，{location}）\n",
         f"execute 在{location}内通过 {shell} 执行，没有 OpenSandbox 沙箱、不做文件同步，也不弹审批。\n",
-        "工作目录是当前用户工作区；用相对路径执行工作区脚本。文件工具使用 /workspace 和 /mnt 虚拟路径，命令使用下列真实路径。\n",
+        "工作目录是当前会话选定的工作区；用相对路径执行工作区脚本。文件工具使用 /workspace 和 /mnt 虚拟路径，命令使用下列真实路径。\n",
     ]
+    if windows:
+        lines.append(windows_command_guidance(settings.harness_windows_shell) + "\n")
+        lines.append("每次 execute 启动新 shell；变量、cd 和函数不会跨调用保留。不加载 PowerShell profile，也不能进行交互式输入。\n")
     if docker:
         lines.append("宿主机是 Windows 也不能在这里执行 Windows cmd/PowerShell 命令；可通过挂载目录修改宿主机文件。\n")
     for name, path in machine_mounts():
@@ -327,15 +346,29 @@ def full_access_prompt_section() -> str:
     return "".join(lines)
 
 
-def memory_sources(user_id: str | None = None) -> list[str]:
-    """传给 create_deep_agent(memory=...) 的源列表；文件不存在则返回空。
+def current_workspace_prompt_section(workspace: Path, mode: str) -> str:
+    """Describe the same physical root used by file tools, memory and execution."""
+    from app.agent import access
+    root = Path(workspace).resolve()
+    section = (
+        "\n## 当前会话的工作区（路径以本节为准）\n"
+        f"- 当前选定工作区的真实目录：`{root}`。\n"
+        "- 文件工具中的 `/workspace` 是这个目录的虚拟入口，不是项目默认 workspace 文件夹。\n"
+        f"- `/workspace/a.txt` 对应 `{root / 'a.txt'}`；`/workspace/Agent.md` 对应 `{root / 'Agent.md'}`。\n"
+        "- 用户说当前项目或工作区时，先在此工作区查找，不要退回默认目录或扫描其他工作区。\n"
+        "- 读写文件使用 `/workspace/...`；向用户说明位置时同时给出对应的真实目录。\n"
+    )
+    if mode == access.MODE_FULL:
+        section += f"- execute 的真实工作目录是 `{root}`，命令使用相对路径或该真实路径，不要把 `/workspace` 当作本机绝对路径。\n"
+    else:
+        section += "- execute 在沙箱中使用 `/workspace`，其内容与当前选定目录同步；本机真实路径不是容器路径。\n"
+    return section
 
-    注意：`MemoryMiddleware` 只把**存在**的文件注入提示词；文件缺失时它会静默跳过
-    （`file_not_found`），所以这里也顺手保证文件存在，语义更明确。
 
-    `user_id` 决定这是谁的长期记忆（见 `memory_file_path`）。
-    这里返回的仍是**虚拟路径** `/workspace/Agent.md` —— 它由（按用户构建的）
-    backend 解析到该用户的工作区，所以同一份提示词配置对每个用户都成立。
+def memory_sources(user_id: str | None = None, *, workspace: Path | None = None, create: bool = True) -> list[str]:
+    """Load Agent.md from the exact root mounted at /workspace for this session.
+
+    Omitted workspace retains the legacy user root. History-only reads never seed files.
     """
-    path = ensure_memory_file(user_id)
-    return [AGENT_MEMORY_PATH] if path.exists() else []
+    path = ensure_memory_file(user_id, workspace=workspace) if create else memory_file_path(user_id, workspace=workspace)
+    return [AGENT_MEMORY_PATH] if path.is_file() else []

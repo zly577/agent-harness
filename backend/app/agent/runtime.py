@@ -15,6 +15,7 @@ from deepagents import create_deep_agent
 from langchain_core.messages import ToolMessage
 from sqlalchemy import func
 
+from app.agent.history_presentation import extract_text as _extract_text, merge_tool_log as _merge_tool_log
 from app.agent.context import build_summary_middleware, get_checkpointer, get_store
 from app.agent.intent import resolve_intent, strip_intent
 from app.agent import access
@@ -46,6 +47,7 @@ from app.agent.subagent_stream import (
 )
 from app.agent.subagents import load_all_subagents
 from app.agent.clarification import ask_user, ClarificationMiddleware
+from app.agent.workspace_memory import WorkspaceMemoryRepairMiddleware
 from app.agent.web_search import web_search
 from app.agent.tool_outcome import classify_tool_result
 from app.core.config import settings
@@ -154,11 +156,15 @@ def session_workspace(session_id: str, owner: str | None):
         if workspace_id:
             from app.db.models import Workspace
             workspace = db.get(Workspace, workspace_id)
-            if workspace and workspace.user_id == owner:
-                from pathlib import Path
-                return Path(workspace.directory)
+            if not workspace or workspace.user_id != owner:
+                raise RuntimeError("当前会话绑定的工作区不存在或不可访问，请重新选择工作区")
+            from pathlib import Path
+            directory = Path(workspace.directory).expanduser().resolve()
+            if not directory.is_dir():
+                raise RuntimeError("当前工作区目录不存在或不可访问，请重新选择目录")
+            return directory
     root = workspace_for(owner)
-    return root / "workspaces" / workspace_id if workspace_id else root
+    return root
 
 
 def get_main_backend(session_key: str = _MAIN_SESSION, user_id: str | None = None):
@@ -223,9 +229,11 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
     #      它同时决定 backend、permissions、interrupt_on 与系统提示词（见下），
     #      所以必须在构建 graph 之前解析出来（和模型一样是编译期输入）。
     mode = access.access_mode(session_key, owner)
+    workspace_root = session_workspace(session_key, owner)
+    sources = memory_sources(owner, workspace=workspace_root, create=not history_only)
     backend = build_main_backend(
         session_key=session_key,
-        workspace=session_workspace(session_key, owner),
+        workspace=workspace_root,
         mode=mode,
     )
 
@@ -254,6 +262,7 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
         # "审批弹窗里带着 `_intent`"、甚至"熔断器看到的是没摘干净的参数"。
         *build_intent_middlewares(),
         ClarificationMiddleware(),
+        WorkspaceMemoryRepairMiddleware(backend, sources),
         TodoListMiddleware(),
         # 摘要中间件必须与主模型**同一个实例**：
         # 否则会出现"对话走用户选的供应商、压缩摘要却偷偷走另一个模型"，
@@ -269,6 +278,9 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
         # 库自带的调用次数上限（默认关闭；需要"用完 N 次就停"时打开）
         *build_tool_call_limit_middlewares(),
     ]
+    if mode == access.MODE_FULL:
+        from app.agent.host_shell import host_filesystem_middleware
+        middlewares.extend(host_filesystem_middleware(backend, agent_permissions(session_key, owner, mode)))
     skills_mw = build_skills_middleware(backend)
 
     # 外部 MCP 工具（MCP_ENABLED=1 才加载）
@@ -297,7 +309,7 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
         # 框架级规则（稳定）：工具用法 / 委派规范 / 路径约定
         # 完全访问模式下这一段会换成"本机 shell"版本（路径怎么写、
         #      execute 不再进容器），见 prompt.full_access_prompt_section()。
-        system_prompt=build_system_prompt(mode=mode),
+        system_prompt=build_system_prompt(mode=mode, workspace=workspace_root, memory_available=bool(sources)),
         name="assistant",
         checkpointer=await get_checkpointer(),
         store=await get_store(),
@@ -307,7 +319,7 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
         # 长期记忆：Agent.md 每次运行开始时被读入并注入系统提示词，
         # 智能体可用 edit_file 自行更新它（记录用户偏好等），跨会话生效。
         # 按用户隔离 —— 每个人读写的都是自己工作区里的那份。
-        memory=memory_sources(owner),
+        memory=sources,
         # 访问本机真实文件 → 人工审批中断（deepagents HITL）
         # 热插拔：开 = 返回 interrupt 权限（访问 /mnt/** 需人工同意）；关 = 空列表。
         # 完全访问模式下一律返回空列表（用户已显式选择"不问了"）。
@@ -321,7 +333,7 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
         # 再打开时又冒出来（弹窗复活）。详见 app/agent/permissions.py 模块注释。
         interrupt_on=hitl_interrupt_on(session_key, owner, mode),
         # 子智能体（YAML 注册表），同一模型；task 工具委派 + 隔离上下文
-        subagents=load_all_subagents(),
+        subagents=load_all_subagents(workspace=workspace_root, mode=mode, backend=backend),
     )
     if history_only:
         # Only aget_state may use this graph. Never cache it as an executable
@@ -422,21 +434,6 @@ def touch_session(session_id: str) -> None:
         db.commit()
     finally:
         db.close()
-
-
-def _extract_text(content) -> str:
-    """把 BaseMessage.content（str 或 list）归一为纯文本。"""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for p in content:
-            if isinstance(p, dict):
-                parts.append(str(p.get("text", "") or ""))
-            else:
-                parts.append(str(p))
-        return "".join(parts)
-    return str(content or "")
 
 
 def _resolve_intent(tool_name: str, args) -> tuple[dict, str | None, str | None]:
@@ -565,111 +562,6 @@ def _load_tool_log(session_id: str) -> list[dict]:
     return out
 
 
-def _merge_tool_log(history: list[dict], log_rows: list[dict]) -> list[dict]:
-    """把持久化工具流水合并进回放历史（原地修改并返回）。
-
-    - 补齐：回放出的工具调用若结果为空（如服务器在工具执行中途被关闭），
-      用日志中的结果回填；
-    - 兜底：回放完全没有工具痕迹（如 checkpoint 老消息被上下文压缩裁剪），
-      用日志重建一条带完整工具调用面板的助手消息。
-
-    同时补齐/带回 `intentLabel` / `intentSource`。**回放必须能确定性还原**，
-    所以这里只搬运**已经落库的**标签，绝不重新推导 —— 重新推导会随着
-    目录/规则变化而漂移，那就不是"重放同一条事件得到同一个标签"了。
-
-    还要带上 `status`（`interrupted` / `error`）与 `ok`/`exitCode`/`reason`。
-    以前回放一律按 `done` 渲染 —— 那一轮被强杀的工具，刷新页面后就"变成成功了"，
-    这正是"明明没跑完却显示已完成/进行中"的来源。
-    """
-    if not log_rows:
-        return history
-    by_id = {r["id"]: r for r in log_rows if r["id"]}
-
-    def _apply(tc: dict, lr: dict) -> None:
-        """把一条流水搬回一个工具条目（toolCalls 与 delegations 共用）。"""
-        if not tc.get("result"):
-            tc["result"] = lr["result"]
-        if not tc.get("intentLabel") and lr.get("intent_label"):
-            tc["intentLabel"] = lr["intent_label"]
-            tc["intentSource"] = lr.get("intent_source")
-        # 流水里的状态比 checkpoint 更权威：checkpoint 只有"调用过"这件事，
-        # 而结果是被强杀/中断的，checkpoint 里根本没有痕迹。
-        row_status = str(lr.get("status") or "")
-        if row_status == "interrupted":
-            # ⚠️ 中断**不能**走下面的成败判定：中断时我们会写一句占位说明
-            # （"（上一轮运行被中断，未返回结果）"），那是非空文本，
-            # 交给分类器会得出"成功" —— 那就等于把"没跑完"伪装成"跑完了"。
-            tc["status"] = "interrupted"
-            tc["ok"] = None
-            tc["exitCode"] = None
-            tc["reason"] = "本轮被中断，未收到结果"
-            return
-        if row_status == "error":
-            tc["status"] = "error"
-        # 成败判定走同一个纯函数（实时/回放必须一致）
-        outcome = classify_tool_result(str(tc.get("name") or ""), tc.get("result"))
-        # 老数据里 `status` 一律是 done（不分成败），所以**判定结果说了算**：
-        # 只要判定为失败就标 error。否则会出现"结果写着 Error、徽标却说已完成"
-        # 这种自相矛盾的卡片 —— 那比不显示更让人困惑。
-        if outcome["ok"] is False:
-            tc["status"] = "error"
-        tc["ok"] = outcome["ok"]
-        tc["exitCode"] = outcome["exit_code"]
-        tc["reason"] = outcome["reason"]
-
-    # 1) 按 call_id 补齐缺失的结果与意图标签
-    for row in history:
-        if row.get("role") != "assistant":
-            continue
-        for tc in row.get("toolCalls") or []:
-            lr = by_id.get(str(tc.get("id", "")))
-            if lr:
-                _apply(tc, lr)
-        for d in row.get("delegations") or []:
-            lr = by_id.get(str(d.get("id", "")))
-            if lr:
-                _apply(d, lr)
-
-    # 2) 兜底重建
-    has_tools = any(
-        (row.get("toolCalls") or row.get("delegations"))
-        for row in history if row.get("role") == "assistant"
-    )
-    if not has_tools:
-        tool_calls = [
-            {"id": r["id"], "name": r["name"], "args": r["args"],
-             "result": r["result"],
-             "status": (r.get("status") if r.get("status") in ("interrupted", "error") else "done"),
-             "intentLabel": r.get("intent_label"), "intentSource": r.get("intent_source")}
-            for r in log_rows if r["kind"] == "tool"
-        ]
-        delegations = [
-            {"id": r["id"],
-             "subagent_type": (r["args"] or {}).get("subagent_type", ""),
-             "description": (r["args"] or {}).get("description", ""),
-             "result": r["result"],
-             "status": (r.get("status") if r.get("status") in ("interrupted", "error") else "done"),
-             "intentLabel": r.get("intent_label"), "intentSource": r.get("intent_source")}
-            for r in log_rows if r["kind"] == "task"
-        ]
-        if tool_calls or delegations:
-            history.append({
-                "role": "assistant", "content": "",
-                "toolCalls": tool_calls, "delegations": delegations,
-            })
-    # 兜底/补齐出来的条目也要有成败判定（否则前端又是清一色"已完成"）
-    for row in history:
-        if row.get("role") != "assistant":
-            continue
-        for tc in (row.get("toolCalls") or []) + (row.get("delegations") or []):
-            if "ok" not in tc:
-                outcome = classify_tool_result(str(tc.get("name") or ""), tc.get("result"))
-                tc["ok"] = outcome["ok"]
-                tc["exitCode"] = outcome["exit_code"]
-                tc["reason"] = outcome["reason"]
-    return history
-
-
 async def load_history(session_id: str, user_id: str | None = None) -> list[dict]:
     """读取会话消息历史，返回 [{role, content, toolCalls, delegations}]（供前端恢复对话）。
 
@@ -776,29 +668,13 @@ async def load_history(session_id: str, user_id: str | None = None) -> list[dict
 
 
 async def run_chat(session_id: str, user_message: str, user_id: str | None = None) -> str:
-    """向智能体发送一条用户消息，返回回复文本。
-
-    - thread_id = session_id，历史由 checkpointer 管理（无需手工存储消息）
-    - 输入直接传 user 消息（由 langgraph 转为 BaseMessage）
-    """
-    agent = await get_agent(session_id, user_id=user_id)
-    from app.agent.conversation_history import sync_checkpoints
-    await sync_checkpoints(agent, session_id)
-    result = await agent.ainvoke(
-        {"messages": [{"role": "user", "content": user_message}]},
-        config={"configurable": {"thread_id": session_id}},
+    """Compatibility entry point using the shared background run lifecycle."""
+    from app.agent.runner import run_manager
+    run = run_manager.start(
+        session_id, {"messages": [{"role": "user", "content": user_message}]},
+        user_message=user_message, user_id=user_id,
     )
-    await sync_checkpoints(agent, session_id)
-    from app.agent.approvals import read_pending_approval
-    pending = await read_pending_approval(agent, {"configurable": {"thread_id": session_id}}, user_id=user_id)
-    if pending.get("clarifications"):
-        return "等待你补充信息：" + "；".join(item["question"] for item in pending["clarifications"])
-    if pending.get("pending"):
-        return "任务已暂停，等待操作审批。"
-    reply = result["messages"][-1].content
-    if not isinstance(reply, str):
-        reply = str(reply)
-    return reply
+    return await run_manager.wait_result(run)
 
 
 def _subagent_start_event(call_id: str, args: dict) -> tuple[str, dict]:

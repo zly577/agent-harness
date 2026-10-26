@@ -14,6 +14,7 @@ MySQL 迁移到 PostgreSQL 时只需改 MYSQL_URL 并替换驱动，对上层无
 """
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -139,6 +140,9 @@ class Settings(BaseSettings):
     harness_access_mode: str = "sandbox"
     # 对外部署关闭：full 会在后端进程内执行，能接触配置与其他用户的数据。
     harness_allow_full_access: bool = True
+    # Native Windows full-access shell; auto prefers pwsh, then Windows PowerShell.
+    # Linux backends continue to use /bin/sh, including Linux Docker on Windows.
+    harness_windows_shell: Literal["auto", "pwsh", "powershell", "cmd"] = "auto"
 
     # ===== OpenSandbox 远程执行沙箱 =====
     # 是否启用 OpenSandbox 作为 execute 的执行后端

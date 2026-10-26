@@ -294,8 +294,9 @@ def test_chat_error_detail_is_scrubbed(provider_user, monkeypatch):
 
     async def _boom(*_a, **_k):
         raise RuntimeError("upstream said api_key=sk-leaked1234567890 is invalid")
+        yield  # An event source, without contacting a provider.
 
-    monkeypatch.setattr(runtime, "run_chat", _boom)
+    monkeypatch.setattr(runtime, "agent_event_stream", _boom)
     resp = client.post("/api/v1/chat", json={"message": "hi", "session_id": sid})
     assert resp.status_code == 500
     assert "sk-leaked1234567890" not in resp.text

@@ -1,0 +1,20 @@
+.md { min-width: 0; overflow-wrap: anywhere; }
+.md .terminal-block { border-color: var(--border); border-radius: 12px; background: var(--bg); box-shadow: none; }
+.md .terminal-block .code-head { padding: 9px 12px; background: var(--bg); border-color: var(--border); color: var(--text-2); }
+.md .terminal-block .code-lang { text-transform: none; letter-spacing: 0.02em; }
+.md .terminal-dots { display: flex; gap: 5px; margin-right: 5px; }
+.md .terminal-dots i { display: block; width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); }
+.md .terminal-dots i:nth-child(2) { background: var(--text-3); }
+.md .terminal-dots i:nth-child(3) { background: var(--text-3); }
+.md .terminal-block pre { max-height: 420px; overflow: auto; padding: 16px 18px; }
+.md .terminal-block pre code { color: var(--text); font-size: 12.5px; line-height: 1.8; white-space: pre; word-break: normal; overflow-wrap: normal; }
+.md .terminal-block .code-copy { color: var(--text-2); border-color: var(--border); }
+.md .terminal-block .code-copy:hover { background: var(--hover); color: var(--text); }
+.md .terminal-block .code-copy.done { color: var(--ok); border-color: var(--ok); }
+.md .terminal-block .hljs-keyword, .md .terminal-block .hljs-built_in { color: var(--syn-keyword); }
+.md .terminal-block .hljs-string { color: var(--syn-string); }
+.md .terminal-block .hljs-number, .md .terminal-block .hljs-literal { color: var(--syn-number); }
+.md .terminal-block .hljs-comment { color: var(--syn-comment); }
+.md .terminal-block .hljs-variable, .md .terminal-block .hljs-attr { color: var(--syn-title); }
+.terminal-tool { width: 100%; }
+.terminal-tool .terminal-block { margin: 0; }

@@ -289,6 +289,7 @@ def test_create_deep_agent_full_mode_with_subagents(workspace, no_machine, monke
     3. `execute` 工具必须照常注册 —— 它现在路由到本机 shell。
     """
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test-placeholder")
+    monkeypatch.setattr("app.agent.model.settings.deepseek_api_key", "sk-test-placeholder")
     from deepagents import create_deep_agent
 
     from app.agent.model import build_llm
@@ -321,7 +322,7 @@ def test_create_deep_agent_full_mode_with_subagents(workspace, no_machine, monke
 
 def test_prompts_are_mutually_exclusive():
     """两套工具说明段不能同时出现（否则模型会同时读到矛盾事实）。"""
-    from app.agent.prompt import BASE_SYSTEM_PROMPT, build_system_prompt, full_access_prompt_section
+    from app.agent.prompt import build_system_prompt, full_access_prompt_section
 
     sbx = build_system_prompt()
     full = build_system_prompt(mode="full")
@@ -335,7 +336,7 @@ def test_prompts_are_mutually_exclusive():
     assert "/mnt/" in full_access_prompt_section()
     assert "execute" in full_access_prompt_section()
     # 默认参数 = sandbox，老调用点行为不变
-    assert build_system_prompt().startswith(BASE_SYSTEM_PROMPT)
+    assert build_system_prompt() == build_system_prompt(mode="sandbox")
 
 
 # --------------------------------------------------------------------------
