@@ -16,7 +16,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # backend 目录的绝对路径（用于默认 SQLite 位置）
@@ -122,6 +122,15 @@ class Settings(BaseSettings):
     # 上限就会让 agent 的 tools 节点永久挂起（前端 SSE 一起卡死）。超时以 `Error:`
     # 开头返回，让熔断器识别并冷却。0 = 关闭（不推荐）。
     mcp_tool_call_timeout_seconds: float = 120.0
+
+    # ===== 联网搜索 =====
+    # 无密钥时使用 Bing RSS，DuckDuckGo / 全球 Bing / 360 / 百度依次备用。
+    # 配置 Tavily 后优先使用官方结构化 API，失败仍自动回退到无密钥搜索。
+    tavily_api_key: str = ""
+    web_search_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
+    web_search_provider_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
+    # 默认直连，忽略宿主机遗留 HTTP_PROXY；有需要时显式配置容器可达的代理。
+    web_search_proxy: str = ""
 
     # ===== 人工介入（HITL）热插拔默认值 =====
     # True  = 访问本机真实文件（/mnt/**，见 HARNESS_MACHINE_ACCESS）会触发人工审批中断，

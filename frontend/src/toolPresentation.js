@@ -3,6 +3,7 @@ const labels = {
   content: '文件内容', old_string: '原内容', new_string: '替换内容', replace_all: '全部替换',
   offset: '起始行', limit: '数量上限', glob: '文件范围', recursive: '包含子目录',
   description: '任务说明', subagent_type: '执行智能体', timeout: '超时时间', timeout_seconds: '超时（秒）',
+  reason: '原因',
   max_results: '结果数量', url: '地址', urls: '地址', cwd: '执行目录', encoding: '编码',
   todos: '任务', tasks: '任务', status: '状态', name: '名称', title: '标题', id: '标识',
 }

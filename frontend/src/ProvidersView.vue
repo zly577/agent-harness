@@ -10,27 +10,28 @@
     遮罩**刻意不绑定**点击关闭。
     以前是 `@click.self="$emit('close')"`，于是鼠标点到旁边一点就整个窗口消失 ——
     而这里往往是刚填了一半的表单（base_url / 密钥都白打了），而且没有任何提示。
-    现在只能通过「取消」「关闭」或右上角 ✕ 主动关闭，与本应用其它确认框的行为一致。
-    （同理不加 Esc 关闭：避免误触同样的问题。）
+    表单编辑期间也不通过 Esc 关闭，避免误触丢失输入；列表页可用 Esc 返回对话。
   -->
-  <div class="pv-overlay">
-    <div class="pv" role="dialog" aria-label="模型供应商">
+  <DialogOverlay class="pv-overlay" :dismissible="!form.open && !busy" @close="$emit('close')">
+    <div class="pv" role="dialog" aria-modal="true" aria-labelledby="providers-title">
       <header class="pv-head">
-        <div>
-          <h2>模型供应商</h2>
+        <span class="pv-head-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9zM4 7.5l8 4.5 8-4.5M12 12v9" /></svg></span>
+        <div class="pv-heading">
+          <h2 id="providers-title">模型供应商</h2>
           <p class="pv-sub">
-            支持任意 OpenAI 兼容服务（DeepSeek / Kimi / 通义 / 智谱 / OpenRouter /
-            硅基流动 / vLLM / Ollama / LM Studio）与 Anthropic 协议服务。
-            密钥加密保存，界面只显示掩码。
+            连接你常用的模型服务，管理模型与默认设置。
           </p>
+          <p class="pv-caption">支持 OpenAI 兼容与 Anthropic 协议 · 密钥加密保存，仅显示掩码</p>
         </div>
-        <button class="pv-x" title="关闭" @click="$emit('close')">✕</button>
+        <button class="pv-x" title="关闭" aria-label="关闭模型供应商" @click="$emit('close')"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15" /></svg></button>
       </header>
 
       <div v-if="error" class="pv-banner pv-banner-error">{{ error }}</div>
 
       <!-- ===== 表单（新增 / 编辑）===== -->
-      <section v-if="form.open" class="pv-form">
+      <Transition name="settings-panel" mode="out-in">
+      <section v-if="form.open" key="form" class="pv-form">
+        <div class="pv-content">
         <h3>{{ form.id ? '编辑供应商' : '新增供应商' }}</h3>
 
         <div class="pv-grid">
@@ -111,6 +112,7 @@
           <span v-if="form.reply" class="pv-reply">模型回复：{{ form.reply }}</span>
         </p>
 
+        </div>
         <div class="pv-actions">
           <button class="pv-btn" :disabled="busy || !form.model.trim()" @click="runTest">
             {{ form.testing ? '测试中…' : '测试连接' }}
@@ -133,7 +135,9 @@
       </section>
 
       <!-- ===== 列表 ===== -->
-      <section v-else class="pv-list">
+      <section v-else key="list" class="pv-list">
+        <div class="pv-content">
+        <div v-if="!loading && providers.length" class="pv-section-label">已接入的模型 <span>{{ providers.length }}</span></div>
         <div v-if="loading" class="pv-empty">载入中…</div>
 
         <div v-else-if="!providers.length" class="pv-empty">
@@ -144,30 +148,32 @@
           </p>
         </div>
 
-        <div v-for="p in providers" :key="p.id" class="pv-item" :class="{ disabled: !p.enabled }">
+        <div v-for="p in providers" :key="p.id" class="pv-item" :class="{ disabled: !p.enabled, 'is-default': p.is_default }">
+          <span class="pv-avatar" aria-hidden="true">{{ (p.name || p.model || 'M').slice(0, 1).toUpperCase() }}</span>
           <div class="pv-item-main">
             <div class="pv-item-title">
               <span class="pv-name">{{ p.name || p.model }}</span>
               <span class="pv-tag" :class="p.is_system ? 'sys' : 'own'">
                 {{ p.is_system ? '系统级' : '我的' }}
               </span>
-              <span class="pv-tag proto">{{ p.protocol }}</span>
+              <span class="pv-tag proto">{{ p.protocol === 'openai' ? 'OpenAI' : p.protocol === 'anthropic' ? 'Anthropic' : p.protocol }}</span>
               <span v-if="p.is_default" class="pv-tag def">默认</span>
               <span v-if="!p.enabled" class="pv-tag off">已停用</span>
               <span v-if="!p.has_api_key" class="pv-tag warn">未填密钥</span>
             </div>
             <div class="pv-item-meta">
               <code>{{ p.model }}</code>
-              <span class="pv-sep">·</span>
-              <span class="pv-url">{{ p.base_url }}</span>
-              <span class="pv-sep">·</span>
-              <span class="pv-key">{{ p.api_key_hint || '（无密钥）' }}</span>
+              <div class="pv-detail">
+                <span class="pv-url" :title="p.base_url">{{ p.base_url || '官方默认地址' }}</span>
+                <span class="pv-key">{{ p.api_key_hint || '（无密钥）' }}</span>
+              </div>
             </div>
           </div>
 
           <div class="pv-item-actions">
             <button class="pv-mini" :disabled="busy" @click="testSaved(p)">测试</button>
             <button
+              v-if="!p.is_default"
               class="pv-mini"
               :disabled="busy || p.is_default"
               :title="p.is_system && !isAdmin ? '系统级供应商的默认设置是全局的，仅管理员可改' : ''"
@@ -178,18 +184,22 @@
           </div>
         </div>
 
+        </div>
         <div class="pv-actions">
-          <button class="pv-btn pv-btn-primary" :disabled="busy" @click="addNew">新增供应商</button>
+          <button class="pv-btn pv-btn-primary" :disabled="busy" @click="addNew"><span class="pv-plus" aria-hidden="true">+</span>新增供应商</button>
           <button class="pv-btn" :disabled="busy" @click="$emit('close')">关闭</button>
           <span v-if="listMessage" class="pv-hint" :class="{ bad: !listOk }">{{ listMessage }}</span>
         </div>
       </section>
+      </Transition>
     </div>
-  </div>
+  </DialogOverlay>
 </template>
 
 <script>
 import { computed, onMounted, reactive, ref } from 'vue'
+import DialogOverlay from './DialogOverlay.vue'
+import { useConfirmation } from './composables/useConfirmation'
 import {
   createProvider,
   deleteProvider,
@@ -222,12 +232,14 @@ const EMPTY_FORM = {
 
 export default {
   name: 'ProvidersView',
+  components: { DialogOverlay },
   emits: ['close', 'changed'],
   props: {
     /** 当前用户是否管理员（决定"设为默认"能不能用在系统级供应商上） */
     isAdmin: { type: Boolean, default: false },
   },
   setup(props, { emit }) {
+    const confirm = useConfirmation()
     const providers = ref([])
     const loading = ref(true)
     const busy = ref(false)
@@ -385,7 +397,7 @@ export default {
 
     async function remove(p) {
       // 删除是不可逆的（密钥也一起没了），所以确认框里写清楚是哪一条
-      if (!window.confirm(`删除供应商「${p.name || p.model}」？\n\n模型：${p.model}\n地址：${p.base_url}\n\n绑定它的会话会自动回退到默认供应商。`)) {
+      if (!await confirm({ title: '删除模型供应商', description: '供应商与已保存的密钥将被删除，绑定它的会话会自动回退到默认供应商。', details: `${p.name || p.model}\n${p.model}\n${p.base_url}`, confirmLabel: '删除供应商', danger: true })) {
         return
       }
       busy.value = true
@@ -414,145 +426,4 @@ export default {
 }
 </script>
 
-<style scoped>
-.pv-overlay {
-  position: fixed;
-  inset: 0;
-  background: var(--overlay);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  z-index: 50;
-}
-.pv {
-  width: 100%;
-  max-width: 780px;
-  max-height: 88vh;
-  overflow: auto;
-  background: var(--bg);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 20px 22px 18px;
-}
-.pv-head { display: flex; align-items: flex-start; gap: 12px; }
-.pv-head h2 { margin: 0; font-size: 16px; font-weight: 600; }
-.pv-sub { margin: 6px 0 0; font-size: 12px; line-height: 1.6; color: var(--text-3); max-width: 620px; }
-.pv-x {
-  margin-left: auto;
-  flex: 0 0 auto;
-  width: 26px; height: 26px;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--text-2);
-  border-radius: 6px;
-  cursor: pointer;
-}
-.pv-x:hover { background: var(--hover); }
-
-.pv-banner { margin: 12px 0 0; padding: 8px 10px; border-radius: 7px; font-size: 12.5px; }
-.pv-banner-error { background: var(--fill); color: var(--danger); border: 1px solid var(--border); }
-
-.pv-form h3 { margin: 16px 0 10px; font-size: 13.5px; font-weight: 600; }
-.pv-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.pv-span2 { grid-column: span 2; }
-.pv-field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--text-3); }
-.pv-field em { font-style: normal; opacity: 0.8; }
-.pv-field input, .pv-field select {
-  padding: 8px 10px;
-  font-size: 13px;
-  color: var(--text);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  outline: none;
-}
-.pv-field input:focus, .pv-field select:focus { border-color: var(--border-2); }
-.pv-check { flex-direction: row; align-items: center; gap: 7px; }
-.pv-check input { width: auto; }
-
-.pv-result { margin: 12px 0 0; font-size: 12.5px; line-height: 1.6; }
-.pv-result.ok { color: var(--ok); }
-.pv-result.bad { color: var(--danger); }
-.pv-reply { display: block; color: var(--text-3); }
-
-.pv-actions { display: flex; align-items: center; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
-.pv-btn {
-  padding: 7px 14px;
-  font-size: 13px;
-  color: var(--text);
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  cursor: pointer;
-}
-.pv-btn:hover:not(:disabled) { background: var(--hover); }
-.pv-btn:disabled { opacity: 0.45; cursor: default; }
-.pv-btn-primary { background: var(--btn); color: var(--btn-text); border-color: var(--btn); }
-.pv-hint { font-size: 11.5px; color: var(--text-3); }
-.pv-hint.bad { color: var(--danger); }
-
-.pv-list { margin-top: 14px; }
-.pv-empty { padding: 22px 4px; font-size: 13px; color: var(--text-2); }
-.pv-empty-tip { font-size: 12px; color: var(--text-3); line-height: 1.6; }
-
-.pv-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 11px 12px;
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  margin-bottom: 8px;
-}
-.pv-item.disabled { opacity: 0.6; }
-.pv-item-main { min-width: 0; flex: 1; }
-.pv-item-title { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.pv-name { font-size: 13.5px; font-weight: 500; }
-.pv-tag {
-  font-size: 11px;
-  padding: 1px 6px;
-  border-radius: 5px;
-  border: 1px solid var(--border);
-  color: var(--text-2);
-  background: var(--fill);
-}
-.pv-tag.sys { color: var(--warn); }
-.pv-tag.own { color: var(--text-2); }
-.pv-tag.def { color: var(--ok); }
-.pv-tag.off { color: var(--text-3); }
-.pv-tag.warn { color: var(--danger); }
-.pv-item-meta {
-  margin-top: 5px;
-  font-size: 11.5px;
-  color: var(--text-3);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.pv-item-meta code { font-family: var(--mono); color: var(--text-2); }
-.pv-url { font-family: var(--mono); }
-.pv-key { font-family: var(--mono); }
-.pv-sep { opacity: 0.5; }
-.pv-item-actions { display: flex; gap: 6px; flex: 0 0 auto; }
-.pv-mini {
-  padding: 4px 9px;
-  font-size: 11.5px;
-  color: var(--text-2);
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  cursor: pointer;
-}
-.pv-mini:hover:not(:disabled) { background: var(--hover); color: var(--text); }
-.pv-mini:disabled { opacity: 0.4; cursor: default; }
-.pv-mini.danger:hover:not(:disabled) { color: var(--danger); }
-
-@media (max-width: 640px) {
-  .pv-grid { grid-template-columns: 1fr; }
-  .pv-span2 { grid-column: span 1; }
-  .pv-item { flex-direction: column; align-items: stretch; }
-}
-</style>
+<style src="./styles/settings.css"></style>

@@ -8,14 +8,19 @@
   <AuthView v-else-if="!user" :notice="authNotice" @authed="onAuthed" />
   <div v-else class="app" :class="{ resizing: resizing }">
     <!-- 模型供应商管理弹层。放在最外层，避免被 .app 的布局/层级裁剪 -->
+    <Transition name="settings-dialog">
     <ProvidersView
       v-if="showProviders"
       :is-admin="isAdmin"
       @close="showProviders = false"
       @changed="onProvidersChanged"
     />
+    </Transition>
     <!-- MCP 工具源管理弹层。同样放最外层，避免被 .app 的布局/层级裁剪 -->
-    <McpView v-if="showMcp" @close="showMcp = false" />
+    <Transition name="settings-dialog">
+      <McpView v-if="showMcp" @close="showMcp = false" />
+    </Transition>
+    <ConfirmDialog :confirmation="confirmation" @resolve="resolveConfirmation" />
     <!-- 轻量提示条 -->
     <div v-if="toast.text" class="toast" :class="toast.kind">{{ toast.text }}</div>
 
@@ -50,7 +55,7 @@
               <span class="sb-workspace-count">{{ workspace.sessions.length }}</span>
             </button>
             <button class="sb-workspace-add" title="在此工作区新建会话" @click="newChat(workspace.id)">+</button>
-            <button v-if="workspace.id !== 'legacy'" class="sb-workspace-add" title="删除工作区" @click="deleteWorkspace(workspace)">×</button>
+            <button v-if="workspace.id !== 'legacy'" class="sb-workspace-add" title="删除工作区" aria-label="删除工作区" @click="deleteWorkspace(workspace)">×</button>
           </div>
           </div>
           <template v-if="!collapsedWorkspaces[workspace.id]">
@@ -107,6 +112,7 @@
         </div>
 
         <div class="topbar-actions">
+          <div class="toolbar-group toolbar-models" role="group" aria-label="模型与工作区">
           <!-- 模型选择器。第一项"跟随默认"= 不绑供应商，按用户/系统默认解析 -->
           <select
             class="model-select"
@@ -114,6 +120,7 @@
             :value="chosenProvider"
             :disabled="!providers.length"
             :title="modelSelectTitle"
+            aria-label="选择模型"
             @change="onProviderChange($event.target.value)"
           >
             <!--
@@ -128,12 +135,19 @@
             </option>
           </select>
           <button class="tbtn" title="管理模型供应商（新增/测试/改密钥）" @click="showProviders = true">
+            <svg class="toolbar-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="m10 2 7 4v8l-7 4-7-4V6zM3 6l7 4 7-4M10 10v8" /></svg>
             模型
           </button>
           <button class="tbtn" title="接入外部 MCP 工具源（网页抓取/数据库/内部接口等）" @click="showMcp = true">
+            <svg class="toolbar-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M7 3v4m6-4v4M5 7h10v3a5 5 0 0 1-10 0zM10 15v3" /></svg>
             工具源
           </button>
-          <button class="tbtn" @click="openFilePanel" title="浏览工作区文件">文件</button>
+          <button class="tbtn" @click="openFilePanel" title="浏览工作区文件">
+            <svg class="toolbar-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M2.5 5h6l2 2h7v9h-15z" /></svg>
+            文件
+          </button>
+          </div>
+          <div class="toolbar-group toolbar-status" role="group" aria-label="权限与工具显示">
           <!--
             权限模式开关。
             · 「沙箱内」（默认）：文件读写落工作区，execute 进隔离沙箱，
@@ -147,6 +161,8 @@
             class="tbtn switchable"
             :class="{ danger: accessFull }"
             :disabled="accessBusy || (!accessFull && !accessAllowFull)"
+            :aria-pressed="accessFull"
+            :aria-busy="accessBusy"
             :title="accessFull
               ? '完全访问：可修改已挂载磁盘，命令由后端 LocalShell 执行；不依赖 OpenSandbox。'
               : '默认模式：工作区可读写，已挂载磁盘只读；代码执行需要 OpenSandbox。'"
@@ -159,6 +175,8 @@
             class="tbtn switchable"
             :class="{ off: !hitlOn || accessFull }"
             :disabled="hitlBusy"
+            :aria-pressed="hitlOn && !accessFull"
+            :aria-busy="hitlBusy"
             :title="accessFull
               ? '完全访问模式下不弹审批，这个开关暂时不生效（切回沙箱内后恢复）'
               : (hitlOn
@@ -172,12 +190,14 @@
           <button
             class="tbtn switchable"
             :class="{ off: !showTools }"
+            :aria-pressed="showTools"
             title="显示 / 隐藏工具调用详情"
             @click="showTools = !showTools"
           >
             <span class="tbtn-dot"></span>
             <span>{{ showTools ? '工具调用' : '已隐藏工具' }}</span>
           </button>
+          </div>
         </div>
       </header>
 
@@ -294,17 +314,17 @@
               <div v-if="m.content" class="prose md" v-html="renderMarkdown(m.content)"></div>
               <div v-else-if="m.streaming" class="thinking"><i></i><i></i><i></i></div>
 
-              <!-- 计时器 + 每秒 token：写在大模型返回内容下面，实时刷新 -->
+              <!-- 整数秒计时：结束后明确显示状态与用时。 -->
               <div
                 v-if="m.startedAt && (m.content || m.streaming || m.thinking)"
                 class="meter"
-                :class="{ live: m.streaming }"
+                :class="answerTiming(m, nowTick).state"
               >
                 <span class="meter-time">
-                  <span class="meter-clock"></span>{{ elapsedLabel(m.startedAt, m.endedAt) }}
+                  <svg v-if="answerTiming(m, nowTick).state === 'done'" class="meter-check" viewBox="0 0 16 16" aria-hidden="true"><path d="m3 8 3 3 7-7" /></svg>
+                  <span v-else class="meter-clock" aria-hidden="true"></span>
+                  {{ answerTiming(m, nowTick).text }}
                 </span>
-                <span class="meter-sep">·</span>
-                <span class="meter-rate" title="最近 2 秒的生成速度（估算）">{{ rateLabel(m) }}</span>
               </div>
 
               <section v-if="taskPlan(m).length" class="task-plan" aria-label="任务清单" aria-live="polite">
@@ -336,12 +356,12 @@
                          ⚠️ intent 是**模型生成的文本**，只能用插值（Vue 自动转义），
                          绝不能接 v-html / renderMarkdown —— 一句
                          `<img src=x onerror=...>` 就是一次 XSS。 -->
-                    <code
+                    <span
                       v-if="activityLatest(m).intent"
                       class="act-verb act-intent"
                       :title="activityLatest(m).title"
-                    >{{ activityLatest(m).intent }}</code>
-                    <code v-else class="act-verb">{{ activityLatest(m).verb }}</code>
+                    >{{ activityLatest(m).intent }}</span>
+                    <span v-else class="act-verb">{{ activityLatest(m).verb }}</span>
                     <span class="act-detail" :title="activityLatest(m).full">{{ activityLatest(m).detail }}</span>
                     <span class="act-badge" :class="activityLatest(m).status">{{ activityLatest(m).badge }}</span>
                   </div>
@@ -363,7 +383,7 @@
                     >
                       <div v-if="activityLatest(m).items.length > 1" class="act-call-head">
                         <span class="tool-status" :class="it.status"></span>
-                        <code class="tool-name">{{ toolName(it.name) }}</code>
+                        <span class="tool-name">{{ toolName(it.name) }}</span>
                         <span class="tool-badge" :class="it.status">{{ toolOutcomeText(it) }}</span>
                       </div>
                       <div v-if="it.args && Object.keys(it.args).length" class="tool-section">
@@ -374,7 +394,7 @@
                       <div v-if="it.result" class="tool-section">
                         <div class="tool-label">结果</div>
                         <div v-if="it.name === 'execute'" class="md terminal-tool" v-html="renderTerminal(truncate(it.result, 12000), '执行输出')"></div>
-                        <pre v-else class="tool-code">{{ truncate(it.result, 4000) }}</pre>
+                        <pre v-else class="tool-code" :class="{ 'tool-code-source': ['read_file', 'ls', 'glob', 'grep'].includes(it.name) }">{{ truncate(it.result, 4000) }}</pre>
                       </div>
                     </div>
                   </details>
@@ -401,7 +421,7 @@
                     >
                       <summary>
                         <span class="tool-status done"></span>
-                        <code class="tool-name">{{ d.subagent_type || '子智能体' }}</code>
+                        <span class="tool-name">{{ d.subagent_type || '子智能体' }}</span>
                         <span class="subagent-summary-inline">{{ d.summary }}</span>
                         <span class="tool-badge">已完成</span>
                       </summary>
@@ -451,7 +471,7 @@
                         <details v-if="it.result" class="operation-output">
                           <summary>查看结果</summary>
                           <div v-if="it.name === 'execute'" class="md terminal-tool" v-html="renderTerminal(truncate(it.result, 12000), '执行输出')"></div>
-                          <pre v-else class="tool-code">{{ truncate(it.result, 4000) }}</pre>
+                          <pre v-else class="tool-code" :class="{ 'tool-code-source': ['read_file', 'ls', 'glob', 'grep'].includes(it.name) }">{{ truncate(it.result, 4000) }}</pre>
                         </details>
                       </div>
                     </details>
@@ -467,37 +487,54 @@
 
       <!-- 审批弹窗：小、紧凑，工具调用只展示内容摘要，按钮永不被长参数挤走。
            注意：不提供"点遮罩关闭"——误关会让这一轮会话悬在待审批状态，必须显式选择同意/拒绝。 -->
-      <div v-if="approval && (approval.clarifications || []).length" class="overlay">
-        <div class="modal approval-modal" role="dialog" aria-modal="true" aria-labelledby="clarification-title">
-          <div class="modal-head">
-            <h3 id="clarification-title">需要你补充信息</h3>
-            <p>任务已暂停，收到回答后继续。</p>
+      <Transition name="settings-dialog" mode="out-in" :duration="220">
+      <DialogOverlay v-if="approval && (approval.clarifications || []).length" :key="`clarification-${approval.session_id}-${approval.clarifications[0].id}`" class="approval-overlay" :dismissible="false">
+        <div class="modal approval-modal clarification-modal" role="dialog" aria-modal="true" aria-labelledby="clarification-title" aria-describedby="clarification-question">
+          <div class="modal-head clarification-head">
+            <span class="clarification-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M7 18 3 21V6a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3zM8 8h8M8 12h5" /></svg>
+            </span>
+            <div class="clarification-heading">
+              <h3 id="clarification-title">需要你补充信息</h3>
+              <p>收到你的回答后，任务将继续。</p>
+            </div>
           </div>
           <div class="modal-body clarification-body">
-            <p class="clarification-question">{{ approval.clarifications[0].question }}</p>
-            <div class="clarification-options">
+            <p id="clarification-question" class="clarification-question">{{ approval.clarifications[0].question }}</p>
+            <div v-if="approval.clarifications[0].options?.length" class="clarification-options" role="group" aria-label="建议回答">
               <button v-for="option in approval.clarifications[0].options" :key="option"
-                class="btn-ghost" :class="{ selected: clarificationAnswer === option }"
-                :disabled="deciding" @click="clarificationAnswer = option">{{ option }}</button>
+                class="clarification-option" :class="{ selected: clarificationAnswer === option }"
+                :aria-pressed="clarificationAnswer === option"
+                :disabled="deciding" @click="selectClarificationOption(option)">
+                <span class="clarification-option-mark" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="m4 8 2.5 2.5L12 5" /></svg></span>
+                <span>{{ option }}</span>
+              </button>
             </div>
-            <label for="clarification-answer">你的回答（也可自由输入）</label>
-            <textarea id="clarification-answer" v-model="clarificationAnswer" rows="4" maxlength="10000"
-              :disabled="deciding" placeholder="请补充完成任务所需的信息"></textarea>
-            <p v-if="approval.clarifications.length > 1">还有 {{ approval.clarifications.length - 1 }} 个问题等待回答。</p>
-            <p v-if="approval.actions.length">另有操作等待审批，回答问题不会自动批准这些操作。</p>
+            <div v-if="clarificationAnswerSelected" class="clarification-selection" role="status">
+              <span>已选择，可直接提交</span>
+              <button type="button" class="clarification-edit" :disabled="deciding" @click="editClarificationAnswer">修改回答</button>
+            </div>
+            <div v-else class="clarification-input">
+              <label for="clarification-answer">你的回答 <span>{{ approval.clarifications[0].options?.length ? '选择上方选项，或在这里自由输入' : '可自由输入补充信息' }}</span></label>
+              <textarea id="clarification-answer" ref="clarificationInputEl" v-model="clarificationAnswer" rows="3" maxlength="10000"
+                :disabled="deciding" placeholder="写下你的想法或补充信息…"></textarea>
+            </div>
+            <p v-if="approval.clarifications.length > 1" class="clarification-note">还有 {{ approval.clarifications.length - 1 }} 个问题等待回答。</p>
+            <p v-if="approval.actions.length" class="clarification-note">另有操作等待审批，回答问题不会自动批准这些操作。</p>
           </div>
           <div class="modal-foot">
             <button class="btn-ghost" :disabled="deciding" @click="decide(false)">取消任务</button>
             <button class="btn-primary" :disabled="deciding || !clarificationAnswer.trim()" @click="decide(true)">
               {{ deciding ? '提交中…' : '提交并继续' }}
+              <svg class="clarification-submit-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h12m-5-5 5 5-5 5" /></svg>
             </button>
           </div>
         </div>
-      </div>
-      <div v-else-if="approval" class="overlay">
-        <div class="modal approval-modal" role="dialog" aria-modal="true">
+      </DialogOverlay>
+      <DialogOverlay v-else-if="approval" key="approval" class="approval-overlay" :dismissible="false">
+        <div class="modal approval-modal" role="dialog" aria-modal="true" aria-labelledby="approval-title">
           <div class="modal-head">
-            <h3>需要你确认</h3>
+            <h3 id="approval-title">需要你确认</h3>
             <p>
               {{ approval.actions.length > 1
                 ? `${approval.actions.length} 个操作等待确认`
@@ -536,13 +573,15 @@
             </button>
           </div>
         </div>
-      </div>
+      </DialogOverlay>
+      </Transition>
 
       <!-- 文件面板：浏览虚拟文件系统 -->
-      <div v-if="showFilePanel" class="overlay" @click.self="showFilePanel = false">
-        <div class="modal file-modal">
+      <Transition name="settings-dialog">
+      <DialogOverlay v-if="showFilePanel" class="file-overlay" close-on-backdrop @close="showFilePanel = false">
+        <div class="modal file-modal" role="dialog" aria-modal="true" aria-labelledby="file-panel-title">
           <div class="modal-head row-head">
-            <h3>{{ currentWorkspace?.name || "默认工作区" }} · 文件</h3>
+            <h3 id="file-panel-title">{{ currentWorkspace?.name || "默认工作区" }} · 文件</h3>
             <div class="modal-head-actions">
               <button class="btn-ghost sm" @click="openWorkspaceFolder">打开目录</button>
               <button class="btn-ghost sm" @click="loadFiles" :disabled="loadingFiles">
@@ -577,7 +616,7 @@
               :class="{ dir: f.is_dir }"
               @click="f.is_dir ? navigateDir(f.path) : null"
             >
-              <span class="file-icon">{{ f.is_dir ? '▸' : '·' }}</span>
+              <svg class="file-icon" viewBox="0 0 20 20" aria-hidden="true"><path v-if="f.is_dir" d="M2.5 5h6l2 2h7v9h-15z" /><path v-else d="M5 2.5h6l4 4v11H5zM11 2.5V7h4" /></svg>
               <span class="file-name">{{ f.path.split('/').filter(Boolean).pop() || f.path }}</span>
               <span class="file-size">{{ f.is_dir ? '' : formatSize(f.size) }}</span>
               <button
@@ -598,12 +637,14 @@
             智能体文件位于当前用户的 /workspace；「打开目录」用于部署者本机，远程访问请下载文件。
           </div>
         </div>
-      </div>
+      </DialogOverlay>
+      </Transition>
 
-      <div v-if="nativeWorkspaceTicket" class="overlay">
-        <div class="modal confirm-modal" role="dialog" aria-modal="true">
+      <Transition name="settings-dialog">
+      <DialogOverlay v-if="nativeWorkspaceTicket" @close="cancelNativeWorkspace">
+        <div class="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="native-workspace-title">
           <div class="modal-head">
-            <h3>请在 Windows 窗口中选择目录</h3>
+            <h3 id="native-workspace-title">请在 Windows 窗口中选择目录</h3>
             <p>首次使用时，请允许浏览器打开 Agent Harness。若窗口未出现，可使用网页选择。</p>
           </div>
           <div class="modal-foot">
@@ -611,15 +652,17 @@
             <button class="btn-ghost" @click="openBrowserWorkspace">使用网页选择</button>
           </div>
         </div>
-      </div>
+      </DialogOverlay>
+      </Transition>
 
-      <div v-if="workspacePicker" class="overlay">
+      <Transition name="settings-dialog">
+      <DialogOverlay v-if="workspacePicker" :dismissible="!creatingWorkspace" @close="workspacePicker = null">
         <div class="modal file-modal" role="dialog" aria-modal="true" aria-labelledby="workspace-picker-title">
           <div class="modal-head">
             <h3 id="workspace-picker-title">选择工作区目录</h3>
             <p>选择已挂载的磁盘目录，或在当前目录中新建文件夹。Docker 路径以容器挂载位置为准。</p>
           </div>
-          <div class="modal-body file-list">
+          <div class="modal-body file-list workspace-picker-body">
             <p class="confirm-path">{{ workspacePicker.directory || '可用目录' }}</p>
             <button class="btn-ghost" :disabled="workspaceBrowsing || creatingWorkspace" @click="browseWorkspace(workspacePicker.parent)">返回上级</button>
             <p v-if="workspacePickerError" role="alert">{{ workspacePickerError }}</p>
@@ -628,7 +671,7 @@
               <button class="btn-ghost" :disabled="workspaceBrowsing || creatingWorkspace" @click="browseWorkspace(entry.directory)">📁 {{ entry.name }}</button>
             </div>
             <p v-if="!workspaceBrowsing && !workspacePicker.entries.length">此目录没有子文件夹，可以直接选择或新建文件夹。</p>
-            <label v-if="workspacePicker.directory">新文件夹名称（可选）
+            <label v-if="workspacePicker.directory" class="dialog-field">新文件夹名称（可选）
               <input v-model="workspaceFolderName" :disabled="creatingWorkspace" placeholder="例如：我的项目" @keyup.enter="confirmWorkspace" />
             </label>
           </div>
@@ -637,14 +680,16 @@
             <button class="btn-primary" :disabled="!workspacePicker.directory || workspaceBrowsing || creatingWorkspace" @click="confirmWorkspace">{{ creatingWorkspace ? '创建中…' : workspaceFolderName.trim() ? '新建并选择' : '选择此目录' }}</button>
           </div>
         </div>
-      </div>
+      </DialogOverlay>
+      </Transition>
 
       <!-- 删除确认：删除不可恢复，所以必须把完整路径摆给用户看，而不是只问"确定吗"。
            目录是**连同内容一起删**，所以单独一句强调。 -->
-      <div v-if="pendingDelete" class="overlay">
-        <div class="modal confirm-modal" role="dialog" aria-modal="true">
+      <Transition name="settings-dialog">
+      <DialogOverlay v-if="pendingDelete" :dismissible="!deleting" @close="pendingDelete = null">
+        <div class="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="file-delete-title">
           <div class="modal-head">
-            <h3>确认删除</h3>
+            <h3 id="file-delete-title">确认删除</h3>
             <p>{{ pendingDelete.is_dir ? '目录及其中的全部内容都会被删除' : '该文件会被删除' }}，此操作不可恢复。</p>
           </div>
 
@@ -659,24 +704,26 @@
             </button>
           </div>
         </div>
-      </div>
+      </DialogOverlay>
+      </Transition>
 
       <!--
         退出登录确认。
         为什么要确认：退出会清掉本地的会话列表、消息与审批弹窗，误点是"页面突然空了"，
         用户第一反应往往是"数据没了"。用与删除文件同一套确认框样式，保持观感一致。
       -->
-      <div v-if="logoutConfirm" class="overlay">
-        <div class="modal confirm-modal" role="dialog" aria-modal="true">
+      <Transition name="settings-dialog">
+      <DialogOverlay v-if="logoutConfirm" @close="logoutConfirm = false">
+        <div class="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="logout-title" aria-describedby="logout-description">
           <div class="modal-head">
-            <h3>确认退出登录</h3>
-            <p>
+            <h3 id="logout-title">确认退出登录</h3>
+            <p id="logout-description">
               退出后需要重新输入邮箱和密码。正在生成的回答会继续，重新登录后可以查看。
             </p>
           </div>
 
           <div class="modal-body">
-            <code class="confirm-path">{{ user?.email }}</code>
+            <p class="confirm-path confirm-account">{{ user?.email }}</p>
           </div>
 
           <div class="modal-foot">
@@ -684,7 +731,8 @@
             <button class="btn-danger" @click="confirmLogout">退出登录</button>
           </div>
         </div>
-      </div>
+      </DialogOverlay>
+      </Transition>
 
       <footer class="composer">
         <!-- 回到底部：用户上滑看历史时出现，浮在输入框上方。
@@ -776,7 +824,7 @@ import {
 } from './sse'
 import { renderMarkdown, renderTerminal, clearMarkdownCache } from './markdown'
 import { resizeComposer } from './chatPresentation'
-import { instantaneousRate, freezeMeter, resumeMeter } from './generationMeter'
+import { answerTiming, elapsedSecondsLabel, freezeMeter, resumeMeter } from './generationMeter'
 import { useSidebarResize } from './composables/useSidebarResize'
 import { useMessageScroll } from './composables/useMessageScroll'
 import { useToolActivity } from './composables/useToolActivity'
@@ -786,6 +834,9 @@ import { taskPlan, toolName } from './toolPresentation'
 import AuthView from './AuthView.vue'
 import ProvidersView from './ProvidersView.vue'
 import McpView from './McpView.vue'
+import DialogOverlay from './DialogOverlay.vue'
+import ConfirmDialog from './ConfirmDialog.vue'
+import { provideConfirmation } from './composables/useConfirmation'
 import {
   apiDelete,
   apiFetchRaw,
@@ -806,8 +857,9 @@ function formatTime() {
 }
 
 export default {
-  components: { ToolArguments, AuthView, ProvidersView, McpView },
+  components: { ToolArguments, AuthView, ProvidersView, McpView, DialogOverlay, ConfirmDialog },
   setup() {
+    const { confirmation, confirm, resolveConfirmation } = provideConfirmation()
     // ===== 登录态=====
     // 未登录时整个主界面不挂载（模板里 v-if / v-else），登录后重新挂载，
     // 所以这里不需要"清理上一任用户残留状态"的逻辑 —— 那是最容易出 bug 的做法。
@@ -967,8 +1019,25 @@ export default {
     // 待审批弹窗：{ session_id, actions } | null；deciding 表示决策已提交、正在恢复执行
     const approval = ref(null)
     const clarificationAnswer = ref('')
-    watch(() => approval.value?.clarifications?.[0]?.id, (id, previous) => {
-      if (id !== previous) clarificationAnswer.value = ''
+    const clarificationEditing = ref(false)
+    const clarificationInputEl = ref(null)
+    const clarificationAnswerSelected = computed(() => !clarificationEditing.value
+      && !!approval.value?.clarifications?.[0]?.options?.includes(clarificationAnswer.value)
+      && !!clarificationAnswer.value.trim())
+    function selectClarificationOption(option) {
+      clarificationAnswer.value = option
+      clarificationEditing.value = false
+    }
+    async function editClarificationAnswer() {
+      clarificationEditing.value = true
+      await nextTick()
+      clarificationInputEl.value?.focus()
+    }
+    watch(() => [approval.value?.session_id, approval.value?.clarifications?.[0]?.id], ([session, id], previous = []) => {
+      if (id !== previous[1] || session !== previous[0]) {
+        clarificationAnswer.value = ''
+        clarificationEditing.value = false
+      }
     }, { flush: 'sync' })
     const deciding = ref(false)
     // 人工介入（HITL）热插拔开关：后端为准，这里只做镜像
@@ -1087,14 +1156,14 @@ export default {
 
     const { hasActivity, toolOutcomeText, activityLatest, activityHistory, activeDelegations, doneDelegations } = useToolActivity({ showTools, elapsedLabel, progressLabel, progressSize })
 
-    // ===== 计时器 / 每秒 token =====
+    // ===== 整数秒计时器 =====
     const nowTick = ref(Date.now())
 
     /** 秒级刷新的心跳：只在有消息在流式输出时才走。 */
     function startTicker() {
       if (ticker) return
       nowTick.value = Date.now()
-      ticker = setInterval(() => { if (anyStreaming()) nowTick.value = Date.now(); else stopTicker() }, 200)
+      ticker = setInterval(() => { if (anyStreaming()) nowTick.value = Date.now(); else stopTicker() }, 1000)
     }
 
     function stopTicker() {
@@ -1109,18 +1178,9 @@ export default {
       if (anyStreaming()) startTicker()
       else stopTicker()
     })
-    function rateLabel(message) {
-      return `≈${instantaneousRate(message, nowTick.value).toFixed(1)} tok/s`
-    }
-
-    /** 耗时展示：流式中按 0.2s 刷新，结束后固定。 */
+    /** 耗时展示：只显示完整秒数，结束后固定。 */
     function elapsedLabel(startedAt, endedAt = null) {
-      if (!startedAt) return ''
-      const end = endedAt || nowTick.value
-      const secs = Math.max((end - startedAt) / 1000, 0)
-      if (secs < 60) return `${secs.toFixed(1)}s`
-      const min = Math.floor(secs / 60)
-      return `${min}m${(secs % 60).toFixed(0)}s`
+      return elapsedSecondsLabel(startedAt, endedAt, nowTick.value)
     }
 
     // ===== 输入框：自适应高度 / 建议词 / 按钮式开关 =====
@@ -1324,6 +1384,7 @@ export default {
           if ((evt.type === 'approval' || evt.type === 'clarification')) {
             applyApprovalEvent(fresh, evt, sid)
           } else if (evt.type === 'stopped') {
+            fresh.stopped = true
             fresh.streaming = false
             if (!fresh.content) fresh.content = `（${evt.detail || '已停止'}）`
           } else if (evt.type === 'error') {
@@ -1335,6 +1396,7 @@ export default {
         if (e.name === 'StreamDisconnectedError') {
           markConnectionLost(fresh, e)
         } else if (e.name !== 'AbortError' && e.name !== 'StaleSessionError') {
+          fresh.error = true
           fresh.content = fresh.content || `⚠️ 接回失败：${e.message}`
         }
       }
@@ -1510,7 +1572,7 @@ export default {
     }
 
     async function deleteWorkspace(workspace) {
-      if (!window.confirm(`确认删除工作区“${workspace.title}”及其全部会话？目录中的文件会保留。`)) return
+      if (!await confirm({ title: '删除工作区', description: '工作区及其全部会话将被删除，目录中的文件会保留。', details: workspace.title, confirmLabel: '删除工作区', danger: true })) return
       try {
         await apiDelete(`/api/v1/workspaces/${workspace.id}`)
         if (workspace.sessions.some(s => s.id === sessionId.value) || (!sessionId.value && draftWorkspaceId.value === workspace.id)) resetChat()
@@ -1540,7 +1602,7 @@ export default {
 
     async function deleteSession(id) {
       const session = sessions.value.find(s => s.id === id)
-      if (!window.confirm(`确认删除会话“${session?.title || '新会话'}”？`)) return
+      if (!await confirm({ title: '删除会话', description: '此会话的消息记录将被删除，此操作不可恢复。', details: session?.title || '新会话', confirmLabel: '删除会话', danger: true })) return
       try {
         await apiDelete(`/api/v1/sessions/${id}`)
       } catch (e) {
@@ -1679,6 +1741,7 @@ export default {
             applyApprovalEvent(assistantMsg, evt, sid)
           } else if (evt.type === 'stopped') {
             // 用户点了停止：不是错误，如实说明即可
+            assistantMsg.stopped = true
             assistantMsg.streaming = false
             if (!assistantMsg.content) assistantMsg.content = `（${evt.detail || '已停止'}）`
           } else if (evt.type === 'error') {
@@ -1750,6 +1813,7 @@ export default {
           sessionStates[sid].controller = controller
         }
         target.planPaused = false
+        target.stopped = false
         target.planFinished = false
         resumeMeter(target)
         target.streaming = true
@@ -1770,6 +1834,7 @@ export default {
               state.newApproval = true
               applyApprovalEvent(target, evt, sid)
             } else if (evt.type === 'stopped') {
+              target.stopped = true
               target.content = target.content || `（${evt.detail || '已停止'}）`
             } else if (evt.type === 'error') {
               state.error = evt.detail || '未知错误'
@@ -1911,14 +1976,12 @@ export default {
     async function toggleAccessMode() {
       const next = accessFull.value ? 'sandbox' : 'full'
       if (next === 'full') {
-        const ok = window.confirm(
-          '切换到「完全访问」后：\n' +
-          '· 可以修改和删除所有已挂载磁盘中的文件，不再弹审批\n' +
-          '· 命令在后端 LocalShell 执行，不需要 OpenSandbox\n' +
-          '· Docker 部署使用容器里的 Linux shell，并非 Windows 系统 shell\n' +
-          '· 后端重启会自动切回「沙箱内」\n' +
-          '· 新模式从下一轮对话开始生效\n\n确定切换吗？',
-        )
+        const ok = await confirm({
+          title: '切换到完全访问',
+          description: '可以修改和删除所有已挂载磁盘中的文件，不再弹出审批。新模式从下一轮对话开始生效。',
+          details: '命令将在后端 LocalShell 执行，无需 OpenSandbox。Docker 部署使用容器里的 Linux shell。后端重启后会恢复为沙箱模式。',
+          confirmLabel: '切换到完全访问', danger: true,
+        })
         if (!ok) return
       }
       accessBusy.value = true
@@ -1999,6 +2062,7 @@ export default {
       if (state?.messages) {
         const last = state.messages[state.messages.length - 1]
         if (last && last.role === 'assistant' && last.streaming) {
+          last.stopped = true
           freezeMeter(last)
           last.streaming = false
           if (!last.content) last.content = '（已停止本轮回答）'
@@ -2273,6 +2337,7 @@ export default {
     }
 
     function resetPrivateState() {
+      resolveConfirmation(false)
       sessionViewVersion += 1
       filesViewVersion += 1
       cancelNativeWorkspace()
@@ -2331,6 +2396,7 @@ export default {
       askLogout,
       confirmLogout,
       logoutConfirm,
+      confirmation, resolveConfirmation,
       doLogout,
       userDisplayName,
       userInitial,
@@ -2354,6 +2420,10 @@ export default {
       showTools,
       approval,
       clarificationAnswer,
+      clarificationAnswerSelected,
+      clarificationInputEl,
+      selectClarificationOption,
+      editClarificationAnswer,
       deciding,
       hitlOn,
       hitlBusy,
@@ -2386,9 +2456,10 @@ export default {
       activeDelegations,
       doneDelegations,
       elapsedLabel,
+      answerTiming,
+      nowTick,
       // 运行可见性（成败 / 实时耗时 / 失联判定 / 重新连接）
       toolOutcomeText,
-      rateLabel,
       // 滚动跟随
       stickToBottom,
       hasNewBelow,
@@ -2503,11 +2574,3 @@ export default {
 <style src="./styles/activity.css"></style>
 
 <style src="./styles/activity-archive.css"></style>
-
-<style scoped>
-.clarification-body { display: flex; flex-direction: column; gap: 12px; }
-.clarification-question { white-space: pre-wrap; overflow-wrap: anywhere; }
-.clarification-options { display: flex; flex-wrap: wrap; gap: 8px; }
-.clarification-options .selected { border-color: var(--accent); }
-.clarification-body textarea { width: 100%; box-sizing: border-box; resize: vertical; min-height: 90px; font: inherit; padding: 10px; }
-</style>

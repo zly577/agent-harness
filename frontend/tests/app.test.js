@@ -30,7 +30,7 @@ test('App setup and login screen render after extracting composables', async () 
         state.authBootstrapping.value = false
         state.user.value = { id: 'test', email: 'test@example.com', display_name: '测试用户' }
         state.messages.push({
-          role: 'assistant', content: 'hello', thinking: '', streaming: false,
+          role: 'assistant', content: 'hello', thinking: '', streaming: false, startedAt: 1000, endedAt: 43210,
           toolCalls: [{ id: 't', name: 'read_file', args: { file_path: '/a' }, result: 'ok', status: 'done', ok: true }],
           delegations: [],
         })
@@ -41,6 +41,8 @@ test('App setup and login screen render after extracting composables', async () 
     assert.match(chatHtml, /Agent Harness/)
     assert.match(chatHtml, /测试用户/)
     assert.match(chatHtml, /read_file|读取文件/)
+    assert.match(chatHtml, /已完成 · 用时 42 秒/)
+    assert.doesNotMatch(chatHtml, /tok\/s|token\/s|meter-rate/)
   } finally {
     await server.close()
   }

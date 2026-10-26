@@ -5,21 +5,22 @@
     做成**全屏遮罩弹层**，与「模型」弹层同一套形态（没有 vue-router，
     为一个设置页引路由库不划算；模态还顺带保证"关掉即回到原对话"）。
 
-    遮罩**刻意不绑定**点击关闭、也不绑 Esc：这里往往是刚填了一半的表单
+    遮罩**刻意不绑定**点击关闭，表单编辑时也不通过 Esc 关闭：这里往往是刚填了一半的表单
     （URL / 命令 / 鉴权头），鼠标点到旁边就整窗消失且没有任何提示，
-    是最招骂的一类交互。只能从「取消」「关闭」或右上角 ✕ 主动关。
+    是最招骂的一类交互。列表页可用 Esc 关闭，表单通过「取消」「关闭」或右上角 ✕ 主动关。
   -->
-  <div class="pv-overlay">
-    <div class="pv" role="dialog" aria-label="MCP 工具源">
+  <DialogOverlay class="pv-overlay" :dismissible="!form.open && !busy" @close="$emit('close')">
+    <div class="pv" role="dialog" aria-modal="true" aria-labelledby="mcp-title">
       <header class="pv-head">
-        <div>
-          <h2>MCP 工具源</h2>
+        <span class="pv-head-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 3v5m8-5v5M6 8h12v4a6 6 0 0 1-12 0zM12 18v3" /></svg></span>
+        <div class="pv-heading">
+          <h2 id="mcp-title">MCP 工具源</h2>
           <p class="pv-sub">
-            接入外部 MCP 服务，把它提供的工具直接挂给智能体（比如网页抓取、
-            数据库查询、内部系统接口）。配置**按用户隔离**：别人配的你看不见，你也看不见别人的。
+            为智能体接入网页抓取、数据库和更多外部工具。
           </p>
+          <p class="pv-caption">配置仅对当前账号可见 · 鉴权信息不会回显</p>
         </div>
-        <button class="pv-x" title="关闭" @click="$emit('close')">✕</button>
+        <button class="pv-x" title="关闭" aria-label="关闭 MCP 工具源" @click="$emit('close')"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15" /></svg></button>
       </header>
 
       <!-- 状态提示：这两条都会让"配好了却没生效"，必须说在前面 -->
@@ -36,7 +37,9 @@
       <div v-if="error" class="pv-banner pv-banner-error">{{ error }}</div>
 
       <!-- ===== 表单（新增 / 编辑）===== -->
-      <section v-if="form.open" class="pv-form">
+      <Transition name="settings-panel" mode="out-in">
+      <section v-if="form.open" key="form" class="pv-form">
+        <div class="pv-content">
         <h3>{{ form.id ? '编辑工具源' : '新增工具源' }}</h3>
 
         <div class="pv-grid">
@@ -148,6 +151,7 @@
           </span>
         </p>
 
+        </div>
         <div class="pv-actions">
           <button class="pv-btn" :disabled="busy || !canSubmit" @click="runTest">
             {{ form.testing ? '测试中…' : '测试连接' }}
@@ -163,7 +167,9 @@
       </section>
 
       <!-- ===== 列表 ===== -->
-      <section v-else class="pv-list">
+      <section v-else key="list" class="pv-list">
+        <div class="pv-content">
+        <div v-if="!loading && servers.length" class="pv-section-label">已连接的工具源 <span>{{ servers.length }}</span></div>
         <div v-if="loading" class="pv-empty">载入中…</div>
 
         <div v-else-if="!servers.length" class="pv-empty">
@@ -175,6 +181,7 @@
         </div>
 
         <div v-for="s in servers" :key="s.id" class="pv-item" :class="{ disabled: !s.enabled }">
+          <span class="pv-avatar" aria-hidden="true">{{ (s.name || 'M').slice(0, 1).toUpperCase() }}</span>
           <div class="pv-item-main">
             <div class="pv-item-title">
               <span class="pv-name">{{ s.name }}</span>
@@ -184,7 +191,7 @@
               <span v-if="s.has_env" class="pv-tag">带环境变量</span>
             </div>
             <div class="pv-item-meta">
-              <span class="pv-url">{{ s.transport === 'stdio' ? s.command : s.url }}</span>
+              <span class="pv-url" :title="s.transport === 'stdio' ? s.command : s.url">{{ s.transport === 'stdio' ? s.command : s.url }}</span>
               <template v-if="s.transport === 'stdio' && s.args.length">
                 <span class="pv-sep">·</span>
                 <span class="pv-url">{{ s.args.join(' ') }}</span>
@@ -206,8 +213,9 @@
           </div>
         </div>
 
+        </div>
         <div class="pv-actions">
-          <button class="pv-btn pv-btn-primary" :disabled="busy" @click="addNew">新增工具源</button>
+          <button class="pv-btn pv-btn-primary" :disabled="busy" @click="addNew"><span class="pv-plus" aria-hidden="true">+</span>新增工具源</button>
           <button class="pv-btn" :disabled="busy" title="丢掉已缓存的智能体，让刚改的配置立刻生效" @click="reload">
             重载
           </button>
@@ -215,12 +223,15 @@
           <span v-if="listMessage" class="pv-hint" :class="{ bad: !listOk }">{{ listMessage }}</span>
         </div>
       </section>
+      </Transition>
     </div>
-  </div>
+  </DialogOverlay>
 </template>
 
 <script>
 import { computed, onMounted, reactive, ref } from 'vue'
+import DialogOverlay from './DialogOverlay.vue'
+import { useConfirmation } from './composables/useConfirmation'
 import {
   createMcpServer,
   deleteMcpServer,
@@ -269,8 +280,10 @@ function dictToRows(keys) {
 
 export default {
   name: 'McpView',
+  components: { DialogOverlay },
   emits: ['close'],
   setup() {
+    const confirm = useConfirmation()
     const servers = ref([])
     const status = ref(null)
     const loading = ref(true)
@@ -444,11 +457,7 @@ export default {
     }
 
     async function remove(s) {
-      if (!window.confirm(
-        `删除 MCP 工具源「${s.name}」？\n\n` +
-        `${s.transport === 'stdio' ? '命令：' + s.command : '地址：' + s.url}\n\n` +
-        `已保存的鉴权头/环境变量会一起删掉，需要重新填写。`
-      )) {
+      if (!await confirm({ title: '删除 MCP 工具源', description: '已保存的鉴权头和环境变量会一并删除，再次接入时需要重新填写。', details: `${s.name}\n${s.transport === 'stdio' ? s.command : s.url}`, confirmLabel: '删除工具源', danger: true })) {
         return
       }
       busy.value = true
@@ -491,78 +500,17 @@ export default {
 }
 </script>
 
+<style src="./styles/settings.css"></style>
 <style scoped>
-/* 与 ProvidersView 共用同一套视觉 token（pv-*），观感与「模型」弹层一致 */
-.pv-overlay {
-  position: fixed;
-  inset: 0;
-  background: var(--overlay);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  z-index: 50;
-}
-.pv {
-  width: 100%;
-  max-width: 780px;
-  max-height: 88vh;
-  overflow: auto;
-  background: var(--bg);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 20px 22px 18px;
-}
-.pv-head { display: flex; align-items: flex-start; gap: 12px; }
-.pv-head h2 { margin: 0; font-size: 16px; font-weight: 600; }
-.pv-sub { margin: 6px 0 0; font-size: 12px; line-height: 1.6; color: var(--text-3); max-width: 620px; }
-.pv-x {
-  margin-left: auto;
-  flex: 0 0 auto;
-  width: 26px; height: 26px;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--text-2);
-  border-radius: 6px;
-  cursor: pointer;
-}
-.pv-x:hover { background: var(--hover); }
-
-.pv-banner { margin: 12px 0 0; padding: 8px 10px; border-radius: 7px; font-size: 12.5px; line-height: 1.6; }
-.pv-banner-error { background: var(--fill); color: var(--danger); border: 1px solid var(--border); }
-.pv-banner-warn { background: var(--fill); color: var(--warn); border: 1px solid var(--border); }
-.pv-banner code { font-family: var(--mono); font-size: 11.5px; }
-
-.pv-form h3 { margin: 16px 0 10px; font-size: 13.5px; font-weight: 600; }
-.pv-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.pv-span2 { grid-column: span 2; }
-.pv-field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--text-3); }
-.pv-field em { font-style: normal; opacity: 0.8; }
-.pv-field input, .pv-field select, .pv-field textarea {
-  padding: 8px 10px;
-  font-size: 13px;
-  color: var(--text);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  outline: none;
-  font-family: inherit;
-}
-.pv-field textarea { resize: vertical; line-height: 1.5; font-family: var(--mono); font-size: 12px; }
-.pv-field input:focus, .pv-field select:focus, .pv-field textarea:focus { border-color: var(--border-2); }
-.pv-check { flex-direction: row; align-items: center; gap: 7px; }
-.pv-check input { width: auto; }
-
-.pv-mode { display: flex; gap: 14px; margin-bottom: 6px; }
+.pv-mode { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-bottom: 6px; }
 .pv-mode label { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-2); }
 .pv-mode input { width: auto; }
 
 .kv { display: flex; flex-direction: column; gap: 6px; }
 .kv-row { display: flex; gap: 6px; }
-.kv-row input { flex: 1; padding: 7px 9px; font-size: 12.5px; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; outline: none; }
+.kv-row input { flex: 1; min-width: 0; padding: 9px 10px; font-size: 12.5px; color: var(--text); background: var(--bg); border: 1px solid var(--border-2); border-radius: 10px; outline: none; }
 .kv-row input:first-child { flex: 0 0 38%; font-family: var(--mono); }
-.kv-del { width: 28px; border: 1px solid var(--border); background: transparent; color: var(--text-3); border-radius: 6px; cursor: pointer; }
+.kv-del { width: 30px; flex: 0 0 auto; border: 1px solid var(--border); background: transparent; color: var(--text-2); border-radius: 8px; cursor: pointer; }
 .kv-del:hover:not(:disabled) { color: var(--danger); }
 .kv-add { align-self: flex-start; padding: 4px 10px; font-size: 11.5px; color: var(--text-2); background: transparent; border: 1px dashed var(--border-2); border-radius: 6px; cursor: pointer; }
 .kv-add:hover:not(:disabled) { background: var(--hover); }
@@ -570,43 +518,4 @@ export default {
 .kv-tools { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
 .kv-tools code { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 5px; background: var(--fill); color: var(--text-2); }
 
-.pv-result { margin: 12px 0 0; font-size: 12.5px; line-height: 1.6; }
-.pv-result.ok { color: var(--ok); }
-.pv-result.bad { color: var(--danger); }
-
-.pv-actions { display: flex; align-items: center; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
-.pv-btn { padding: 7px 14px; font-size: 13px; color: var(--text); background: transparent; border: 1px solid var(--border); border-radius: 7px; cursor: pointer; }
-.pv-btn:hover:not(:disabled) { background: var(--hover); }
-.pv-btn:disabled { opacity: 0.45; cursor: default; }
-.pv-btn-primary { background: var(--btn); color: var(--btn-text); border-color: var(--btn); }
-.pv-hint { font-size: 11.5px; color: var(--text-3); }
-.pv-hint.bad { color: var(--danger); }
-
-.pv-list { margin-top: 14px; }
-.pv-empty { padding: 22px 4px; font-size: 13px; color: var(--text-2); }
-.pv-empty-tip { font-size: 12px; color: var(--text-3); line-height: 1.6; }
-
-.pv-item { display: flex; align-items: center; gap: 12px; padding: 11px 12px; border: 1px solid var(--border); border-radius: 9px; margin-bottom: 8px; }
-.pv-item.disabled { opacity: 0.6; }
-.pv-item-main { min-width: 0; flex: 1; }
-.pv-item-title { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.pv-name { font-size: 13.5px; font-weight: 500; }
-.pv-tag { font-size: 11px; padding: 1px 6px; border-radius: 5px; border: 1px solid var(--border); color: var(--text-2); background: var(--fill); }
-.pv-tag.proto { font-family: var(--mono); }
-.pv-tag.off { color: var(--text-3); }
-.pv-item-meta { margin-top: 5px; font-size: 11.5px; color: var(--text-3); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.pv-item-meta em { font-style: normal; opacity: 0.75; }
-.pv-url { font-family: var(--mono); word-break: break-all; }
-.pv-sep { opacity: 0.5; }
-.pv-item-actions { display: flex; gap: 6px; flex: 0 0 auto; }
-.pv-mini { padding: 4px 9px; font-size: 11.5px; color: var(--text-2); background: transparent; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
-.pv-mini:hover:not(:disabled) { background: var(--hover); color: var(--text); }
-.pv-mini:disabled { opacity: 0.4; cursor: default; }
-.pv-mini.danger:hover:not(:disabled) { color: var(--danger); }
-
-@media (max-width: 640px) {
-  .pv-grid { grid-template-columns: 1fr; }
-  .pv-span2 { grid-column: span 1; }
-  .pv-item { flex-direction: column; align-items: stretch; }
-}
 </style>

@@ -44,7 +44,11 @@ docker run --rm --user "$(id -u):$(id -g)" --mount "type=bind,source=$(pwd),targ
 | `WEB_BIND_IP` | 默认 127.0.0.1，仅本机访问 |
 | `ALLOW_REGISTRATION` | 默认 true，允许直接注册；设为 false 关闭公开注册 |
 | `REGISTRATION_EMAIL_VERIFICATION` | 默认 false；设为 true 时注册需要邮箱验证码，并须配置 SMTP |
-| 联网搜索 | 无需 API key，直连 360 搜索，百度备用，无需代理 |
+| 联网搜索 | 无需 API key，Bing RSS 优先，DuckDuckGo、全球 Bing、360、百度自动备用 |
+| `TAVILY_API_KEY` | 可选：优先使用 Tavily 官方结构化 API（按供应商套餐计费），失败自动回退；[API 文档](https://docs.tavily.com/documentation/api-reference/endpoint/search) |
+| `WEB_SEARCH_TIMEOUT_SECONDS` | 搜索总时限，默认 30 秒，同时受 MCP 工具超时上限约束 |
+| `WEB_SEARCH_PROVIDER_TIMEOUT_SECONDS` | 每个搜索源的最长等待时间，默认 5 秒，给备用源预留时间 |
+| `WEB_SEARCH_PROXY` | 可选 HTTP 代理，默认直连；Docker 使用容器可达的地址，例如 `http://host.docker.internal:7890` |
 | `MCP_ENABLED` | 默认 true，用户自行添加 MCP 工具源；不预置已启用服务器 |
 
 保持自动生成的 `MYSQL_PASSWORD` 使用十六进制字母数字。它会拼入连接 URL，手动设置包含 `@ / : % # $` 等字符的密码需要额外 URL 编码和 Compose 转义，不建议直接替换。
@@ -66,7 +70,7 @@ docker compose ps
 
 1. 在「模型」中添加供应商、Base URL、API Key、模型名称并设为默认。
 2. 发一条消息验证模型连接。
-3. 运行 `docker compose up -d`；联网搜索无需密钥，默认直连 360 搜索，百度备用；验证码、限流或页面结构变化可能导致搜索失败。
+3. 运行 `docker compose up -d`；联网搜索无需密钥，优先解析 Bing RSS 结构化结果，DuckDuckGo、全球 Bing、360、百度自动备用。无密钥端点仍可能限流或返回不够精确的结果；持续使用可配置 `TAVILY_API_KEY` 接入官方 API。每个搜索源有独立超时，总调用默认最多 30 秒。修改搜索配置后重新运行 `docker compose up -d backend`。
 4. MCP 默认启用，在界面添加自己的工具源即可。旧 `.env` 若仍为 `MCP_ENABLED=false`，需改为 true 并重建容器。stdio MCP 所需命令/依赖必须装在后端镜像内；访问远端 HTTP MCP 不需要把对方服务装进镜像。
 
 运行自动冒烟检查（无需模型 Key）：

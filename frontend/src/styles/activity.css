@@ -1,8 +1,8 @@
 /* Compact activity rows: one summary, optional operation details. */
-.activity { gap: 6px; }
+.activity { gap: 6px; font-family: var(--font); }
 .act-block { gap: 5px; }
 .act { padding: 7px 10px; border-radius: 9px; background: transparent; }
-.act-verb, .act-intent { font-family: var(--font); font-size: 12px; }
+.act-verb, .act-intent { font-family: var(--font); font-size: 13px; }
 .act-detail { font-size: 11px; }
 .act-badge { font-size: 10.5px; }
 .act-call-wrap { border: 0; border-radius: 7px; }

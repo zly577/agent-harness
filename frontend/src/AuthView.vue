@@ -5,7 +5,8 @@
       <div class="auth-tabs">
         <button v-for="item in [{key: 'login', label: '登录'}, {key: 'register', label: '注册'}]" :key="item.key" type="button" class="auth-tab" :class="{ active: mode === item.key }" :disabled="busy || sending" @click="switchMode(item.key)">{{ item.label }}</button>
       </div>
-      <form class="auth-form" @submit.prevent="submit">
+      <Transition name="settings-panel" mode="out-in">
+      <form :key="mode" class="auth-form" @submit.prevent="submit">
         <label class="auth-field"><span>邮箱</span><input v-model="email" type="text" inputmode="email" autocomplete="username" placeholder="请输入邮箱地址" maxlength="255" required :disabled="busy || sending" autofocus /></label>
         <label class="auth-field"><span>密码</span><input v-model="password" type="password" :autocomplete="mode === 'login' ? 'current-password' : 'new-password'" :placeholder="mode === 'register' ? '请设置 8–128 位密码' : '请输入密码'" :minlength="mode === 'register' ? 8 : 1" maxlength="128" required :disabled="busy" /></label>
         <template v-if="mode === 'register'">
@@ -24,6 +25,7 @@
         <p v-else-if="hintText" class="auth-hint" role="status">{{ hintText }}</p>
         <button class="auth-submit" type="submit" :disabled="busy || sending || !canSubmit">{{ busy ? (mode === 'login' ? '正在登录…' : '正在注册…') : (mode === 'login' ? '登录' : '注册并登录') }}</button>
       </form>
+      </Transition>
       <p class="auth-foot"><template v-if="mode === 'login'">还没有账号？<a href="#" @click.prevent="switchMode('register')">立即注册</a></template><template v-else>已有账号？<a href="#" @click.prevent="switchMode('login')">去登录</a></template></p>
     </div>
   </div>
@@ -99,7 +101,7 @@ export default {
 
 <style scoped>
 .auth-wrap {
-  min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -108,11 +110,13 @@ export default {
 }
 .auth-card {
   width: 100%;
-  max-width: 380px;
-  padding: 28px 26px 22px;
+  max-width: 420px;
+  padding: 32px 28px 24px;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--dialog-radius);
+  box-shadow: var(--dialog-shadow);
+  animation: auth-enter var(--dialog-duration) var(--ease-soft) both;
 }
 .auth-brand {
   display: flex;
@@ -123,9 +127,9 @@ export default {
 .auth-mark {
   width: 38px;
   height: 38px;
-  border-radius: 9px;
-  background: var(--btn);
-  color: #fff;
+  border-radius: 11px;
+  background: var(--accent-soft);
+  color: var(--accent);
   display: grid;
   place-items: center;
   font-weight: 600;
@@ -134,14 +138,14 @@ export default {
 }
 .auth-brand h1 {
   margin: 0;
-  font-size: 16px;
+  font-size: 20px;
   font-weight: 600;
   color: var(--text);
 }
 .auth-brand p {
   margin: 2px 0 0;
   font-size: 12px;
-  color: var(--text-3);
+  color: var(--text-2);
 }
 .auth-tabs {
   display: flex;
@@ -183,16 +187,20 @@ export default {
   opacity: 0.7;
 }
 .auth-field input {
-  padding: 9px 11px;
-  font-size: 14px;
+  width: 100%;
+  min-width: 0;
+  padding: 10px 12px;
+  font: 400 13px/1.6 var(--font);
   color: var(--text);
   background: var(--bg);
-  border: 1px solid var(--border, #ddd);
-  border-radius: 7px;
+  border: 1px solid var(--border-2);
+  border-radius: 10px;
   outline: none;
+  transition: border-color 180ms ease, box-shadow 180ms ease;
 }
 .auth-field input:focus {
-  border-color: var(--btn);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 .auth-error,
 .auth-hint {
@@ -201,7 +209,7 @@ export default {
   line-height: 1.5;
 }
 .auth-error {
-  color: #c0392b;
+  color: var(--danger);
 }
 .auth-hint {
   color: var(--text-3);
@@ -211,12 +219,14 @@ export default {
   padding: 10px 0;
   font-size: 14px;
   font-weight: 500;
-  color: #fff;
-  background: var(--btn);
+  color: var(--accent-button-text);
+  background: var(--accent-button);
   border: 0;
-  border-radius: 8px;
+  border-radius: 10px;
   cursor: pointer;
+  transition: opacity 180ms ease;
 }
+.auth-submit:hover:not(:disabled) { opacity: 0.88; }
 .auth-submit:disabled {
   opacity: 0.45;
   cursor: default;
@@ -228,10 +238,12 @@ export default {
   color: var(--text-3);
 }
 .auth-foot a {
-  color: var(--btn);
+  color: var(--accent);
 }
 .auth-code-row { display: flex; gap: 8px; }
 .auth-code-row input { min-width: 0; flex: 1; }
-.auth-code-button { padding: 0 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--fill); color: var(--text); white-space: nowrap; cursor: pointer; }
+.auth-code-button { padding: 0 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--fill); color: var(--text); white-space: nowrap; cursor: pointer; }
 .auth-code-button:disabled { opacity: 0.5; cursor: default; }
+@keyframes auth-enter { from { opacity: 0; transform: translateY(12px) scale(0.985); } to { opacity: 1; transform: none; } }
+@media (max-width: 640px) { .auth-wrap { padding: 16px; } .auth-card { padding: 26px 20px 22px; } }
 </style>
