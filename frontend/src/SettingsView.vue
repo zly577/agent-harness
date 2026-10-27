@@ -18,6 +18,8 @@
           <h3>长期记忆</h3>
           <p class="pv-caption">当前工作区：{{ workspaceName }} · Agent.md</p>
           <p class="pv-caption">保存回答习惯、项目约定和工作偏好。同一工作区的会话共享记忆，保存后从下一轮对话生效。</p>
+          <p v-if="memory" class="pv-caption">每轮常驻加载前 {{ memory.core_limit?.toLocaleString() }} 字；详细经验保存在 {{ memory.detail_directory }}，按需读取。</p>
+          <p v-if="memory && memoryContent.length > memory.core_limit" class="pv-result bad" role="status">当前内容超过常驻容量，超出部分仍保存在文件中。请把详细记录整理到按需记忆目录，核心偏好保持简短。</p>
           <p v-if="memoryError" class="pv-result bad" role="alert">{{ memoryError }}</p>
           <p v-if="memoryLoading">正在读取记忆…</p>
           <form v-else-if="memory" @submit.prevent="saveMemory">
@@ -55,9 +57,11 @@
           <p v-if="preferencesLoading">正在读取设置…</p>
           <form v-else-if="preferences" @submit.prevent="savePreferences">
             <div v-if="tab === 'context'" class="pv-grid personal-grid">
-              <label class="pv-field"><span>触发压缩的消息数</span><input v-model.number="form.context_max_messages" type="number" min="10" max="1000" step="1" required :disabled="busy" /><em>全局默认：{{ preferences.defaults.context_max_messages }} 条</em></label>
-              <label class="pv-field"><span>压缩后保留的最近消息数</span><input v-model.number="form.context_keep_messages" type="number" min="1" max="999" step="1" required :disabled="busy" /><em>全局默认：{{ preferences.defaults.context_keep_messages }} 条</em></label>
-              <p class="pv-caption pv-span2">按消息条数统计，包含工具调用消息，并非对话轮数或 token 数。保留数须小于压缩阈值；压缩仅整理模型上下文，完整聊天记录仍保留。</p>
+              <label class="pv-field"><span>模型上下文窗口（token）</span><input v-model.number="form.context_window_tokens" type="number" min="0" max="10000000" step="1" required :disabled="busy" /><em>0 表示自动识别；无法识别时使用 {{ preferences.context_fallback_tokens?.toLocaleString() }}。自定义端点请填写实际窗口。</em></label>
+              <label class="pv-field"><span>输出预留（token）</span><input v-model.number="form.context_output_reserve" type="number" min="256" max="1000000" step="1" required :disabled="busy" /></label>
+              <label class="pv-field"><span>触发压缩的输入预算占比（%）</span><input v-model.number="form.context_trigger_percent" type="number" min="30" max="95" step="1" required :disabled="busy" /></label>
+              <label class="pv-field"><span>压缩后保留的近期内容（token）</span><input v-model.number="form.context_keep_tokens" type="number" min="256" max="1000000" step="1" required :disabled="busy" /><em>预算不足时自动缩小，保留完整工具交互边界。</em></label>
+              <p class="pv-caption pv-span2">预算包含系统提示、工作区记忆、技能、工具定义和消息；扣除输出预留及安全余量。输入大小为保守估算，并参考供应商返回的实际用量校准。完整聊天记录仍保留。</p>
             </div>
             <div v-else class="pv-grid personal-grid">
               <label class="pv-field"><span>每轮工具调用上限</span><input v-model.number="form.tool_call_run_limit" type="number" min="0" max="100000" step="1" required :disabled="busy" /><em>0 表示不限制</em></label>
@@ -113,12 +117,12 @@ const props = defineProps({ user: { type: Object, required: true }, workspaceId:
 const emit = defineEmits(['close', 'password-changed'])
 const confirm = useConfirmation()
 const tabs = [{ id: 'memory', label: '长期记忆' }, { id: 'account', label: '账户安全' }, { id: 'context', label: '上下文管理' }, { id: 'budget', label: '执行预算' }]
-const contextKeys = ['context_max_messages', 'context_keep_messages']
+const contextKeys = ['context_window_tokens', 'context_output_reserve', 'context_trigger_percent', 'context_keep_tokens']
 const budgetKeys = ['tool_call_run_limit', 'tool_call_thread_limit', 'tool_call_limit_tool']
 const tab = ref('memory'), busy = ref(false), message = ref('')
 const memory = ref(null), memoryContent = ref(''), memoryError = ref(''), memoryLoading = ref(true)
 const preferences = ref(null), preferencesError = ref(''), preferencesLoading = ref(true), form = reactive({})
-const budgetTools = ['web_search', 'execute', 'read_file', 'write_file', 'edit_file', 'ls', 'glob', 'grep', 'task', 'write_todos', 'ask_user']
+const budgetTools = ['web_search', 'execute', 'read_file', 'write_file', 'edit_file', 'ls', 'glob', 'grep', 'task', 'write_todos', 'ask_user', 'search_history', 'read_history', 'remember', 'update_task_state']
   .map(value => ({ value, label: toolNames[value] }))
 const budgetScope = ref('all'), budgetToolChoice = ref('web_search'), customBudgetTool = ref('')
 const budgetToolValue = computed(() => budgetScope.value === 'all' ? ''
@@ -187,6 +191,8 @@ async function savePreferences() {
   preferencesError.value = ''; message.value = ''
   if (tab.value === 'budget' && budgetScope.value === 'single' && !budgetToolValue.value) { preferencesError.value = '请选择工具，或填写自定义工具标识。'; return }
   if (!Number.isInteger(values.context_max_messages) || !Number.isInteger(values.context_keep_messages) || values.context_keep_messages >= values.context_max_messages) { preferencesError.value = '消息数须为整数，且保留消息数必须小于压缩阈值。'; return }
+  if (contextKeys.some(key => !Number.isInteger(values[key]))) { preferencesError.value = '上下文设置须为整数。'; return }
+  if (values.context_window_tokens && values.context_window_tokens < values.context_output_reserve + 2048) { preferencesError.value = '上下文窗口须大于输出预留至少 2048 token。'; return }
   if (values.tool_call_thread_limit && values.tool_call_run_limit > values.tool_call_thread_limit) { preferencesError.value = '每轮调用上限不能大于会话调用上限。'; return }
   busy.value = true
   try {

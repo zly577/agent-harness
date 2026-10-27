@@ -53,6 +53,8 @@ def test_preferences_persist_isolate_reset_and_invalidate(personal_client, monke
     {'tool_call_run_limit': 5, 'tool_call_thread_limit': 4},
     {'tool_call_run_limit': True}, {'tool_call_limit_tool': '../file'},
     {'jwt_secret': 'do-not-accept'},
+    {'context_window_tokens': 4096, 'context_output_reserve': 4096},
+    {'context_trigger_percent': 99}, {'context_keep_tokens': 0},
 ])
 def test_preference_validation_rejects_without_saving(personal_client, updates):
     client, _ = personal_client
@@ -71,7 +73,8 @@ def test_memory_workspace_ownership_conflict_and_empty_save(personal_client, tmp
         db.commit()
     url = f'/api/v1/preferences/memory?workspace_id={workspace_id}'
     initial = client.get(url).json()
-    assert initial == {'content': '', 'revision': 'missing', 'exists': False}
+    assert initial == {'content': '', 'revision': 'missing', 'exists': False,
+                       'core_limit': 6000, 'injected_chars': 0, 'detail_directory': '/workspace/.agent-memory/'}
     assert not (project / 'Agent.md').exists()
     saved = client.put(url, json={'content': '# 项目偏好\n请用中文。', 'revision': initial['revision']})
     assert saved.status_code == 200, saved.text
@@ -188,12 +191,26 @@ def test_budget_blocks_real_tool_and_survives_graph_rebuild(monkeypatch):
     asyncio.run(check())
 
 
-def test_summary_uses_personal_message_limits():
+def test_summary_uses_personal_message_limits(tmp_path):
     from app.agent.context import build_summary_middleware
     from app.agent.history_model import HistoryModel
-    middleware = build_summary_middleware(HistoryModel(), preferences={'context_max_messages': 120, 'context_keep_messages': 40})
-    assert middleware.trigger == ('messages', 120)
-    assert middleware.keep == ('messages', 40)
+    from deepagents.backends import FilesystemBackend
+    middleware = build_summary_middleware(HistoryModel(), backend=FilesystemBackend(root_dir=tmp_path, virtual_mode=True), preferences={'context_max_messages': 120, 'context_keep_messages': 40})
+    assert middleware.trigger[0] == 'tokens'
+    assert middleware.keep == ('tokens', 6000)
+
+
+def test_legacy_clients_preserve_new_context_settings(personal_client):
+    client, _ = personal_client
+    values = client.get('/api/v1/preferences').json()['values']
+    values.update(context_window_tokens=16000, context_output_reserve=2000, context_keep_tokens=3000)
+    assert client.put('/api/v1/preferences', json=values).status_code == 200
+    legacy = {key: value for key, value in values.items() if key in (
+        'context_max_messages', 'context_keep_messages', 'tool_call_run_limit', 'tool_call_thread_limit', 'tool_call_limit_tool')}
+    legacy['tool_call_run_limit'] = 2
+    result = client.put('/api/v1/preferences', json=legacy)
+    assert result.status_code == 200
+    assert result.json()['values'] == {**values, 'tool_call_run_limit': 2}
 
 
 @pytest.mark.parametrize('tool_name', ['', 'work'])

@@ -87,3 +87,24 @@ def test_validate_permissions_passes_for_real_config():
 def test_available_subagents_contains_example():
     names = subagents.available_subagents()
     assert "researcher" in names
+
+
+def test_custom_subagents_use_the_same_model_and_token_policy(tmp_path):
+    from app.agent.history_model import HistoryModel
+    from deepagents.backends import FilesystemBackend
+    model = HistoryModel()
+    spec = subagents.build_subagent(SubAgentConfig(name="researcher", description="d", system_prompt="prompt"),
+        backend=FilesystemBackend(root_dir=tmp_path, virtual_mode=True), context_model=model,
+        preferences={"context_window_tokens": 16000}, session_id="parent")
+    summary = next(m for m in spec["middleware"] if m.name == "SummarizationMiddleware")
+    assert summary.model is model and summary.trigger[0] == "tokens"
+    assert summary.cleaner.scope
+
+
+def test_delegates_cannot_bypass_file_permissions_with_memory_tool(tmp_path):
+    from app.agent.memory_tools import build_memory_tools
+    from app.agent.clarification import ask_user
+    spec = subagents.build_subagent(SubAgentConfig(name="researcher", description="d", system_prompt="prompt"),
+        inherited_tools=[*build_memory_tools(tmp_path), ask_user])
+    assert [tool.name for tool in spec['tools']] == ['ask_user']
+    assert 'permissions' not in spec  # Inherit the caller's permissions.

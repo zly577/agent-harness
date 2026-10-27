@@ -775,13 +775,15 @@ class IntentMiddleware(AgentMiddleware):
             out.append(augmented if augmented is not None else tool)
         return out
 
-    def wrap_model_call(self, request, handler):
+    def modify_request(self, request):
         tools = self._augmented_tools(getattr(request, "tools", None) or [])
-        return handler(request.override(tools=list(tools)))
+        return request.override(tools=list(tools))
+
+    def wrap_model_call(self, request, handler):
+        return handler(self.modify_request(request))
 
     async def awrap_model_call(self, request, handler):
-        tools = self._augmented_tools(getattr(request, "tools", None) or [])
-        return await handler(request.override(tools=list(tools)))
+        return await handler(self.modify_request(request))
 
     # ---- 半场二：执行工具之前 ----
 

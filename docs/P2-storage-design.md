@@ -1,5 +1,7 @@
 # P2 上下文管理与持久化设计
 
+> 本文保留早期规划。当前分级压缩、任务状态、归档召回和文件记忆实现见 [上下文管理](context-management.md)。
+
 > 基于用户确认的最终方案：
 > - **SQLite** 做 langgraph checkpoint/store（消息历史 / 会话状态 / 短期记忆）
 > - **MySQL 8.0**（root）做业务数据持久化（会话元信息 / 长期记忆 / Skills / 子智能体 / MCP 配置 / 审计）

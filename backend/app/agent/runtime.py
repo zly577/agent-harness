@@ -16,7 +16,7 @@ from langchain_core.messages import ToolMessage
 from sqlalchemy import func
 
 from app.agent.history_presentation import extract_text as _extract_text, merge_tool_log as _merge_tool_log
-from app.agent.context import build_summary_middleware, get_checkpointer, get_store
+from app.agent.context import ConversationArchiveMiddleware, build_summary_middleware, get_checkpointer, get_store
 from app.agent.intent import resolve_intent, strip_intent
 from app.agent import access
 from app.agent.mcp import build_mcp_tools
@@ -48,6 +48,10 @@ from app.agent.subagent_stream import (
 from app.agent.subagents import load_all_subagents
 from app.agent.clarification import ask_user, ClarificationMiddleware
 from app.agent.workspace_memory import WorkspaceMemoryRepairMiddleware
+from app.agent.task_state import TaskStateMiddleware
+from app.agent.history_tools import build_history_tools
+from app.agent.memory_tools import build_memory_tools
+from app.agent.context_budget import TodoPromptProjection
 from app.agent.web_search import web_search
 from app.agent.tool_outcome import classify_tool_result
 from app.core.config import settings
@@ -255,21 +259,29 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
     # 工具熔断：每个工具独立计数，连续失败达阈值 → 冷却期短路 → 冷却后放一次探测自愈；
     # 同时产出"手动恢复"工具（模型可主动调用它重置本会话熔断）。
     from app.core.preferences import load_preferences
+    from deepagents.middleware.memory import MemoryMiddleware
     preferences = load_preferences(owner)
+    skills_mw = build_skills_middleware(backend)
+    task_mw = TaskStateMiddleware()
+    todo_mw = TodoListMiddleware()
+    intent_mws = build_intent_middlewares()
     failure_middlewares, recovery_tools = build_failure_limit_middlewares()
     middlewares = [
         # **必须排第一**。中间件的顺序 = 洋葱的顺序（第一个最外层，见
         # langchain `_chain_tool_call_wrappers` 的注释），而这一层的职责是
         # "在执行任何工具之前摘掉 `_intent`"。放里面（比如放到 HITL 之后）会出现
         # "审批弹窗里带着 `_intent`"、甚至"熔断器看到的是没摘干净的参数"。
-        *build_intent_middlewares(),
+        *intent_mws,
         ClarificationMiddleware(),
         WorkspaceMemoryRepairMiddleware(backend, sources),
-        TodoListMiddleware(),
+        todo_mw,
+        ConversationArchiveMiddleware(session_key),
+        task_mw,
         # 摘要中间件必须与主模型**同一个实例**：
         # 否则会出现"对话走用户选的供应商、压缩摘要却偷偷走另一个模型"，
         # 而且那条路径在界面上完全不可见（用户只会觉得"摘要质量怎么变了"）。
-        build_summary_middleware(model, session_id=session_key, preferences=preferences),
+        build_summary_middleware(model, backend=backend, session_id=session_key, preferences=preferences,
+                                 request_projectors=[*intent_mws, TodoPromptProjection(todo_mw), task_mw, skills_mw, MemoryMiddleware(backend=backend, sources=sources)]),
         LoggingMiddleware(),
         AuditMiddleware(),
         # 硬护栏 —— 拦掉"按进程名杀 python"这类会把 harness 后端自己杀掉的
@@ -283,7 +295,6 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
     if mode == access.MODE_FULL:
         from app.agent.host_shell import host_filesystem_middleware
         middlewares.extend(host_filesystem_middleware(backend, agent_permissions(session_key, owner, mode)))
-    skills_mw = build_skills_middleware(backend)
 
     # 外部 MCP 工具（MCP_ENABLED=1 才加载）
     # 配置来源 = 该用户数据库里的记录 + configs/mcp/*.yaml（运维预置，对所有人可见）。
@@ -300,6 +311,8 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
     # append 会污染它（多次调用 get_agent 会重复累加）。这里显式拷贝。
     tools = list(extra_tools)
     tools.extend([web_search, ask_user])
+    tools.extend(build_history_tools(session_key, owner))
+    tools.extend(build_memory_tools(workspace_root))
     # 工具熔断的"手动恢复"入口（模型可主动调用，见 middleware.ConsecutiveToolFailureMiddleware）
     tools.extend(recovery_tools)
 
@@ -335,7 +348,8 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
         # 再打开时又冒出来（弹窗复活）。详见 app/agent/permissions.py 模块注释。
         interrupt_on=hitl_interrupt_on(session_key, owner, mode),
         # 子智能体（YAML 注册表），同一模型；task 工具委派 + 隔离上下文
-        subagents=load_all_subagents(workspace=workspace_root, mode=mode, backend=backend),
+        subagents=load_all_subagents(workspace=workspace_root, mode=mode, backend=backend,
+                                    context_model=model, preferences=preferences, session_id=session_key, inherited_tools=tools),
     )
     if history_only:
         # Only aget_state may use this graph. Never cache it as an executable

@@ -1,13 +1,15 @@
 const labels = {
   file_path: '文件', path: '路径', paths: '路径', pattern: '匹配规则', query: '搜索内容', command: '命令',
   content: '文件内容', old_string: '原内容', new_string: '替换内容', replace_all: '全部替换',
-  offset: '起始行', limit: '数量上限', glob: '文件范围', recursive: '包含子目录',
+  offset: '起始位置', limit: '数量上限', glob: '文件范围', recursive: '包含子目录',
   description: '任务说明', subagent_type: '执行智能体', timeout: '超时时间', timeout_seconds: '超时（秒）',
   reason: '原因',
   max_results: '结果数量', url: '地址', urls: '地址', cwd: '执行目录', encoding: '编码',
   todos: '任务', tasks: '任务', status: '状态', name: '名称', title: '标题', id: '标识',
+  snapshot: '任务状态', expected_revision: '预期版本', source: '来源', tier: '记忆层级',
+  message_ids: '消息标识', scope: '检索范围', max_chars: '字符预算', key: '记忆标识',
 }
-export const toolNames = { ls: '浏览目录', glob: '查找文件', grep: '搜索内容', read_file: '读取文件', write_file: '写入文件', edit_file: '修改文件', execute: '执行命令', task: '委派任务', write_todos: '更新计划', ask_user: '询问用户', web_search: '联网搜索', delete: '删除文件' }
+export const toolNames = { ls: '浏览目录', glob: '查找文件', grep: '搜索内容', read_file: '读取文件', write_file: '写入文件', edit_file: '修改文件', execute: '执行命令', task: '委派任务', write_todos: '更新计划', ask_user: '询问用户', web_search: '联网搜索', delete: '删除文件', update_task_state: '保存任务状态', search_history: '搜索历史', read_history: '读取历史', remember: '保存长期记忆' }
 export function toolName(name) { return toolNames[name] || name || '工具' }
 export function argumentFields(args) {
   if (args == null) return []

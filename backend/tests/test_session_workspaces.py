@@ -350,7 +350,7 @@ def test_agent_memory_and_tools_share_selected_root(database, tmp_path, monkeypa
         assert (default/"Agent.md").read_text(encoding="utf-8")=="DEFAULT MEMORY MUST NOT LOAD"
         assert captured["memory"]==["/workspace/Agent.md"]
         summary=next(m for m in captured["middleware"] if m.name=="SummarizationMiddleware")
-        assert summary.trigger==("messages",120) and summary.keep==("messages",40)
+        assert summary.trigger[0]=="tokens" and summary.keep==("tokens",6000)
         budget=next(m for m in captured["middleware"] if hasattr(m,"thread_limit"))
         assert budget.thread_limit==15 and budget.run_limit==3 and budget.tool_name is None
         assert str(project) in captured["system_prompt"]

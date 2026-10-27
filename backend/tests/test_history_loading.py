@@ -58,14 +58,15 @@ def test_offline_graph_reconstructs_delta_messages(monkeypatch, tmp_path):
     asyncio.run(check())
 
 
-def test_repeated_summary_keeps_display_history_after_restart(monkeypatch):
+def test_repeated_summary_keeps_display_history_after_restart(monkeypatch, tmp_path):
     from langchain.agents import create_agent
     from langchain_core.language_models.fake_chat_models import FakeListChatModel
     from app.agent.conversation_history import sync_checkpoints, read_messages, is_internal_summary
 
     model = FakeListChatModel(responses=["正常回复"])
-    middleware = context.DisplaySafeSummarizationMiddleware(
-        model, session_id="summary-test", trigger=("messages", 4),
+    from deepagents.backends import FilesystemBackend
+    middleware = context.EnhancedSummarizationMiddleware(
+        model, backend=FilesystemBackend(root_dir=tmp_path, virtual_mode=True), trigger=("messages", 4),
         keep=("messages", 2), summarizer=lambda messages: "internal compact context",
     )
     graph = None
@@ -76,7 +77,7 @@ def test_repeated_summary_keeps_display_history_after_restart(monkeypatch):
 
     async def check():
         nonlocal graph
-        graph = create_agent(model, middleware=[middleware], checkpointer=await context.get_checkpointer())
+        graph = create_agent(model, middleware=[context.ConversationArchiveMiddleware("summary-test"), middleware], checkpointer=await context.get_checkpointer())
         config = {"configurable": {"thread_id": "summary-test"}}
         for i in range(5):
             await sync_checkpoints(graph, "summary-test")
@@ -86,15 +87,17 @@ def test_repeated_summary_keeps_display_history_after_restart(monkeypatch):
                     stream_mode="messages"), "summary-test"):
                 pass
         state = await graph.aget_state(config)
-        assert any(is_internal_summary(m) for m in state.values["messages"])
-        assert len(state.values["messages"]) < 10
+        assert state.values["_summarization_event"]["file_path"]
+        assert len(state.values["messages"]) == 10
+        assert not any(is_internal_summary(m) for m in state.values["messages"])
+        assert list(tmp_path.rglob('*.md'))
         result = await runtime.load_history("summary-test")
         expected = [text for i in range(5) for text in (f"原始问题 {i}", "正常回复")]
         assert [m["content"] for m in result] == expected
         # Independent SQLite archive survives a closed connection/restart.
         await context.aclose()
         assert [m.content for m in await read_messages("summary-test")] == expected
-        graph = create_agent(model, middleware=[middleware], checkpointer=await context.get_checkpointer())
+        graph = create_agent(model, middleware=[context.ConversationArchiveMiddleware("summary-test"), middleware], checkpointer=await context.get_checkpointer())
         assert [m["content"] for m in await runtime.load_history("summary-test")] == expected
         assert await read_messages("other-session") == []
     asyncio.run(check())

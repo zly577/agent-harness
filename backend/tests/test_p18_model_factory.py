@@ -408,7 +408,7 @@ def test_probe_reports_invalid_config():
 # ============================================================================
 
 
-def test_summary_middleware_uses_given_model_instance():
+def test_summary_middleware_uses_given_model_instance(tmp_path):
     """上下文压缩用的模型必须就是主 Agent 那个实例。
 
     否则会出现"对话走用户选的供应商、摘要偷偷走另一个模型" ——
@@ -419,7 +419,8 @@ def test_summary_middleware_uses_given_model_instance():
     cfg = ProviderConfig(protocol=PROTOCOL_OPENAI, model="gpt-4o-mini",
                          api_key="sk-x", dialect="openai")
     model = build_llm(cfg)
-    mw = build_summary_middleware(model)
+    from deepagents.backends import FilesystemBackend
+    mw = build_summary_middleware(model, backend=FilesystemBackend(root_dir=tmp_path, virtual_mode=True))
 
     # SummarizationMiddleware 把模型存在 `model` 属性上
     assert getattr(mw, "model", None) is model

@@ -77,12 +77,19 @@ class Settings(BaseSettings):
     sqlite_path: str = str(_BACKEND_DIR / "data" / "harness.sqlite")
 
     # ===== 上下文管理 =====
-    # 触发截断/摘要的消息条数阈值（超过则处理）。
-    # 注意：阈值按「消息条数」而非 token 计，一条带工具调用的用户轮次通常产生
-    # 5~8 条消息（AI 工具调用 + ToolMessage），阈值过小会导致几乎每轮都触发压缩。
+    # Legacy API fields retained for old settings clients; active policy uses tokens.
     context_max_messages: int = 80
-    # 摘要后保留的最近消息条数（约 3~5 轮工具调用）；建议为 max 的 1/3 左右。
     context_keep_messages: int = 24
+    # Token budgeting takes priority; message limits remain for old clients.
+    context_window_tokens: int = 0  # 0 = model profile, then conservative fallback
+    context_fallback_tokens: int = 32768
+    context_output_reserve: int = 4096
+    context_safety_tokens: int = 1024
+    context_trigger_percent: int = 85
+    context_keep_tokens: int = 6000
+    context_tool_result_tokens: int = 6000
+    memory_core_max_chars: int = 6000
+    memory_index_max_chars: int = 3000
 
     # ===== 工具调用次数上限（ToolCallLimitMiddleware，库自带）=====
     # 语义提醒：统计的是【调用次数】（成功也算），不是失败次数。

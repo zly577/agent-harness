@@ -95,6 +95,10 @@ TOOL_CATALOG: dict[str, dict[str, Any]] = {
     "task": {"display_name": "委派子智能体", "icon": "🤝", "category": "delegation",
              "expected_duration_ms": 120000, "retryable": False},
     # ---- 本仓库自带工具 ----
+    "update_task_state": {"display_name": "保存任务状态", "icon": "📋", "category": "planning", "expected_duration_ms": 200, "retryable": True},
+    "search_history": {"display_name": "搜索历史", "icon": "🔍", "category": "memory", "expected_duration_ms": 500, "retryable": True},
+    "read_history": {"display_name": "读取历史", "icon": "📖", "category": "memory", "expected_duration_ms": 200, "retryable": True},
+    "remember": {"display_name": "保存长期记忆", "icon": "📝", "category": "memory", "expected_duration_ms": 200, "retryable": False},
     "ask_user": {"display_name": "询问用户", "icon": "💬", "category": "planning",
                  "expected_duration_ms": 0, "retryable": False},
     "web_search": {"display_name": "联网搜索", "icon": "🌐", "category": "web",

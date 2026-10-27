@@ -130,7 +130,8 @@ def load_all_subagents_cfg() -> list[SubAgentConfig]:
     return result
 
 
-def build_subagent(cfg: SubAgentConfig, *, workspace: Path | None = None, mode: str = "sandbox", backend=None):
+def build_subagent(cfg: SubAgentConfig, *, workspace: Path | None = None, mode: str = "sandbox", backend=None,
+                   context_model=None, preferences=None, session_id=None, inherited_tools=None):
     """把配置构建为 deepagents SubAgent（省略 model 以继承主 Agent 模型）。
 
     权限路径会经 `_to_route_path()` 统一到 `/workspace` 前缀内 —— 这是硬性要求：
@@ -142,6 +143,7 @@ def build_subagent(cfg: SubAgentConfig, *, workspace: Path | None = None, mode: 
     from deepagents.middleware.filesystem import FilesystemPermission
 
     from app.agent.middleware import build_intent_strip_middleware, build_self_kill_guard_middleware
+    from app.agent.task_state import TaskStateMiddleware
 
     system_prompt = cfg.system_prompt + "\n\n" + CLARIFICATION_POLICY
     if workspace is not None:
@@ -168,7 +170,13 @@ def build_subagent(cfg: SubAgentConfig, *, workspace: Path | None = None, mode: 
             )
         )
 
-    return SubAgent(
+    task_mw = TaskStateMiddleware()
+    context_middleware = []
+    if context_model is not None and backend is not None:
+        from app.agent.context import build_summary_middleware
+        context_middleware = [build_summary_middleware(context_model, backend=backend, preferences=preferences,
+            session_id=f"{session_id}:subagent:{cfg.name}", request_projectors=[task_mw])]
+    spec = SubAgent(
         name=cfg.name,
         description=cfg.description,
         system_prompt=system_prompt,
@@ -182,9 +190,17 @@ def build_subagent(cfg: SubAgentConfig, *, workspace: Path | None = None, mode: 
         # 护栏必须**单独挂**（子智能体不继承主 Agent 的中间件栈）。少了这一行，
         # 子智能体照样能跑 `Stop-Process -Name python -Force` 把后端杀掉 ——
         # 而"调用者是谁"对后果毫无影响：死的是同一个进程。
-        middleware=[build_intent_strip_middleware(), ClarificationMiddleware(), build_self_kill_guard_middleware()]
-        + _host_filesystem_middleware(backend, permissions, mode),
+        middleware=[build_intent_strip_middleware(), ClarificationMiddleware(), build_self_kill_guard_middleware(), task_mw]
+        + context_middleware + _host_filesystem_middleware(backend, permissions, mode),
     )
+    if not permissions:
+        # Omitting the key inherits parent permissions; explicit None disables them.
+        spec.pop("permissions", None)
+    if inherited_tools is not None:
+        # Durable shared-memory writes belong to the main agent; a read-only
+        # research delegate must not gain a filesystem-permission bypass.
+        spec["tools"] = [tool for tool in inherited_tools if getattr(tool, "name", None) != "remember"]
+    return spec
 
 
 def _host_filesystem_middleware(backend, permissions, mode):
@@ -194,9 +210,17 @@ def _host_filesystem_middleware(backend, permissions, mode):
     return host_filesystem_middleware(backend, permissions)
 
 
-def load_all_subagents(*, workspace: Path | None = None, mode: str = "sandbox", backend=None) -> list:
+def load_all_subagents(*, workspace: Path | None = None, mode: str = "sandbox", backend=None,
+                       context_model=None, preferences=None, session_id=None, inherited_tools=None) -> list:
     """加载所有子智能体，返回 deepagents SubAgent 对象列表（供 create_deep_agent(subagents=...))."""
-    return [build_subagent(c, workspace=workspace, mode=mode, backend=backend) for c in load_all_subagents_cfg()]
+    configs = load_all_subagents_cfg()
+    if context_model is not None:
+        from deepagents.middleware.subagents import GENERAL_PURPOSE_SUBAGENT
+        if not any(c.name == GENERAL_PURPOSE_SUBAGENT["name"] for c in configs):
+            configs.append(SubAgentConfig(name=GENERAL_PURPOSE_SUBAGENT["name"],
+                description=GENERAL_PURPOSE_SUBAGENT["description"], system_prompt=GENERAL_PURPOSE_SUBAGENT["system_prompt"]))
+    return [build_subagent(c, workspace=workspace, mode=mode, backend=backend, context_model=context_model,
+                          preferences=preferences, session_id=session_id, inherited_tools=inherited_tools) for c in configs]
 
 
 @lru_cache

@@ -1,13 +1,10 @@
 """Authenticated personal settings and workspace-scoped memory editing."""
-import hashlib
 import json
-import os
-import tempfile
-from threading import Lock
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from pydantic import ValidationError
 
 from app.agent import runtime
 from app.api.deps import get_current_user
@@ -16,25 +13,34 @@ from app.core.preferences import preference_defaults, preferences_for
 from app.db.models import User, UserPreferences
 from app.db.session import get_db
 from app.schemas.preferences import AgentPreferences, MemoryUpdate
+from app.agent.memory_storage import MEMORY_WRITE_LOCK, MemoryConflict, read_snapshot, write_snapshot
+from app.core.config import settings
 
 router = APIRouter(prefix="/api/v1/preferences", tags=["preferences"])
 # Compare-and-replace must be serialized across FastAPI's request threads.
-_memory_write_lock = Lock()
+_memory_write_lock = MEMORY_WRITE_LOCK
 
 
 @router.get("")
 def get_preferences(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     return {"values": preferences_for(db, user.id), "defaults": preference_defaults(),
+            "context_fallback_tokens": settings.context_fallback_tokens,
             "customized": db.get(UserPreferences, user.id) is not None}
 
 
 @router.put("")
 def save_preferences(req: AgentPreferences, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    values = preferences_for(db, user.id)
+    values.update({key: value for key, value in req.model_dump().items() if key in req.model_fields_set})
+    try:
+        values = AgentPreferences(**values).model_dump()
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors(include_context=False)) from exc
     row = db.get(UserPreferences, user.id)
     if row is None:
         row = UserPreferences(user_id=user.id)
         db.add(row)
-    row.values_json = json.dumps(req.model_dump())
+    row.values_json = json.dumps(values)
     try:
         db.commit()
     except IntegrityError:
@@ -43,7 +49,7 @@ def save_preferences(req: AgentPreferences, user: User = Depends(get_current_use
         row = db.get(UserPreferences, user.id)
         if row is None:
             raise
-        row.values_json = json.dumps(req.model_dump())
+        row.values_json = json.dumps(values)
         db.commit()
     runtime.invalidate_agents(user_id=user.id)
     return get_preferences(user, db)
@@ -70,45 +76,34 @@ def _memory_path(user, workspace_id, db):
 
 
 def _read_memory(path):
-    if not path.exists():
-        return {"content": "", "revision": "missing", "exists": False}
-    if not path.is_file() or path.stat().st_size > 400000:
-        raise HTTPException(status_code=422, detail="长期记忆必须为不超过 10 万字的 UTF-8 文本文件")
     try:
-        data = path.read_bytes()
-        content = data.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise HTTPException(status_code=422, detail="长期记忆必须为 UTF-8 文本") from exc
-    if len(content) > 100000:
-        raise HTTPException(status_code=422, detail="长期记忆不能超过 10 万字")
-    return {"content": content, "revision": hashlib.sha256(data).hexdigest(), "exists": True}
+        return read_snapshot(path)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def _memory_view(value):
+    return {**value, "core_limit": settings.memory_core_max_chars,
+            "injected_chars": min(len(value["content"]), settings.memory_core_max_chars),
+            "detail_directory": "/workspace/.agent-memory/"}
 
 
 @router.get("/memory")
 def get_memory(workspace_id: str | None = None, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    return _read_memory(_memory_path(user, workspace_id, db))
+    return _memory_view(_read_memory(_memory_path(user, workspace_id, db)))
 
 
 @router.put("/memory")
 def save_memory(req: MemoryUpdate, workspace_id: str | None = None,
                 user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     with _memory_write_lock:
-        return _save_memory(_memory_path(user, workspace_id, db), req)
+        return _memory_view(_save_memory(_memory_path(user, workspace_id, db), req))
 
 
 def _save_memory(path, req):
-    if _read_memory(path)["revision"] != req.revision:
-        raise HTTPException(status_code=409, detail="长期记忆已被其他页面或智能体修改，请重新加载后再编辑")
-    temporary = None
     try:
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="", dir=path.parent,
-                                         prefix=".agent-memory-", suffix=".tmp", delete=False) as stream:
-            temporary = stream.name
-            stream.write(req.content)
-        if _read_memory(path)["revision"] != req.revision:
-            raise HTTPException(status_code=409, detail="长期记忆已被修改，请重新加载后再编辑")
-        os.replace(temporary, path)
-    finally:
-        if temporary and os.path.exists(temporary):
-            os.unlink(temporary)
-    return _read_memory(path)
+        return write_snapshot(path, req.content, req.revision)
+    except MemoryConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
