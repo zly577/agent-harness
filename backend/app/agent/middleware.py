@@ -498,7 +498,7 @@ def build_failure_limit_middlewares() -> tuple[list[AgentMiddleware], list]:
     return [mw], list(mw.tools)
 
 
-def build_tool_call_limit_middlewares() -> list[AgentMiddleware]:
+def build_tool_call_limit_middlewares(*, preferences=None) -> list[AgentMiddleware]:
     """按配置构建 langchain 现成的 `ToolCallLimitMiddleware`（工具调用次数上限）。
 
     用途：某个工具被反复调用（含失败后重试）超过上限后**降级** —— 该工具被挡掉，
@@ -520,8 +520,9 @@ def build_tool_call_limit_middlewares() -> list[AgentMiddleware]:
 
     from app.core.config import settings
 
-    thread_limit = int(getattr(settings, "tool_call_thread_limit", 0) or 0) or None
-    run_limit = int(getattr(settings, "tool_call_run_limit", 0) or 0) or None
+    values = preferences or {}
+    thread_limit = int(values.get("tool_call_thread_limit", settings.tool_call_thread_limit) or 0) or None
+    run_limit = int(values.get("tool_call_run_limit", settings.tool_call_run_limit) or 0) or None
     if thread_limit is None and run_limit is None:
         return []  # 未配置任何上限：不限制工具调用次数
 
@@ -533,7 +534,7 @@ def build_tool_call_limit_middlewares() -> list[AgentMiddleware]:
         )
         run_limit = thread_limit
 
-    tool_name = (getattr(settings, "tool_call_limit_tool", "") or "").strip() or None
+    tool_name = (values.get("tool_call_limit_tool", settings.tool_call_limit_tool) or "").strip() or None
     exit_behavior = (getattr(settings, "tool_call_limit_exit_behavior", "continue") or "continue").strip()
     if exit_behavior not in ("continue", "error", "end"):
         logger.warning("[harness] 未知的 TOOL_CALL_LIMIT_EXIT_BEHAVIOR=%r，回退 continue", exit_behavior)

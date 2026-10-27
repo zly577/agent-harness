@@ -50,6 +50,10 @@
 .pv-result.bad { color: var(--danger); }
 .pv-reply { display: block; margin-top: 4px; color: var(--text-2); }
 .pv-actions { display: flex; flex: 0 0 auto; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 12px; padding: 12px 28px 24px; }
+.pv-form-actions { margin-top: 0; border-top: 1px solid var(--border); background: var(--bg); }
+.pv-test-result { flex-basis: 100%; min-width: 0; margin: 0; }
+.pv-test-message { display: block; max-height: 5.1em; overflow-y: auto; }
+.pv-test-result .pv-reply { max-height: 3.4em; overflow-y: auto; white-space: pre-wrap; }
 .pv-btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 38px; padding: 8px 14px; border: 1px solid var(--border); border-radius: 10px; background: transparent; color: var(--text-2); font: 500 13px/1.5 var(--font); cursor: pointer; transition: background 180ms ease, color 180ms ease, border-color 180ms ease, opacity 180ms ease; }
 .pv-btn:hover:not(:disabled) { background: var(--hover); color: var(--text); border-color: var(--border-2); }
 .pv-btn.pv-btn-primary { border-color: transparent; background: var(--accent-button); color: var(--accent-button-text); }

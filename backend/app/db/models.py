@@ -54,6 +54,13 @@ class User(Base):
     )
 
 
+class UserPreferences(Base):
+    """Personal agent settings, independent of provider secrets and deployment defaults."""
+    __tablename__ = "user_preferences"
+    user_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    values_json: Mapped[str] = mapped_column(Text, default="{}")
+
+
 class Workspace(Base):
     __tablename__ = "workspaces"
     id: Mapped[str] = mapped_column(String(32), primary_key=True)

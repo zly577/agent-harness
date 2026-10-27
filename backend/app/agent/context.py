@@ -131,7 +131,7 @@ class DisplaySafeSummarizationMiddleware(SummarizationMiddleware):
         await self._archive(state)
 
 
-def build_summary_middleware(model=None, *, session_id=None) -> SummarizationMiddleware:
+def build_summary_middleware(model=None, *, session_id=None, preferences=None) -> SummarizationMiddleware:
     """上下文压缩中间件：消息超过 context_max_messages 时摘要，保留最近 context_keep_messages 条。
 
     Args:
@@ -144,11 +144,12 @@ def build_summary_middleware(model=None, *, session_id=None) -> SummarizationMid
         from app.agent.model import build_llm
 
         model = build_llm()
+    values = preferences or {}
     return DisplaySafeSummarizationMiddleware(
         model,
         session_id=session_id,
-        trigger=("messages", settings.context_max_messages),
-        keep=("messages", settings.context_keep_messages),
+        trigger=("messages", values.get("context_max_messages", settings.context_max_messages)),
+        keep=("messages", values.get("context_keep_messages", settings.context_keep_messages)),
     )
 
 

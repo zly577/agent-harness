@@ -27,6 +27,7 @@ from app.api.routes import (
     hitl,
     llm,
     mcp,
+    preferences,
     sessions,
     skills,
 )
@@ -40,6 +41,7 @@ api_router.include_router(sessions.router)
 api_router.include_router(llm.router)
 # MCP 工具源管理（按用户隔离）
 api_router.include_router(mcp.router)
+api_router.include_router(preferences.router)
 api_router.include_router(skills.router)
 api_router.include_router(approvals.router)
 api_router.include_router(hitl.router)

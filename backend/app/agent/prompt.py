@@ -42,10 +42,9 @@ P12（`HARNESS_MACHINE_ACCESS=true`）时，提示词里会额外声明本机磁
 
 ## 刷新时机
 
-`MemoryMiddleware.abefore_agent` 只在 `state["memory_contents"]` 不存在时读取，
-而该字段随 thread 存档；因此**同一会话的后续轮次不会重读**（避免每轮都变提示词、
-破坏缓存），但**每个新会话都会读到最新内容**。智能体在同一会话里更新记忆后，
-新会话立即生效。
+`MemoryMiddleware` 负责首次读取，`WorkspaceMemoryRepairMiddleware` 在后续每轮
+开始时检查文件并更新已存档的记忆。因此网页或智能体编辑后，同一会话的下一轮
+也会读取最新内容；正在运行的回答保持其启动时的记忆。
 """
 from __future__ import annotations
 

@@ -340,12 +340,19 @@ def test_agent_memory_and_tools_share_selected_root(database, tmp_path, monkeypa
     monkeypatch.setattr(runtime,"seed_skills",seed)
     monkeypatch.setattr(runtime,"get_checkpointer",get_saver)
     monkeypatch.setattr(runtime,"get_store",get_store)
+    monkeypatch.setattr("app.core.preferences.load_preferences",lambda owner:{
+        "context_max_messages":120,"context_keep_messages":40,
+        "tool_call_thread_limit":15,"tool_call_run_limit":3,"tool_call_limit_tool":""})
     try:
         asyncio.run(runtime.get_agent(session["id"],user_id=user.id))
         assert (project/"Agent.md").is_file()
         assert "DEFAULT MEMORY" not in (project/"Agent.md").read_text(encoding="utf-8")
         assert (default/"Agent.md").read_text(encoding="utf-8")=="DEFAULT MEMORY MUST NOT LOAD"
         assert captured["memory"]==["/workspace/Agent.md"]
+        summary=next(m for m in captured["middleware"] if m.name=="SummarizationMiddleware")
+        assert summary.trigger==("messages",120) and summary.keep==("messages",40)
+        budget=next(m for m in captured["middleware"] if hasattr(m,"thread_limit"))
+        assert budget.thread_limit==15 and budget.run_limit==3 and budget.tool_name is None
         assert str(project) in captured["system_prompt"]
         assert "不是项目默认 workspace 文件夹" in captured["system_prompt"]
         (project/"selected.txt").write_text("selected project",encoding="utf-8")
@@ -424,4 +431,12 @@ def test_real_memory_loading_and_old_empty_checkpoint(tmp_path,monkeypatch,cache
         await g.ainvoke({"messages":[{"role":"user","content":"hi"}]},config)
         snapshot=await g.aget_state(config)
         assert snapshot.values["memory_contents"]["/workspace/Agent.md"]=="CURRENT PROJECT MEMORY"
+        (project/"Agent.md").write_text("EDITED FROM SETTINGS",encoding="utf-8")
+        await g.ainvoke({"messages":[{"role":"user","content":"next turn"}]},config)
+        snapshot=await g.aget_state(config)
+        assert snapshot.values["memory_contents"]["/workspace/Agent.md"]=="EDITED FROM SETTINGS"
+        (project/"Agent.md").write_text("",encoding="utf-8")
+        await g.ainvoke({"messages":[{"role":"user","content":"cleared memory"}]},config)
+        snapshot=await g.aget_state(config)
+        assert snapshot.values["memory_contents"]["/workspace/Agent.md"]==""
     asyncio.run(run())

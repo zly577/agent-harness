@@ -107,13 +107,12 @@
           </label>
         </div>
 
-        <p v-if="form.message" class="pv-result" :class="form.ok ? 'ok' : 'bad'">
-          {{ form.message }}
-          <span v-if="form.reply" class="pv-reply">模型回复：{{ form.reply }}</span>
-        </p>
-
         </div>
-        <div class="pv-actions">
+        <div class="pv-actions pv-form-actions">
+          <p v-if="form.message" class="pv-result pv-test-result" :class="form.ok ? 'ok' : 'bad'" role="status" aria-live="polite">
+            <span class="pv-test-message">{{ form.message }}</span>
+            <span v-if="form.reply" class="pv-reply">模型回复：{{ form.reply }}</span>
+          </p>
           <button class="pv-btn" :disabled="busy || !form.model.trim()" @click="runTest">
             {{ form.testing ? '测试中…' : '测试连接' }}
           </button>

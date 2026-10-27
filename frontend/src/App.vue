@@ -20,6 +20,11 @@
     <Transition name="settings-dialog">
       <McpView v-if="showMcp" @close="showMcp = false" />
     </Transition>
+    <Transition name="settings-dialog">
+      <SettingsView v-if="showSettings" :key="activeWorkspaceId" :user="user"
+        :workspace-id="activeWorkspaceId" :workspace-name="selectedWorkspace.title"
+        @close="showSettings = false" @password-changed="onPasswordChanged" />
+    </Transition>
     <ConfirmDialog :confirmation="confirmation" @resolve="resolveConfirmation" />
     <!-- 轻量提示条 -->
     <div v-if="toast.text" class="toast" :class="toast.kind">{{ toast.text }}</div>
@@ -71,8 +76,10 @@
       </nav>
 
       <div class="sb-foot">
-
-
+        <button class="settings-entry sb-settings" title="个人设置" aria-haspopup="dialog" @click="showSettings = true">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14M7 3v4M13 8v4M8 13v4" /></svg>
+          <span>设置</span>
+        </button>
         <!-- 当前用户 + 登出 -->
         <div class="sb-user">
           <span class="sb-user-avatar">{{ userInitial }}</span>
@@ -793,9 +800,15 @@
           </button>
         </div>
         </div>
+        <div class="composer-footer">
+          <button class="settings-entry mobile-settings" title="个人设置" aria-haspopup="dialog" @click="showSettings = true">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14M7 3v4M13 8v4M8 13v4" /></svg>
+            <span>设置</span>
+          </button>
         <p class="disclaimer">{{ accessFull
           ? '完全访问：可修改已挂载磁盘；LocalShell 在后端所在环境执行命令。'
           : '默认模式：工作区可读写，已挂载磁盘只读；读磁盘时按审批设置确认。' }}</p>
+        </div>
         <div class="main-workspace" aria-label="当前工作区">
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.5 5.5h5l2 2h8v9h-15z" /></svg>
           <span class="main-workspace-label">当前工作区</span>
@@ -834,6 +847,7 @@ import { taskPlan, toolName } from './toolPresentation'
 import AuthView from './AuthView.vue'
 import ProvidersView from './ProvidersView.vue'
 import McpView from './McpView.vue'
+import SettingsView from './SettingsView.vue'
 import DialogOverlay from './DialogOverlay.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
 import { provideConfirmation } from './composables/useConfirmation'
@@ -857,7 +871,7 @@ function formatTime() {
 }
 
 export default {
-  components: { ToolArguments, AuthView, ProvidersView, McpView, DialogOverlay, ConfirmDialog },
+  components: { ToolArguments, AuthView, ProvidersView, McpView, SettingsView, DialogOverlay, ConfirmDialog },
   setup() {
     const { confirmation, confirm, resolveConfirmation } = provideConfirmation()
     // ===== 登录态=====
@@ -890,6 +904,7 @@ export default {
     // MCP 工具源弹层。与供应商弹层一样是"点开才挂载"——
     // 挂载时才去拉列表，切账号/登出时组件整个卸载，不会残留上一个用户的数据。
     const showMcp = ref(false)
+    const showSettings = ref(false)
     const chosenProvider = ref('')
     // 退出登录确认框是否显示
     const logoutConfirm = ref(false)
@@ -2305,6 +2320,11 @@ export default {
       user.value = null
     }
 
+    function onPasswordChanged() {
+      doLogout()
+      authNotice.value = '密码已更新，请使用新密码重新登录。'
+    }
+
     /**
      * 清掉模型相关的本地状态。
      *
@@ -2318,6 +2338,7 @@ export default {
       showProviders.value = false
       // MCP 工具源弹层也要一起关（同供应商，换账号后不能留着上一个用户的界面）
       showMcp.value = false
+      showSettings.value = false
     }
 
     /** 凭证失效（任意请求 401）→ 回登录页并说明原因。 */
@@ -2406,6 +2427,8 @@ export default {
       providersLoading,
       showProviders,
       showMcp,
+      showSettings,
+      onPasswordChanged,
       chosenProvider,
       modelSelectTitle,
       onProviderChange,

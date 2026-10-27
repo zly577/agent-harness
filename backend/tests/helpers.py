@@ -120,6 +120,8 @@ def purge_test_users() -> int:
         if not users:
             return 0
         ids = [u.id for u in users]
+        from app.db.models import UserPreferences
+        db.query(UserPreferences).filter(UserPreferences.user_id.in_(ids)).delete(synchronize_session=False)
         db.query(DbSession).filter(DbSession.user_id.in_(ids)).delete(
             synchronize_session=False
         )

@@ -273,6 +273,11 @@ button { font-family: inherit; }
 .sb-del:hover { background: var(--fill-2); color: var(--text); }
 
 .sb-foot { padding: 10px 12px 14px; border-top: 1px solid var(--border); }
+.settings-entry { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 8px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text-2); font: inherit; font-size: 13px; cursor: pointer; }
+.settings-entry:hover { background: var(--hover); color: var(--text); }
+.settings-entry svg { width: 16px; height: 16px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }
+.sb-settings { width: 100%; justify-content: flex-start; }
+.mobile-settings { display: none; }
 .sb-brand { display: flex; align-items: center; gap: 9px; }
 .sb-mark {
   width: 24px; height: 24px;
@@ -1307,6 +1312,8 @@ button { font-family: inherit; }
   color: var(--text-3);
   text-align: center;
 }
+.composer-footer { display: flex; align-items: center; gap: 8px; width: 100%; max-width: 760px; margin: 8px auto 0; }
+.composer-footer .disclaimer { flex: 1; min-width: 0; margin: 0; }
 
 /* ===== 弹窗（审批 / 文件面板） ===== */
 .overlay {
@@ -1694,6 +1701,7 @@ body:has(.overlay) { overflow: hidden; }
 @media (max-width: 720px) {
   /* 窄屏侧栏隐藏，拖拽手柄一并失效 */
   .sidebar { display: none; }
+  .mobile-settings { display: inline-flex; flex: 0 0 auto; min-height: 36px; padding: 6px 8px; font-size: 12px; }
   .sb-resizer { display: none; }
   .bubble.user { max-width: 88%; }
   .topbar { padding: 10px 12px; }

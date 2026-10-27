@@ -367,12 +367,12 @@ def test_change_password_flow(anon_client):
     token = login.json()["access_token"]
     h = {"Authorization": f"Bearer {token}"}
 
-    # 旧密码给错 → 401
+    # 旧密码给错是表单错误，不应触发前端的 401 全局登出。
     assert anon_client.post(
         "/api/v1/auth/change-password",
         json={"old_password": "Nope!12345678", "new_password": new},
         headers=h,
-    ).status_code == 401
+    ).status_code == 400
     # 新旧相同 → 422
     assert anon_client.post(
         "/api/v1/auth/change-password",

@@ -221,7 +221,7 @@ def change_password(
     if req.old_password == req.new_password:
         raise HTTPException(status_code=422, detail="新密码不能与原密码相同")
     if not verify_password(req.old_password, user.password_hash):
-        raise HTTPException(status_code=401, detail="原密码不正确")
+        raise HTTPException(status_code=400, detail="原密码不正确")
 
     user.password_hash = hash_password(req.new_password)
     db.commit()

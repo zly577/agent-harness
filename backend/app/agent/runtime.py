@@ -254,6 +254,8 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
     # 中间件管道 = 上下文压缩 + 技能 + 日志 + 审计 + 工具熔断 + 工具调用次数上限
     # 工具熔断：每个工具独立计数，连续失败达阈值 → 冷却期短路 → 冷却后放一次探测自愈；
     # 同时产出"手动恢复"工具（模型可主动调用它重置本会话熔断）。
+    from app.core.preferences import load_preferences
+    preferences = load_preferences(owner)
     failure_middlewares, recovery_tools = build_failure_limit_middlewares()
     middlewares = [
         # **必须排第一**。中间件的顺序 = 洋葱的顺序（第一个最外层，见
@@ -267,7 +269,7 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
         # 摘要中间件必须与主模型**同一个实例**：
         # 否则会出现"对话走用户选的供应商、压缩摘要却偷偷走另一个模型"，
         # 而且那条路径在界面上完全不可见（用户只会觉得"摘要质量怎么变了"）。
-        build_summary_middleware(model, session_id=session_key),
+        build_summary_middleware(model, session_id=session_key, preferences=preferences),
         LoggingMiddleware(),
         AuditMiddleware(),
         # 硬护栏 —— 拦掉"按进程名杀 python"这类会把 harness 后端自己杀掉的
@@ -276,7 +278,7 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
         build_self_kill_guard_middleware(),
         *failure_middlewares,
         # 库自带的调用次数上限（默认关闭；需要"用完 N 次就停"时打开）
-        *build_tool_call_limit_middlewares(),
+        *build_tool_call_limit_middlewares(preferences=preferences),
     ]
     if mode == access.MODE_FULL:
         from app.agent.host_shell import host_filesystem_middleware
