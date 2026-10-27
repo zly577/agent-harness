@@ -13,7 +13,7 @@
 可能夹着 `Traceback`、`Error` 之类字样；反过来，一段正常的 `grep` / 日志输出里
 也会出现 "error" 这个词。所以：
 
-1. **先认退出码尾巴**（`[Command failed with exit code N]` / `succeeded`）；
+1. **仅对 execute 认末尾独立一行的退出码**（`[Command failed with exit code N]` / `succeeded`）；
 2. 再认 `Error:` **前缀**（大小写一致，与熔断器的口径保持一致，见 MEMORY）；
 3. 都不命中才落「成功」。
 
@@ -37,7 +37,9 @@ __all__ = ["classify_tool_result", "outcome_label"]
 
 #: `HostShellBackend` / `OpenSandboxBackend` 的 `_format_execute_output()` 尾巴。
 #: ⚠️ 大小写与空格都是契约的一部分（`[Command failed with exit code 1]`）。
-_EXIT_CODE_RE = re.compile(r"\[Command (failed|succeeded) with exit code (-?\d+)\]")
+_EXIT_CODE_RE = re.compile(
+    r"(?:\A|\n)\[Command (failed|succeeded) with exit code (-?\d+)\]\s*\Z"
+)
 
 #: 失败原因里最长保留多少字符（前端拿到后还会再截一次，这里先收口）
 _REASON_LIMIT = 60
@@ -56,7 +58,7 @@ def classify_tool_result(name: str, content: object) -> dict:
     """判定一次工具调用的结果。
 
     Args:
-        name: 工具名（只用于日志/展示，判定规则目前与它无关）。
+        name: 工具名；只有 execute 使用命令退出码协议。
         content: 工具返回的正文（任何类型都会先 `str()`）。
 
     Returns:
@@ -64,10 +66,10 @@ def classify_tool_result(name: str, content: object) -> dict:
     """
     text = str(content if content is not None else "")
 
-    # 1) 退出码尾巴 —— 唯一可信的"命令到底成没成"
-    matches = list(_EXIT_CODE_RE.finditer(text))
-    if matches:
-        verdict, code = matches[-1].group(1), int(matches[-1].group(2))
+    # 文件、搜索和委派结果可能引用命令记录，不能将正文当成本次执行状态。
+    match = _EXIT_CODE_RE.search(text) if name == "execute" else None
+    if match:
+        verdict, code = match.group(1), int(match.group(2))
         if verdict == "failed":
             return {"ok": False, "exit_code": code, "reason": f"退出码 {code}"}
         return {"ok": True, "exit_code": code, "reason": ""}

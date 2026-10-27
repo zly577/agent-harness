@@ -16,6 +16,8 @@
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 from langchain_core.messages import ToolMessage
 
@@ -78,6 +80,34 @@ def test_classify_last_exit_code_wins():
     """管道里可能同时出现两处尾巴，取**最后**一处。"""
     text = "[Command failed with exit code 1]\n恢复后重跑\n[Command succeeded with exit code 0]"
     assert classify_tool_result("execute", text)["ok"] is True
+
+
+@pytest.mark.parametrize("name", ["read_file", "grep", "task"])
+def test_quoted_exit_code_is_not_a_tool_failure(name):
+    text = "题目里的工具记录：\n[Command failed with exit code 7]"
+    assert classify_tool_result(name, text) == {"ok": True, "exit_code": None, "reason": ""}
+
+
+def test_read_evaluation_json_with_quoted_failure():
+    text = json.dumps({"tasks": [{"id": "A15", "question": (
+        "[tool_record] 命令：python report.py\n输出：FileNotFoundError: input.csv\n"
+        "[Command failed with exit code 7]\n独立检查：output.json不存在。"
+    ), "answer": None}]}, ensure_ascii=False, indent=2)
+    numbered = "\n".join(f"{i:3}  {line}" for i, line in enumerate(text.splitlines(), 1))
+    assert classify_tool_result("read_file", numbered) == {"ok": True, "exit_code": None, "reason": ""}
+
+
+@pytest.mark.parametrize("text", [
+    "quoted: [Command failed with exit code 7]",
+    "[Command failed with exit code 7]\n后续正文",
+])
+def test_execute_requires_a_terminal_status_line(text):
+    assert classify_tool_result("execute", text) == {"ok": True, "exit_code": None, "reason": ""}
+
+
+def test_execute_failure_with_trailing_whitespace():
+    out = classify_tool_result("execute", "boom\r\n[Command failed with exit code 7]\r\n  ")
+    assert out == {"ok": False, "exit_code": 7, "reason": "退出码 7"}
 
 
 def test_outcome_label_formats():
@@ -191,6 +221,19 @@ def test_subagent_also_carries_the_guard():
 
 
 # ---------------------------------------------------------------- 回放
+
+
+@pytest.mark.parametrize("rebuild", [False, True])
+def test_replay_corrects_quoted_failure_badge(rebuild):
+    history = [{"role": "assistant", "content": "", "toolCalls": [] if rebuild else [
+        {"id": "c1", "name": "read_file", "result": "", "status": "error"},
+    ]}]
+    log_rows = [{"id": "c1", "name": "read_file", "kind": "tool", "status": "error",
+                 "args": {}, "result": '1  {"record": "[Command failed with exit code 7]"}'}]
+    tc = _merge_tool_log(history, log_rows)[-1]["toolCalls"][0]
+    assert tc["status"] == "done"
+    assert tc["ok"] is True
+    assert tc["exitCode"] is None
 
 def test_merge_tool_log_brings_status_and_outcome():
     """被强杀的工具，刷新页面后不能"变成已完成"。"""

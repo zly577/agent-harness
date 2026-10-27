@@ -105,3 +105,7 @@ docs/INTERVIEW-*.md
 
 # 内部代码审查报告（含历史安全问题讨论，不进公开仓库）
 docs/CODE-REVIEW-*.md
+
+# 本地 Agent 评估代码、任务集与报告
+/evals/
+/docs/agent-evaluation-proposal.md

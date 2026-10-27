@@ -1,6 +1,28 @@
 import { toolName } from '../toolPresentation.js'
 
 export function useToolActivity({ showTools, elapsedLabel, progressLabel, progressSize }) {
+  // tool_args carries progress only; the complete args arrive with tool_call.
+  // Keep expanded details useful throughout that transition and on replay.
+  function toolDetailNotice(it) {
+    if (it?.status === 'generating') {
+      return { title: progressLabel(it), text: '操作内容正在生成，尚未开始执行。生成完成后会在这里显示完整操作。' }
+    }
+    if (it?.result) return null
+    if (it?.status === 'running') {
+      return { title: '操作正在执行', text: '等待工具返回结果，收到后会自动展示。' }
+    }
+    if (it?.status === 'interrupted') {
+      return { title: '操作已中断', text: it.reason || '未收到工具结果。' }
+    }
+    if (it?.status === 'error' || it?.ok === false) {
+      return { title: '操作失败', text: it.reason || '工具未返回详细错误信息。' }
+    }
+    if (it?.args && Object.keys(it.args).length) {
+      return { title: '未返回文本结果', text: '操作参数已显示在上方。' }
+    }
+    return { title: '暂无操作详情', text: '此记录没有保存操作参数或文本结果。' }
+  }
+
   /**
    * 是否展示工具活动块：开关打开时展示；
    * 或本轮仍有工具在跑——即使隐藏了工具详情，也得让人看见它正在干活。
@@ -253,5 +275,5 @@ export function useToolActivity({ showTools, elapsedLabel, progressLabel, progre
     return (m?.delegations || []).filter((d) => d.status !== 'running')
   }
 
-  return { hasActivity, toolOutcomeText, activityLatest, activityHistory, activeDelegations, doneDelegations }
+  return { hasActivity, toolOutcomeText, toolDetailNotice, activityLatest, activityHistory, activeDelegations, doneDelegations }
 }

@@ -398,6 +398,10 @@
                         <div v-if="it.name === 'execute' && it.args.command" class="md terminal-tool" v-html="renderTerminal(it.args.command, '命令')"></div>
                         <ToolArguments v-else :args="it.args" :workspace-directory="currentWorkspace?.directory || ''" />
                       </div>
+                      <div v-if="toolDetailNotice(it)" class="operation-notice" role="status">
+                        <p class="operation-notice-title">{{ toolDetailNotice(it).title }}</p>
+                        <p>{{ toolDetailNotice(it).text }}</p>
+                      </div>
                       <div v-if="it.result" class="tool-section">
                         <div class="tool-label">结果</div>
                         <div v-if="it.name === 'execute'" class="md terminal-tool" v-html="renderTerminal(truncate(it.result, 12000), '执行输出')"></div>
@@ -474,6 +478,10 @@
                         <div v-if="it.args && Object.keys(it.args).length" class="tool-section">
                           <div v-if="it.name === 'execute' && it.args.command" class="md terminal-tool" v-html="renderTerminal(it.args.command, '命令')"></div>
                           <ToolArguments v-else :args="it.args" :workspace-directory="currentWorkspace?.directory || ''" />
+                        </div>
+                        <div v-if="toolDetailNotice(it)" class="operation-notice" role="status">
+                          <p class="operation-notice-title">{{ toolDetailNotice(it).title }}</p>
+                          <p>{{ toolDetailNotice(it).text }}</p>
                         </div>
                         <details v-if="it.result" class="operation-output">
                           <summary>查看结果</summary>
@@ -1169,7 +1177,7 @@ export default {
       return cur?.title || '新对话'
     })
 
-    const { hasActivity, toolOutcomeText, activityLatest, activityHistory, activeDelegations, doneDelegations } = useToolActivity({ showTools, elapsedLabel, progressLabel, progressSize })
+    const { hasActivity, toolOutcomeText, toolDetailNotice, activityLatest, activityHistory, activeDelegations, doneDelegations } = useToolActivity({ showTools, elapsedLabel, progressLabel, progressSize })
 
     // ===== 整数秒计时器 =====
     const nowTick = ref(Date.now())
@@ -2483,6 +2491,7 @@ export default {
       nowTick,
       // 运行可见性（成败 / 实时耗时 / 失联判定 / 重新连接）
       toolOutcomeText,
+      toolDetailNotice,
       // 滚动跟随
       stickToBottom,
       hasNewBelow,

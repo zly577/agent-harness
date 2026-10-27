@@ -10,6 +10,9 @@
 .operation-count { color: var(--text-3); font-size: 10.5px; }
 .act-call { margin: 4px 10px; padding: 10px 0 4px; }
 .act-call-head { margin-bottom: 10px; }
+.operation-notice { padding: 9px 12px; border-radius: 7px; background: var(--hover); color: var(--text-3); font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+.operation-notice p { margin: 0; }
+.operation-notice .operation-notice-title { margin-bottom: 3px; color: var(--text-2); }
 .act-history { border: 0; border-radius: 8px; }
 .act-history > summary { padding: 6px 10px; font-size: 11.5px; color: var(--text-3); }
 .act-history > .tool-group, .act-history > .subagent-archive { padding: 7px 10px; }

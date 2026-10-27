@@ -28,6 +28,30 @@ test('tool parameter progress upgrades in place and trusts backend failure field
   assert.equal(c.message.toolCalls[0].intentLabel, '检查退出码')
 })
 
+test('expanded operation details follow progress, execution, result and interruption', () => {
+  const c = conversation()
+  const activity = useToolActivity({ showTools: ref(true), elapsedLabel: () => '', progressLabel: c.progressLabel, progressSize: c.progressSize })
+  c.applyDataEvent(c.message, { type: 'tool_args', id: 'write', name: 'write_file', kb: 10.4, elapsed: 21 })
+  const item = c.message.toolCalls[0]
+  assert.match(activity.toolDetailNotice(item).title, /10\.4 KB.*21s/)
+  assert.match(activity.toolDetailNotice(item).text, /尚未开始执行/)
+  c.applyDataEvent(c.message, { type: 'tool_args', id: 'write', name: 'write_file', kb: 12, elapsed: 25 })
+  assert.match(activity.toolDetailNotice(item).title, /12 KB.*25s/)
+  c.applyDataEvent(c.message, { type: 'tool_call', id: 'write', name: 'write_file', args: { file_path: '/a.txt', content: 'hello' } })
+  assert.equal(c.message.toolCalls[0], item)
+  assert.equal(activity.toolDetailNotice(item).title, '操作正在执行')
+  assert.equal(item.args.file_path, '/a.txt')
+  c.applyDataEvent(c.message, { type: 'tool_result', id: 'write', content: 'File written', ok: true })
+  assert.equal(activity.toolDetailNotice(item), null)
+  c.applyDataEvent(c.message, { type: 'tool_args', id: 'next', name: 'write_file', kb: 1 })
+  c.finishTurn(c.message)
+  const interrupted = c.message.toolCalls[1]
+  assert.equal(interrupted.status, 'interrupted')
+  assert.ok(interrupted.result || activity.toolDetailNotice(interrupted))
+  assert.match(activity.toolDetailNotice({ status: 'done', args: {} }).text, /没有保存/)
+  assert.equal(activity.toolDetailNotice({ status: 'error', reason: 'disk full' }).text, 'disk full')
+})
+
 test('parallel delegations keep separate text, thinking and usage', () => {
   const c = conversation()
   for (const id of ['a', 'b']) c.applyDataEvent(c.message, { type: 'subagent_start', id, summary: id })

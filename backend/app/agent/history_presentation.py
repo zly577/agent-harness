@@ -65,6 +65,9 @@ def merge_tool_log(history: list[dict], log_rows: list[dict]) -> list[dict]:
         # 这种自相矛盾的卡片 —— 那比不显示更让人困惑。
         if outcome["ok"] is False:
             tc["status"] = "error"
+        elif outcome["ok"] is True:
+            # 旧分类器会把文件正文中的命令记录误判为失败；回放时纠正徽标。
+            tc["status"] = "done"
         tc["ok"] = outcome["ok"]
         tc["exitCode"] = outcome["exit_code"]
         tc["reason"] = outcome["reason"]
@@ -115,6 +118,10 @@ def merge_tool_log(history: list[dict], log_rows: list[dict]) -> list[dict]:
             continue
         for tc in (row.get("toolCalls") or []) + (row.get("delegations") or []):
             if "ok" not in tc:
+                lr = by_id.get(str(tc.get("id", "")))
+                if lr:
+                    _apply(tc, lr)
+                    continue
                 outcome = classify_tool_result(str(tc.get("name") or ""), tc.get("result"))
                 tc["ok"] = outcome["ok"]
                 tc["exitCode"] = outcome["exit_code"]
