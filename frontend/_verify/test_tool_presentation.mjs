@@ -7,14 +7,14 @@ assert.deepEqual(taskPlan(message).map(x => x.status), ['completed', 'running', 
 message.toolCalls.push(call(tasks.map(x => ({ ...x, status: 'completed' })), 'error', false))
 assert.equal(taskPlan(message).length, 3, 'a failed update must not complete the checklist')
 message.toolCalls.push(call(tasks.map(x => ({ ...x, status: 'completed' }))))
-assert.deepEqual(taskPlan(message), [], 'all completed tasks hide the plan')
+assert.ok(taskPlan(message).every(item => item.status === 'completed'), 'retain the final snapshot for the exit animation')
 message.toolCalls = [call(tasks)]
 message.streaming = false
-assert.deepEqual(taskPlan(message), [], 'finished turn hides unfinished checklist without falsely ticking tasks')
+assert.equal(taskPlan(message).length, 3, 'finished turns retain unfinished tasks without falsely ticking them')
 message.planPaused = true
 assert.equal(taskPlan(message).length, 3, 'approval pause retains pending tasks')
 message.planFinished = true
-assert.deepEqual(taskPlan(message), [])
+assert.equal(taskPlan(message).length, 3, 'message lifecycle does not override tool-reported task state')
 assert.deepEqual(taskPlan({ streaming: true, toolCalls: [{ name: 'task', args: { description: '任务' }, status: 'done' }] }), [], 'delegation text is not invented into a plan')
 const fields = argumentFields({ file_path: '/workspace/demo.txt', replace_all: false, settings: { timeout: 30 } })
 assert.equal(fields[0].label, '文件')

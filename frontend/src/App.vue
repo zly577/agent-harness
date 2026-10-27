@@ -240,6 +240,7 @@
             </div>
 
             <div v-else class="answer">
+              <TaskPlan :message="m" />
               <!-- 子智能体委派：运行中的实时卡片（摘要 + 内部流），完成后并入下方工具调用列表 -->
               <div v-if="activeDelegations(m).length" class="delegations">
                 <div class="delegations-head">
@@ -333,21 +334,6 @@
                   {{ answerTiming(m, nowTick).text }}
                 </span>
               </div>
-
-              <section v-if="taskPlan(m).length" class="task-plan" aria-label="任务清单" aria-live="polite">
-                <div class="task-plan-head"><span>任务清单</span><span>{{ taskPlan(m).filter(item => item.status === 'completed').length }} / {{ taskPlan(m).length }}</span></div>
-                <ol>
-                  <li v-for="item in taskPlan(m)" :key="item.key" :class="item.status">
-                    <span class="task-plan-mark" aria-hidden="true">
-                      <svg v-if="item.status === 'completed'" viewBox="0 0 16 16"><path d="m3 8 3 3 7-7" /></svg>
-                      <span v-else-if="item.status === 'running'" class="task-plan-spinner"></span>
-                      <span v-else class="task-plan-dot"></span>
-                    </span>
-                    <span class="task-plan-text">{{ item.text }}</span>
-                    <span class="task-plan-state">{{ item.status === 'completed' ? '已完成' : item.status === 'running' ? '运行中' : '等待中' }}</span>
-                  </li>
-                </ol>
-              </section>
 
               <!-- 工具活动：**同一时刻只展示最新一条**。
                    上一条一旦被新的取代，就收进下面的折叠列表（默认不展开）。
@@ -851,7 +837,8 @@ import { useMessageScroll } from './composables/useMessageScroll'
 import { useToolActivity } from './composables/useToolActivity'
 import { useMessageEvents } from './composables/useMessageEvents'
 import ToolArguments from './ToolArguments.vue'
-import { taskPlan, toolName } from './toolPresentation'
+import TaskPlan from './TaskPlan.vue'
+import { toolName } from './toolPresentation'
 import AuthView from './AuthView.vue'
 import ProvidersView from './ProvidersView.vue'
 import McpView from './McpView.vue'
@@ -879,7 +866,7 @@ function formatTime() {
 }
 
 export default {
-  components: { ToolArguments, AuthView, ProvidersView, McpView, SettingsView, DialogOverlay, ConfirmDialog },
+  components: { ToolArguments, TaskPlan, AuthView, ProvidersView, McpView, SettingsView, DialogOverlay, ConfirmDialog },
   setup() {
     const { confirmation, confirm, resolveConfirmation } = provideConfirmation()
     // ===== 登录态=====
@@ -2466,7 +2453,7 @@ export default {
       openSession,
       newChat,
       deleteSession,
-      renderMarkdown, renderTerminal, taskPlan, toolName,
+      renderMarkdown, renderTerminal, toolName,
       truncate,
       argPairs,
       isSessionStreaming,

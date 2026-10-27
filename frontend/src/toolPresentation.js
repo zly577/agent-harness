@@ -22,19 +22,48 @@ export function argumentText(value) {
   if (value == null) return '未设置'
   return String(value)
 }
-export function taskPlan(message) {
-  if ((!message.streaming && !message.planPaused) || message.planFinished) return []
-  const calls = (message.toolCalls || []).filter(call => call.name === 'write_todos' && call.status === 'done' && call.ok !== false)
-  const latest = calls[calls.length - 1]
-  const items = latest?.args?.todos || latest?.args?.tasks
-  if (!Array.isArray(items)) return []
-  const plan = items.filter(item => item && typeof item === 'object').map((item, i) => ({
-    key: item.id || `${i}:${item.content || item.description || item.title || ''}`,
-    text: String(item.content || item.description || item.title || item.name || '').trim(),
-    status: item.status === 'completed' || item.status === 'done' ? 'completed' : item.status === 'in_progress' || item.status === 'running' ? 'running' : 'pending',
-  })).filter(item => item.text)
-  return plan.length && plan.some(item => item.status !== 'completed') ? plan : []
+function todoItems(call) {
+  const items = call?.args?.todos ?? call?.args?.tasks
+  return Array.isArray(items) ? items : null
 }
+
+function normalizePlan(items) {
+  const occurrences = new Map()
+  return (items || []).filter(item => item && typeof item === 'object').map(item => {
+    const text = String(item.content || item.description || item.title || item.name || '').trim()
+    const occurrence = occurrences.get(text) || 0
+    occurrences.set(text, occurrence + 1)
+    return {
+      // Index-based keys remount checked rows when the model inserts a task.
+      key: item.id != null ? `id:${item.id}` : `text:${text}:${occurrence}`,
+      text,
+      status: item.status === 'completed' || item.status === 'done' ? 'completed' : item.status === 'in_progress' || item.status === 'running' ? 'running' : 'pending',
+    }
+  }).filter(item => item.text)
+}
+
+export function taskPlanState(message) {
+  const calls = (message.toolCalls || []).filter(call => call.name === 'write_todos')
+  const latest = calls[calls.length - 1]
+  const saved = calls.filter(call => call.status === 'done' && call.ok !== false && todoItems(call) !== null).at(-1)
+  const updating = latest?.status === 'running' || latest?.status === 'generating'
+  const error = latest?.ok === false || latest?.status === 'error' ? '清单更新失败，未确认的完成状态不会打钩。'
+    : latest?.status === 'interrupted' ? '清单更新已中断，未确认的完成状态不会打钩。' : ''
+  const items = normalizePlan(todoItems(saved || latest))
+  // Display the first submitted list immediately, but only acknowledge completion
+  // after the tool succeeds. Failed later updates retain the last saved list.
+  if (!saved) items.forEach(item => { if (item.status === 'completed') item.status = 'pending' })
+  return {
+    hasCall: calls.length > 0,
+    items,
+    updating,
+    error,
+    complete: items.length > 0 && items.every(item => item.status === 'completed') && !updating && !error,
+  }
+}
+
+// Parsing does not hide completed plans; the component owns the exit animation.
+export function taskPlan(message) { return taskPlanState(message).items }
 
 
 /** Show the physical destination without changing the tool's virtual argument. */

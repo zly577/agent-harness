@@ -49,6 +49,7 @@ from app.agent.subagents import load_all_subagents
 from app.agent.clarification import ask_user, ClarificationMiddleware
 from app.agent.workspace_memory import WorkspaceMemoryRepairMiddleware
 from app.agent.task_state import TaskStateMiddleware
+from app.agent.todo_progress import TodoProgressMiddleware
 from app.agent.history_tools import build_history_tools
 from app.agent.memory_tools import build_memory_tools
 from app.agent.context_budget import TodoPromptProjection
@@ -58,7 +59,6 @@ from app.core.config import settings
 from app.core.workspace import workspace_for
 from app.db.models import Session as DbSession
 from app.db.session import SessionLocal
-from langchain.agents.middleware.todo import TodoListMiddleware
 logger = logging.getLogger(__name__)
 
 #: 会话 → (agent, backend)。每个会话一个 agent（因为它绑定一个沙箱容器）+ 一份本地磁盘视图。
@@ -263,7 +263,7 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
     preferences = load_preferences(owner)
     skills_mw = build_skills_middleware(backend)
     task_mw = TaskStateMiddleware()
-    todo_mw = TodoListMiddleware()
+    todo_mw = TodoProgressMiddleware()
     intent_mws = build_intent_middlewares()
     failure_middlewares, recovery_tools = build_failure_limit_middlewares()
     middlewares = [
