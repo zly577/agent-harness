@@ -53,6 +53,7 @@ from app.agent.access import MODE_FULL, MODE_SANDBOX, normalize_mode
 from app.agent.opensandbox_backend import (
     DEFAULT_PREFIX,  # noqa: F401  (re-export 供 API/测试使用)
     MACHINE_MOUNT_ROOT,  # noqa: F401
+    MountedDiskBackend,
     HostShellBackend,  # noqa: F401  (re-export，便于测试/诊断直接引用)
     HybridDefaultBackend,  # noqa: F401
     build_full_access_backend,
@@ -115,6 +116,8 @@ def build_main_backend(
     session_key: str = "default",
     workspace: str | None = None,
     mode: str = MODE_SANDBOX,
+    *,
+    memory_root=None,
 ):
     r"""主智能体的 backend。**同一套文件层 + 两种执行层**。
 
@@ -125,13 +128,15 @@ def build_main_backend(
         mode: 权限模式。`"sandbox"`（默认）= 文件落本地 + execute 进容器；
             `"full"` = 文件落本地 + execute 跑本机（deepagents `LocalShellBackend`）。
             由 `app/agent/access.py` 决定，调用方（`runtime.get_agent`）负责传进来。
+        memory_root: 当前用户的持久记忆目录，独立挂载到 `/memories/`，不随项目变化。
 
     Returns:
         `CompositeBackend`：
         - `default` = `HybridDefaultBackend`（sandbox）或 `HostShellBackend`（full），
           **带 `prefix="/workspace"`** → 虚拟 `/workspace/x` → `<root>/x`
           （模型看到的路径 = 容器/本机工作目录里的路径）
-        - `routes`  = 本机磁盘挂载点 + `{"/workspace/": 同一个 default}`
+        - `routes`  = 本机磁盘挂载点 + `{"/workspace/": 同一个 default}`，
+          有用户上下文时另挂 `/memories/` 指向固定的用户记忆目录。
 
     ## 为什么必须这样（否则一定出现"同一文件两份"）
 
@@ -202,6 +207,8 @@ def build_main_backend(
             sync_before_execute=settings.sandbox_sync_enabled,
             sync_after_execute=settings.sandbox_sync_enabled,
         )
+    if memory_root is not None:
+        backend.routes["/memories/"] = MountedDiskBackend(root_dir=memory_root, mount_prefix="/memories")
     return _finish_backend(backend)
 
 

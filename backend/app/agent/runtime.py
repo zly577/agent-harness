@@ -194,6 +194,7 @@ def get_main_backend(session_key: str = _MAIN_SESSION, user_id: str | None = Non
         session_key=session_key,
         workspace=session_workspace(session_key, owner),
         mode=access.access_mode(session_key, owner),
+        memory_root=workspace_for(owner),
     )
 
 
@@ -228,17 +229,19 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
         model = build_llm(provider)
 
     # 本地磁盘读写（FilesystemBackend）+ OpenSandbox 执行（execute 工具）
-    # 本地磁盘根按用户隔离 → 会话/用户之间的文件与 Agent.md 互不可见
+    # 项目文件使用会话工作区，用户记忆通过独立路由跨工作区共享。
     # 权限模式决定"执行层" —— 默认权限进沙箱，完全访问直接在本机跑。
     #      它同时决定 backend、permissions、interrupt_on 与系统提示词（见下），
     #      所以必须在构建 graph 之前解析出来（和模型一样是编译期输入）。
     mode = access.access_mode(session_key, owner)
     workspace_root = session_workspace(session_key, owner)
-    sources = memory_sources(owner, workspace=workspace_root, create=not history_only)
+    memory_root = workspace_for(owner)
+    sources = memory_sources(owner, create=not history_only)
     backend = build_main_backend(
         session_key=session_key,
         workspace=workspace_root,
         mode=mode,
+        memory_root=memory_root,
     )
 
     # 自检：权限路径（主 Agent + 各子智能体）必须都落在 route 前缀内，
@@ -312,7 +315,7 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
     tools = list(extra_tools)
     tools.extend([web_search, ask_user])
     tools.extend(build_history_tools(session_key, owner))
-    tools.extend(build_memory_tools(workspace_root))
+    tools.extend(build_memory_tools(memory_root))
     # 工具熔断的"手动恢复"入口（模型可主动调用，见 middleware.ConsecutiveToolFailureMiddleware）
     tools.extend(recovery_tools)
 
@@ -333,7 +336,7 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
         tools=tools,
         # 长期记忆：Agent.md 每次运行开始时被读入并注入系统提示词，
         # 智能体可用 edit_file 自行更新它（记录用户偏好等），跨会话生效。
-        # 按用户隔离 —— 每个人读写的都是自己工作区里的那份。
+        # 按用户隔离，通过 /memories/ 访问，跨项目共享。
         memory=sources,
         # 访问本机真实文件 → 人工审批中断（deepagents HITL）
         # 热插拔：开 = 返回 interrupt 权限（访问 /mnt/** 需人工同意）；关 = 空列表。

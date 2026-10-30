@@ -1,4 +1,4 @@
-"""Authenticated personal settings and workspace-scoped memory editing."""
+"""Authenticated personal settings and user-scoped memory editing."""
 import json
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -8,7 +8,7 @@ from pydantic import ValidationError
 
 from app.agent import runtime
 from app.api.deps import get_current_user
-from app.api.routes.files import _workspace_root
+from app.core.workspace import ensure_workspace
 from app.core.preferences import preference_defaults, preferences_for
 from app.db.models import User, UserPreferences
 from app.db.session import get_db
@@ -65,10 +65,8 @@ def reset_preferences(user: User = Depends(get_current_user), db: Session = Depe
     return get_preferences(user, db)
 
 
-def _memory_path(user, workspace_id, db):
-    root = _workspace_root(user, workspace_id, db).resolve()
-    if not root.is_dir():
-        raise HTTPException(status_code=409, detail="工作区目录已不存在")
+def _memory_path(user):
+    root = ensure_workspace(user.id).resolve()
     path = root / "Agent.md"
     if path.is_symlink() or path.resolve().parent != root:
         raise HTTPException(status_code=403, detail="长期记忆不能指向工作区外部或符号链接")
@@ -85,19 +83,18 @@ def _read_memory(path):
 def _memory_view(value):
     return {**value, "core_limit": settings.memory_core_max_chars,
             "injected_chars": min(len(value["content"]), settings.memory_core_max_chars),
-            "detail_directory": "/workspace/.agent-memory/"}
+            "detail_directory": "/memories/.agent-memory/"}
 
 
 @router.get("/memory")
-def get_memory(workspace_id: str | None = None, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    return _memory_view(_read_memory(_memory_path(user, workspace_id, db)))
+def get_memory(user: User = Depends(get_current_user)):
+    return _memory_view(_read_memory(_memory_path(user)))
 
 
 @router.put("/memory")
-def save_memory(req: MemoryUpdate, workspace_id: str | None = None,
-                user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def save_memory(req: MemoryUpdate, user: User = Depends(get_current_user)):
     with _memory_write_lock:
-        return _memory_view(_save_memory(_memory_path(user, workspace_id, db), req))
+        return _memory_view(_save_memory(_memory_path(user), req))
 
 
 def _save_memory(path, req):

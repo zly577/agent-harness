@@ -222,7 +222,7 @@ def test_long_term_memory_is_per_user(u1, u2):
     assert "u2 的偏好" not in p1.read_text(encoding="utf-8")
 
     # 注入提示词的**虚拟路径**对谁都一样（由各自的 backend 解析到各自的工作区）
-    assert memory_sources(u1["id"]) == memory_sources(u2["id"]) == ["/workspace/Agent.md"]
+    assert memory_sources(u1["id"]) == memory_sources(u2["id"]) == ["/memories/Agent.md"]
 
 
 def test_memory_file_not_visible_in_other_users_panel(client2, u1):

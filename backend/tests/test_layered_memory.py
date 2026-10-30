@@ -1,5 +1,6 @@
 import asyncio
 import json
+import pytest
 
 from deepagents.backends import FilesystemBackend
 
@@ -13,7 +14,7 @@ def test_detail_memory_is_indexed_without_loading_body_and_core_is_bounded(tmp_p
                                     "source": "tool:build-42"}))
     assert result["saved"]
     detail = (tmp_path / ".agent-memory/build.md").read_text(encoding="utf-8")
-    assert "tool:build-42" in detail and "更新时间" in detail and "当前工作区" in detail
+    assert "tool:build-42" in detail and "更新时间" in detail and "当前用户" in detail
     original = "中文核心偏好\n" + "old details" * 1000
     (tmp_path / "Agent.md").write_text(original, encoding="utf-8")
     middleware = WorkspaceMemoryRepairMiddleware(FilesystemBackend(root_dir=tmp_path, virtual_mode=True), ["/Agent.md"])
@@ -68,3 +69,39 @@ def test_memory_conflicts_are_reported_as_tool_failures(tmp_path):
     response = tool.invoke({"type": "tool_call", "name": "remember", "id": "memory-conflict", "args": args})
     assert response.status == "error"
     assert json.loads(response.content)["error"] == "revision_conflict"
+
+
+@pytest.mark.parametrize("mode", ["sandbox", "full"])
+def test_memory_route_survives_project_switch_and_isolates_users(tmp_path, monkeypatch, mode):
+    from app.agent.prompt import ensure_memory_file, memory_sources
+    from app.agent.sandbox import build_main_backend
+    from app.core.config import settings
+
+    monkeypatch.setenv("HARNESS_WORKSPACE", str(tmp_path / "users"))
+    monkeypatch.setattr(settings, "harness_machine_access", False)
+    monkeypatch.setattr(settings, "sandbox_enabled", False)
+    first_project, second_project = tmp_path / "project-a", tmp_path / "project-b"
+    first_project.mkdir(); second_project.mkdir()
+    user_memory = ensure_memory_file("first-user")
+    user_memory.write_text("USER PREFERENCES", encoding="utf-8")
+    other_memory = ensure_memory_file("second-user")
+    other_memory.write_text("OTHER USER PREFERENCES", encoding="utf-8")
+    args = {"key": "build", "title": "构建经验", "content": "PROJECT A BUILD NOTES", "source": "project-a:build"}
+    saved = json.loads(build_memory_tools(user_memory.parent)[0].invoke(args))
+    assert saved["path"] == "/memories/.agent-memory/build.md"
+
+    for project in (first_project, second_project):
+        backend = build_main_backend(workspace=project, mode=mode, memory_root=user_memory.parent)
+        assert "PROJECT A BUILD NOTES" in backend.read(saved["path"]).file_data["content"]
+        matches = backend.glob("/memories/.agent-memory/*.md", path="/memories/.agent-memory")
+        assert not matches.error and any(entry["path"] == saved["path"] for entry in matches.matches)
+        middleware = WorkspaceMemoryRepairMiddleware(backend, memory_sources("first-user", workspace=project))
+        update = asyncio.run(middleware.abefore_agent({}, None))
+        content = update["memory_contents"]["/memories/Agent.md"]
+        assert "USER PREFERENCES" in content and saved["path"] in content
+        assert "PROJECT A BUILD NOTES" not in content
+        assert not (project / "Agent.md").exists() and not (project / ".agent-memory").exists()
+
+    other = build_main_backend(workspace=second_project, mode=mode, memory_root=other_memory.parent)
+    assert "OTHER USER PREFERENCES" in other.read("/memories/Agent.md").file_data["content"]
+    assert other.read(saved["path"]).error

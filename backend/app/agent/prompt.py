@@ -12,13 +12,13 @@
 
 1. 用户能直接看、直接改（就是一篇文章），也可版本管理；
 2. 模型用现成的 `edit_file` 工具就能维护，不需要新造一个"记忆工具"；
-3. 与工作区文件同一套权限（`/workspace/**`、以及本机挂载点 `/mnt/**` 的写操作
-   都会走人工审批）。
+3. 通过独立的 `/memories/` 文件路由访问，按用户隔离并跨工作区共享。
 
 ## 路径约定
 
-`/workspace/Agent.md` → 本地 `<repo>/workspace/Agent.md`，也就是容器里的
-`/workspace/Agent.md` —— 三个视角同一个文件（见 sandbox.build_main_backend 的说明）。
+`/memories/Agent.md` → 本地 `<base>/<user_id>/Agent.md`。
+保留已有用户记忆的位置，文件工具通过独立路由访问，不随选定项目目录变化；
+该路由不挂载到执行容器，记忆读写使用文件工具。
 
 P12（`HARNESS_MACHINE_ACCESS=true`）时，提示词里会额外声明本机磁盘挂载点
 `/mnt/<盘符>/...`（= 用户电脑的真实文件，**不进沙箱**），见
@@ -55,8 +55,8 @@ from app.agent.clarification import CLARIFICATION_POLICY
 
 logger = logging.getLogger(__name__)
 
-#: 模型看到的记忆文件虚拟路径（= 容器里的路径）
-AGENT_MEMORY_PATH = "/workspace/Agent.md"
+#: 模型通过独立文件路由访问用户记忆（不属于执行容器的工作区）。
+AGENT_MEMORY_PATH = "/memories/Agent.md"
 
 #: 工具使用原则 + 子智能体委派 —— 两种权限模式共用的头部。
 _PROMPT_HEAD = (
@@ -139,7 +139,8 @@ _PROMPT_TAIL = (
     f"- 你的长期记忆文件是 `{AGENT_MEMORY_PATH}`，它已在启动时加载进这段提示词。\n"
     "- 当用户表达偏好、纠正你的做法、或提供以后用得上的信息时，"
     "**主动用 remember 保存**，不要只在本轮口头答应。核心偏好 tier=core；详细经验 tier=detail。\n"
-    "- Agent.md 只常驻加载有容量限制的前缀；详细经验保存在 `/workspace/.agent-memory/`，启动时只提供文件索引，按需 read_file。\n"
+    "- 记忆属于当前用户，跨工作区共享；项目经验须注明适用项目。记忆读写使用文件工具，execute 不挂载 `/memories/`。\n"
+    "- Agent.md 只常驻加载有容量限制的前缀；详细经验保存在 `/memories/.agent-memory/`，启动时只提供文件索引，按需 read_file。\n"
     "- remember 写入时记录来源和时间；版本冲突先读取原文再合并，用户最新修正优先。不要把旧经验当成本次操作已获授权。\n"
     "- 只记**长期有用**的内容（偏好、习惯、约定、项目背景）；"
     "一次性任务、临时状态、闲聊不要写入。\n"
@@ -183,7 +184,7 @@ SEED_MEMORY = f"""# Agent 记忆
 
 
 def memory_file_path(user_id: str | None = None, *, workspace: Path | None = None) -> Path:
-    """本地磁盘上 Agent.md 的真实路径（当前会话工作区根下；未指定则使用用户默认目录）。
+    """本地磁盘上用户记忆的真实路径；兼容旧调用的 workspace 参数但不用于定位。
 
     按用户隔离：`<base>/<user_id>/Agent.md`。
     这是"长期记忆不泄漏"的关键落点 —— 以前它是全用户共享的一篇文章，
@@ -191,11 +192,11 @@ def memory_file_path(user_id: str | None = None, *, workspace: Path | None = Non
     """
     from app.core.workspace import workspace_for
 
-    return (Path(workspace) if workspace is not None else workspace_for(user_id)) / "Agent.md"
+    return workspace_for(user_id) / "Agent.md"
 
 
 def ensure_memory_file(user_id: str | None = None, *, workspace: Path | None = None) -> Path:
-    """确保当前工作区的 Agent.md 存在（不存在就用种子内容创建），返回其路径。
+    """确保用户的 Agent.md 存在（不存在就用种子内容创建），返回其路径。
 
     幂等：已存在则**绝不覆盖**（那会抹掉智能体积累的记忆）。
     """
@@ -309,7 +310,7 @@ def build_system_prompt(locale: str | None = None, mode: str = "sandbox", *, wor
     if not memory_available:
         prompt = prompt.replace(
             f"- 你的长期记忆文件是 `{AGENT_MEMORY_PATH}`，它已在启动时加载进这段提示词。",
-            f"- 当前工作区没有可加载的长期记忆文件 `{AGENT_MEMORY_PATH}`。不要为读取缺失的记忆文件反复调用工具。需要保存偏好时先创建此文件。")
+            f"- 当前用户没有可加载的长期记忆文件 `{AGENT_MEMORY_PATH}`。不要为读取缺失的记忆文件反复调用工具。需要保存偏好时先创建此文件。")
     else:
         prompt = prompt.replace("它已在启动时加载进这段提示词。", "它会自动加载进提示词，无需在每次任务开始时重复读取。")
     if workspace is not None:
@@ -348,14 +349,15 @@ def full_access_prompt_section(*, workspace: Path | None = None) -> str:
 
 
 def current_workspace_prompt_section(workspace: Path, mode: str) -> str:
-    """Describe the same physical root used by file tools, memory and execution."""
+    """Describe the physical project root used by file tools and execution."""
     from app.agent import access
     root = Path(workspace).resolve()
     section = (
         "\n## 当前会话的工作区（路径以本节为准）\n"
         f"- 当前选定工作区的真实目录：`{root}`。\n"
         "- 文件工具中的 `/workspace` 是这个目录的虚拟入口，不是项目默认 workspace 文件夹。\n"
-        f"- `/workspace/a.txt` 对应 `{root / 'a.txt'}`；`/workspace/Agent.md` 对应 `{root / 'Agent.md'}`。\n"
+        f"- `/workspace/a.txt` 对应 `{root / 'a.txt'}`。\n"
+        "- 用户长期记忆位于独立的 `/memories/`，跨工作区共享，不随当前项目目录变化。\n"
         "- 用户说当前项目或工作区时，先在此工作区查找，不要退回默认目录或扫描其他工作区。\n"
         "- 读写文件使用 `/workspace/...`；向用户说明位置时同时给出对应的真实目录。\n"
     )
@@ -367,9 +369,9 @@ def current_workspace_prompt_section(workspace: Path, mode: str) -> str:
 
 
 def memory_sources(user_id: str | None = None, *, workspace: Path | None = None, create: bool = True) -> list[str]:
-    """Load Agent.md from the exact root mounted at /workspace for this session.
+    """Load user memory through /memories/, independently of the selected workspace.
 
-    Omitted workspace retains the legacy user root. History-only reads never seed files.
+    The legacy workspace argument is ignored. History-only reads never seed files.
     """
     path = ensure_memory_file(user_id, workspace=workspace) if create else memory_file_path(user_id, workspace=workspace)
     return [AGENT_MEMORY_PATH] if path.is_file() else []
