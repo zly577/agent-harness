@@ -4,7 +4,7 @@
       <header class="pv-head">
         <div class="pv-heading">
           <h2 id="settings-title">个人设置</h2>
-          <p class="pv-sub">管理用户记忆、账户安全和智能体运行偏好。</p>
+          <p class="pv-sub">管理工作区记忆、账户安全和智能体运行偏好。</p>
         </div>
         <button class="pv-x" aria-label="关闭个人设置" :disabled="busy" @click="close">×</button>
       </header>
@@ -16,8 +16,9 @@
         <p v-if="message" class="pv-result ok" role="status">{{ message }}</p>
         <template v-if="tab === 'memory'">
           <h3>长期记忆</h3>
-          <p class="pv-caption">用户记忆 · /memories/Agent.md</p>
-          <p class="pv-caption">保存回答习惯、项目约定和工作偏好。同一账户的所有工作区和会话共享记忆，保存后从下一轮对话生效；项目约定请注明适用项目。</p>
+          <p class="pv-caption">当前工作区：{{ workspaceName }} · Agent.md</p>
+          <p class="pv-caption">保存回答习惯、项目约定和工作偏好。同一工作区的会话共享记忆，保存后从下一轮对话生效。</p>
+          <p class="pv-caption">每轮开始自动同步本工作区的最新 Agent.md；已有会话和新会话均会生效。正在生成的回答使用本轮开始时的记忆。</p>
           <p v-if="memory" class="pv-caption">每轮常驻加载前 {{ memory.core_limit?.toLocaleString() }} 字；详细经验保存在 {{ memory.detail_directory }}，按需读取。</p>
           <p v-if="memory && memoryContent.length > memory.core_limit" class="pv-result bad" role="status">当前内容超过常驻容量，超出部分仍保存在文件中。请把详细记录整理到按需记忆目录，核心偏好保持简短。</p>
           <p v-if="memoryError" class="pv-result bad" role="alert">{{ memoryError }}</p>
@@ -27,7 +28,7 @@
               <span>记忆内容 <em>支持 Markdown，最多 10 万字</em></span>
               <textarea v-model="memoryContent" rows="14" maxlength="100000" :disabled="busy" placeholder="例如：请用中文回答；修改代码后说明验证结果。" />
             </label>
-            <p class="pv-caption">{{ memoryContent.length.toLocaleString() }} / 100,000 字<span v-if="!memory.exists"> · 当前账户尚未创建记忆文件</span></p>
+            <p class="pv-caption">{{ memoryContent.length.toLocaleString() }} / 100,000 字<span v-if="!memory.exists"> · 当前工作区尚未创建记忆文件</span></p>
             <div class="personal-actions">
               <button class="pv-btn pv-btn-primary" :disabled="busy || !memoryDirty">{{ busy ? '保存中…' : '保存记忆' }}</button>
               <button type="button" class="pv-btn" :disabled="busy" @click="reloadMemory">重新加载</button>
@@ -61,7 +62,7 @@
               <label class="pv-field"><span>输出预留（token）</span><input v-model.number="form.context_output_reserve" type="number" min="256" max="1000000" step="1" required :disabled="busy" /></label>
               <label class="pv-field"><span>触发压缩的输入预算占比（%）</span><input v-model.number="form.context_trigger_percent" type="number" min="30" max="95" step="1" required :disabled="busy" /></label>
               <label class="pv-field"><span>压缩后保留的近期内容（token）</span><input v-model.number="form.context_keep_tokens" type="number" min="256" max="1000000" step="1" required :disabled="busy" /><em>预算不足时自动缩小，保留完整工具交互边界。</em></label>
-              <p class="pv-caption pv-span2">预算包含系统提示、用户记忆、技能、工具定义和消息；扣除输出预留及安全余量。输入大小为保守估算，并参考供应商返回的实际用量校准。完整聊天记录仍保留。</p>
+              <p class="pv-caption pv-span2">预算包含系统提示、工作区记忆、技能、工具定义和消息；扣除输出预留及安全余量。输入大小为保守估算，并参考供应商返回的实际用量校准。完整聊天记录仍保留。</p>
             </div>
             <div v-else class="pv-grid personal-grid">
               <label class="pv-field"><span>每轮工具调用上限</span><input v-model.number="form.tool_call_run_limit" type="number" min="0" max="100000" step="1" required :disabled="busy" /><em>0 表示不限制</em></label>
@@ -140,7 +141,7 @@ const budgetSummary = computed(() => {
 const password = reactive({ old: '', next: '', confirm: '' }), passwordError = ref('')
 const controller = new AbortController()
 const opts = { signal: controller.signal }
-const memoryUrl = '/api/v1/preferences/memory'
+const memoryUrl = `/api/v1/preferences/memory?workspace_id=${encodeURIComponent(props.workspaceId)}`
 const memoryDirty = computed(() => !!memory.value && memoryContent.value !== memory.value.content)
 const changed = keys => !!preferences.value && (keys.some(key => draftValue(key) !== preferences.value.values[key])
   || (keys.includes('tool_call_limit_tool') && budgetScope.value === 'single' && !budgetToolValue.value))

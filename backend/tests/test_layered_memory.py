@@ -1,6 +1,5 @@
 import asyncio
 import json
-import pytest
 
 from deepagents.backends import FilesystemBackend
 
@@ -14,7 +13,7 @@ def test_detail_memory_is_indexed_without_loading_body_and_core_is_bounded(tmp_p
                                     "source": "tool:build-42"}))
     assert result["saved"]
     detail = (tmp_path / ".agent-memory/build.md").read_text(encoding="utf-8")
-    assert "tool:build-42" in detail and "更新时间" in detail and "当前用户" in detail
+    assert "tool:build-42" in detail and "更新时间" in detail and "当前工作区" in detail
     original = "中文核心偏好\n" + "old details" * 1000
     (tmp_path / "Agent.md").write_text(original, encoding="utf-8")
     middleware = WorkspaceMemoryRepairMiddleware(FilesystemBackend(root_dir=tmp_path, virtual_mode=True), ["/Agent.md"])
@@ -71,37 +70,93 @@ def test_memory_conflicts_are_reported_as_tool_failures(tmp_path):
     assert json.loads(response.content)["error"] == "revision_conflict"
 
 
-@pytest.mark.parametrize("mode", ["sandbox", "full"])
-def test_memory_route_survives_project_switch_and_isolates_users(tmp_path, monkeypatch, mode):
-    from app.agent.prompt import ensure_memory_file, memory_sources
+def test_memory_refresh_replaces_stale_cache_and_skips_unchanged_content(tmp_path):
+    path = tmp_path / "Agent.md"
+    path.write_text("workspace memory", encoding="utf-8")
+    middleware = WorkspaceMemoryRepairMiddleware(
+        FilesystemBackend(root_dir=tmp_path, virtual_mode=True), ["/Agent.md"])
+
+    async def check():
+        # Also repair checkpoints left by the former user-wide memory route.
+        update = await middleware.abefore_agent({"memory_contents": {"/memories/Agent.md": "wrong scope"}}, None)
+        assert update == {"memory_contents": {"/Agent.md": "workspace memory"}}
+        assert await middleware.abefore_agent(update, None) is None
+        path.write_text("", encoding="utf-8")
+        cleared = await middleware.abefore_agent(update, None)
+        assert cleared == {"memory_contents": {"/Agent.md": ""}}
+        path.unlink()
+        deleted = await middleware.abefore_agent(update, None)
+        assert deleted == {"memory_contents": {}}
+        path.write_text("recreated", encoding="utf-8")
+        assert await middleware.abefore_agent(deleted, None) == {"memory_contents": {"/Agent.md": "recreated"}}
+
+    asyncio.run(check())
+
+
+def test_real_model_memory_snapshot_refreshes_next_turn_and_in_new_session(tmp_path, monkeypatch):
+    from deepagents import create_deep_agent
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+    from langchain_core.messages import AIMessage
+    from langchain_core.tools import tool
+    from langgraph.checkpoint.memory import InMemorySaver
+    from app.agent.prompt import memory_sources
     from app.agent.sandbox import build_main_backend
     from app.core.config import settings
 
-    monkeypatch.setenv("HARNESS_WORKSPACE", str(tmp_path / "users"))
     monkeypatch.setattr(settings, "harness_machine_access", False)
     monkeypatch.setattr(settings, "sandbox_enabled", False)
-    first_project, second_project = tmp_path / "project-a", tmp_path / "project-b"
-    first_project.mkdir(); second_project.mkdir()
-    user_memory = ensure_memory_file("first-user")
-    user_memory.write_text("USER PREFERENCES", encoding="utf-8")
-    other_memory = ensure_memory_file("second-user")
-    other_memory.write_text("OTHER USER PREFERENCES", encoding="utf-8")
-    args = {"key": "build", "title": "构建经验", "content": "PROJECT A BUILD NOTES", "source": "project-a:build"}
-    saved = json.loads(build_memory_tools(user_memory.parent)[0].invoke(args))
-    assert saved["path"] == "/memories/.agent-memory/build.md"
+    first, second = tmp_path / "first", tmp_path / "second"
+    first.mkdir(); second.mkdir()
+    path = first / "Agent.md"
+    path.write_text("WORKSPACE_ONE_VERSION_ONE", encoding="utf-8")
+    (second / "Agent.md").write_text("WORKSPACE_TWO_MEMORY", encoding="utf-8")
+    prompts = []
 
-    for project in (first_project, second_project):
-        backend = build_main_backend(workspace=project, mode=mode, memory_root=user_memory.parent)
-        assert "PROJECT A BUILD NOTES" in backend.read(saved["path"]).file_data["content"]
-        matches = backend.glob("/memories/.agent-memory/*.md", path="/memories/.agent-memory")
-        assert not matches.error and any(entry["path"] == saved["path"] for entry in matches.matches)
-        middleware = WorkspaceMemoryRepairMiddleware(backend, memory_sources("first-user", workspace=project))
-        update = asyncio.run(middleware.abefore_agent({}, None))
-        content = update["memory_contents"]["/memories/Agent.md"]
-        assert "USER PREFERENCES" in content and saved["path"] in content
-        assert "PROJECT A BUILD NOTES" not in content
-        assert not (project / "Agent.md").exists() and not (project / ".agent-memory").exists()
+    class Model(FakeMessagesListChatModel):
+        def bind_tools(self, tools, **kwargs):
+            return self
 
-    other = build_main_backend(workspace=second_project, mode=mode, memory_root=other_memory.parent)
-    assert "OTHER USER PREFERENCES" in other.read("/memories/Agent.md").file_data["content"]
-    assert other.read(saved["path"]).error
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+            prompts.append(str(messages[0].content))
+            return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+
+    @tool
+    def edit_workspace_memory() -> str:
+        """Persist a confirmed new workspace preference."""
+        path.write_text("WORKSPACE_ONE_VERSION_TWO", encoding="utf-8")
+        return "Saved the new preference; apply it now."
+
+    def graph(project, responses, tools=None):
+        backend = build_main_backend(workspace=project)
+        sources = memory_sources("user", workspace=project)
+        return create_deep_agent(model=Model(responses=responses), backend=backend, memory=sources,
+            tools=tools or [], middleware=[WorkspaceMemoryRepairMiddleware(backend, sources)],
+            checkpointer=InMemorySaver())
+
+    async def check():
+        agent = graph(first, [
+            AIMessage(content="", tool_calls=[{"name": "edit_workspace_memory", "args": {}, "id": "edit-memory"}]),
+            AIMessage(content="saved"), AIMessage(content="next turn"),
+        ], [edit_workspace_memory])
+        config = {"configurable": {"thread_id": "existing-session"}}
+        await agent.ainvoke({"messages": [{"role": "user", "content": "Update my preference"}]}, config)
+        assert len(prompts) == 2
+        # Editing disk mid-turn must not silently mutate the system prompt in the tool loop.
+        assert all(text.count("WORKSPACE_ONE_VERSION_ONE") == 1 for text in prompts)
+        assert all("WORKSPACE_ONE_VERSION_TWO" not in text for text in prompts)
+        await agent.ainvoke({"messages": [{"role": "user", "content": "Next request"}]}, config)
+        assert prompts[-1].count("WORKSPACE_ONE_VERSION_TWO") == 1
+        assert "WORKSPACE_ONE_VERSION_ONE" not in prompts[-1]
+        state = await agent.aget_state(config)
+        assert not any(message.type == "system" for message in state.values["messages"])
+
+        fresh = graph(first, [AIMessage(content="new session")])
+        await fresh.ainvoke({"messages": [{"role": "user", "content": "Hello"}]},
+                           {"configurable": {"thread_id": "new-session"}})
+        assert prompts[-1].count("WORKSPACE_ONE_VERSION_TWO") == 1
+        other = graph(second, [AIMessage(content="other workspace")])
+        await other.ainvoke({"messages": [{"role": "user", "content": "Hello"}]},
+                           {"configurable": {"thread_id": "other-workspace"}})
+        assert "WORKSPACE_TWO_MEMORY" in prompts[-1] and "WORKSPACE_ONE" not in prompts[-1]
+
+    asyncio.run(check())

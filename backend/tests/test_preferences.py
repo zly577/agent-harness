@@ -63,7 +63,7 @@ def test_preference_validation_rejects_without_saving(personal_client, updates):
     assert client.get('/api/v1/preferences').json() == initial
 
 
-def test_memory_user_scope_conflict_and_empty_save(personal_client, tmp_path):
+def test_memory_workspace_ownership_conflict_and_empty_save(personal_client, tmp_path):
     client, user = personal_client
     project = tmp_path / '中文项目'
     project.mkdir()
@@ -72,34 +72,26 @@ def test_memory_user_scope_conflict_and_empty_save(personal_client, tmp_path):
         db.add(Workspace(id=workspace_id, user_id=user['id'], name=project.name, directory=str(project)))
         db.commit()
     url = f'/api/v1/preferences/memory?workspace_id={workspace_id}'
-    from app.agent.prompt import memory_file_path
-    path = memory_file_path(user['id'])
     initial = client.get(url).json()
     assert initial == {'content': '', 'revision': 'missing', 'exists': False,
-                       'core_limit': 6000, 'injected_chars': 0, 'detail_directory': '/memories/.agent-memory/'}
+                       'core_limit': 6000, 'injected_chars': 0, 'detail_directory': '/workspace/.agent-memory/'}
     assert not (project / 'Agent.md').exists()
     saved = client.put(url, json={'content': '# 项目偏好\n请用中文。', 'revision': initial['revision']})
     assert saved.status_code == 200, saved.text
-    assert path.read_text(encoding='utf-8') == saved.json()['content']
-    assert not (project / 'Agent.md').exists()
-    assert client.get('/api/v1/preferences/memory').json() == saved.json()
-    # A removed selected project must not affect account memory.
-    project.rmdir()
-    assert client.get(url).json() == saved.json()
+    assert (project / 'Agent.md').read_text(encoding='utf-8') == saved.json()['content']
     # An agent changed the file while the editor was open: preserve its newer edit.
-    path.write_text('来自智能体的更新', encoding='utf-8')
+    (project / 'Agent.md').write_text('来自智能体的更新', encoding='utf-8')
     conflict = client.put(url, json={'content': '过期编辑', 'revision': saved.json()['revision']})
     assert conflict.status_code == 409
-    assert path.read_text(encoding='utf-8') == '来自智能体的更新'
+    assert (project / 'Agent.md').read_text(encoding='utf-8') == '来自智能体的更新'
     other, _ = make_auth_client()
-    assert other.get(url).json()['content'] == ''
-    assert other.put(url, json={'content': '其他用户', 'revision': 'missing'}).status_code == 200
-    assert path.read_text(encoding='utf-8') == '来自智能体的更新'
+    assert other.get(url).status_code == 404
+    assert other.put(url, json={'content': '越权', 'revision': 'missing'}).status_code == 404
     other.close()
     latest = client.get(url).json()
     empty = client.put(url, json={'content': '', 'revision': latest['revision']})
     assert empty.status_code == 200 and empty.json()['content'] == ''
-    assert path.read_bytes() == b''
+    assert (project / 'Agent.md').read_bytes() == b''
     assert client.get('/api/v1/preferences/memory').json()['content'] == ''
 
 

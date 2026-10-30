@@ -1,4 +1,4 @@
-"""User-scoped durable memory entries with provenance and bounded core."""
+"""Workspace-scoped durable memory entries with provenance and bounded core."""
 import json
 import re
 from datetime import datetime, timezone
@@ -12,7 +12,7 @@ from app.agent.memory_storage import DETAIL_DIRECTORY, MEMORY_WRITE_LOCK, Memory
 from app.core.config import settings
 
 
-def build_memory_tools(memory_root: Path):
+def build_memory_tools(workspace: Path):
     @tool
     def remember(key: Annotated[str, Field(pattern=r"^[a-zA-Z0-9_-]{1,64}$")],
                  title: Annotated[str, Field(min_length=1, max_length=120)],
@@ -23,21 +23,20 @@ def build_memory_tools(memory_root: Path):
         """保存用户确认的长期偏好或项目经验，附消息ID/证据路径 source；临时进度使用 update_task_state。
 
         detail 写入独立 Markdown 文件，按需读取；core 写入常驻 Agent.md，容量有限。
-        记忆按用户保存，跨工作区共享；项目经验须注明适用项目。
         首次创建 expected_revision=missing；修改既有文件须传此前返回的 revision。
         冲突返回当前 revision，必须先读现有内容再合并，避免覆盖用户修改。不要保存凭据或未确认推测。
         """
         relative = "Agent.md" if tier == "core" else f"{DETAIL_DIRECTORY}/{key}.md"
         try:
             with MEMORY_WRITE_LOCK:
-                path = memory_path(memory_root, relative)
+                path = memory_path(workspace, relative)
                 path.parent.mkdir(parents=True, exist_ok=True)
                 prior = read_snapshot(path)
                 if prior["revision"] != expected_revision:
                     raise MemoryConflict("记忆版本冲突")
                 stamp = datetime.now(timezone.utc).isoformat()
                 label = title.replace("\n", " ").replace("\r", " ")
-                entry = f"## {label}\n\n- 来源：{source}\n- 更新时间：{stamp}\n- 范围：当前用户（跨工作区）\n\n{content.strip()}\n"
+                entry = f"## {label}\n\n- 来源：{source}\n- 更新时间：{stamp}\n- 范围：当前工作区\n\n{content.strip()}\n"
                 if tier == "core":
                     start, end = f"<!-- memory-entry:{key} -->", f"<!-- /memory-entry:{key} -->"
                     block = f"{start}\n{entry}{end}\n"
@@ -49,11 +48,11 @@ def build_memory_tools(memory_root: Path):
                 else:
                     value = entry
                 saved = write_snapshot(path, value, expected_revision)
-                return json.dumps({"saved": True, "path": f"/memories/{relative}", "revision": saved["revision"], "tier": tier}, ensure_ascii=False)
+                return json.dumps({"saved": True, "path": f"/workspace/{relative}", "revision": saved["revision"], "tier": tier}, ensure_ascii=False)
         except MemoryConflict:
-            latest = read_snapshot(memory_path(memory_root, relative))
+            latest = read_snapshot(memory_path(workspace, relative))
             raise ToolException(json.dumps({"error": "revision_conflict", "revision": latest["revision"],
-                               "path": f"/memories/{relative}", "hint": "先用 read_file 读取现有内容并合并，再用此 revision 重试"}, ensure_ascii=False))
+                               "path": f"/workspace/{relative}", "hint": "先用 read_file 读取现有内容并合并，再用此 revision 重试"}, ensure_ascii=False))
         except (ValueError, OSError) as exc:
             raise ToolException(json.dumps({"error": str(exc)}, ensure_ascii=False)) from exc
 

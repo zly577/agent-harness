@@ -194,7 +194,6 @@ def get_main_backend(session_key: str = _MAIN_SESSION, user_id: str | None = Non
         session_key=session_key,
         workspace=session_workspace(session_key, owner),
         mode=access.access_mode(session_key, owner),
-        memory_root=workspace_for(owner),
     )
 
 
@@ -204,7 +203,7 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
     Args:
         session_key: 会话标识（= thread_id）。沙箱容器与本地磁盘视图都按会话隔离，
             所以 agent 也必须按会话缓存（不能全局单例）。
-        user_id: 工作区归属者，决定本地磁盘根与长期记忆（`Agent.md`）的位置。
+        user_id: 工作区归属者；文件和长期记忆（`Agent.md`）均使用会话选定的工作区。
             传空时用 `session_owner()` 兜底（避免"忘了传"导致工作区串台）。
     """
     session_key = session_key or _MAIN_SESSION
@@ -229,19 +228,17 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
         model = build_llm(provider)
 
     # 本地磁盘读写（FilesystemBackend）+ OpenSandbox 执行（execute 工具）
-    # 项目文件使用会话工作区，用户记忆通过独立路由跨工作区共享。
+    # 文件与 Agent.md 使用同一工作区根；同工作区会话共享，不同工作区分别保存。
     # 权限模式决定"执行层" —— 默认权限进沙箱，完全访问直接在本机跑。
     #      它同时决定 backend、permissions、interrupt_on 与系统提示词（见下），
     #      所以必须在构建 graph 之前解析出来（和模型一样是编译期输入）。
     mode = access.access_mode(session_key, owner)
     workspace_root = session_workspace(session_key, owner)
-    memory_root = workspace_for(owner)
-    sources = memory_sources(owner, create=not history_only)
+    sources = memory_sources(owner, workspace=workspace_root, create=not history_only)
     backend = build_main_backend(
         session_key=session_key,
         workspace=workspace_root,
         mode=mode,
-        memory_root=memory_root,
     )
 
     # 自检：权限路径（主 Agent + 各子智能体）必须都落在 route 前缀内，
@@ -315,7 +312,7 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
     tools = list(extra_tools)
     tools.extend([web_search, ask_user])
     tools.extend(build_history_tools(session_key, owner))
-    tools.extend(build_memory_tools(memory_root))
+    tools.extend(build_memory_tools(workspace_root))
     # 工具熔断的"手动恢复"入口（模型可主动调用，见 middleware.ConsecutiveToolFailureMiddleware）
     tools.extend(recovery_tools)
 
@@ -336,7 +333,7 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
         tools=tools,
         # 长期记忆：Agent.md 每次运行开始时被读入并注入系统提示词，
         # 智能体可用 edit_file 自行更新它（记录用户偏好等），跨会话生效。
-        # 按用户隔离，通过 /memories/ 访问，跨项目共享。
+        # 按工作区加载；同工作区的会话在下一轮自动获取文件的新内容。
         memory=sources,
         # 访问本机真实文件 → 人工审批中断（deepagents HITL）
         # 热插拔：开 = 返回 interrupt 权限（访问 /mnt/** 需人工同意）；关 = 空列表。

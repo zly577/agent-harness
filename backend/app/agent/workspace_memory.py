@@ -1,4 +1,10 @@
-"""Refresh user memory at each new run, including existing checkpoints."""
+"""Take one workspace-memory snapshot per turn, replacing stale checkpoint data.
+
+MemoryMiddleware injects this state into every model request in the turn. Refresh
+at before_agent rather than before_model so tool loops use a stable snapshot;
+file edits become part of the injected memory on the next turn. Unchanged
+snapshots produce no state update and never append messages to chat history.
+"""
 from langchain.agents.middleware.types import AgentMiddleware
 from deepagents.middleware.memory import MemoryState
 from app.core.config import settings
@@ -21,7 +27,7 @@ class WorkspaceMemoryRepairMiddleware(AgentMiddleware):
                 contents.pop(source, None)
                 continue
             if response.error:
-                raise ValueError(f"Failed to load user memory: {response.error}")
+                raise ValueError(f"Failed to load workspace memory: {response.error}")
             if response.content is not None:
                 content = response.content.decode("utf-8")
                 limit = settings.memory_core_max_chars

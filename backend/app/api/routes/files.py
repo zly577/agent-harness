@@ -119,8 +119,7 @@ def _user_backend(user: User, session_id: str | None = None, db=None, workspace_
         owned_session_or_404(db, session_id, user)
     if not session_id and workspace_id and workspace_id != "legacy":
         from app.agent.sandbox import build_main_backend
-        from app.core.workspace import workspace_for
-        return build_main_backend(workspace=_workspace_root(user, workspace_id, db), memory_root=workspace_for(user.id))
+        return build_main_backend(workspace=_workspace_root(user, workspace_id, db))
     return get_main_backend(session_key=session_id, user_id=user.id)
 
 

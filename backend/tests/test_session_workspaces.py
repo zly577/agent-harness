@@ -308,7 +308,7 @@ def test_file_panel_and_open_directory_follow_workspace(database, tmp_path, monk
 
 
 @pytest.mark.parametrize("mode", ["sandbox", "full"])
-def test_agent_memory_route_is_independent_of_selected_root(database, tmp_path, monkeypatch, mode):
+def test_agent_memory_and_tools_share_selected_root(database, tmp_path, monkeypatch, mode):
     import asyncio
     from app.agent.history_model import HistoryModel
     from app.agent import prompt
@@ -321,7 +321,7 @@ def test_agent_memory_route_is_independent_of_selected_root(database, tmp_path, 
     database.commit()
     session=sessions.create_session(sessions.CreateSessionRequest(workspace_id="d"*32),user,database)
     default=runtime.workspace_for(user.id);default.mkdir(parents=True)
-    (default/"Agent.md").write_text("PERSISTENT USER MEMORY",encoding="utf-8")
+    (default/"Agent.md").write_text("DEFAULT MEMORY MUST NOT LOAD",encoding="utf-8")
     captured={}
     def create(**kwargs):
         captured.update(kwargs)
@@ -345,9 +345,10 @@ def test_agent_memory_route_is_independent_of_selected_root(database, tmp_path, 
         "tool_call_thread_limit":15,"tool_call_run_limit":3,"tool_call_limit_tool":""})
     try:
         asyncio.run(runtime.get_agent(session["id"],user_id=user.id))
-        assert not (project/"Agent.md").exists()
-        assert (default/"Agent.md").read_text(encoding="utf-8")=="PERSISTENT USER MEMORY"
-        assert captured["memory"]==["/memories/Agent.md"]
+        assert (project/"Agent.md").is_file()
+        assert "DEFAULT MEMORY" not in (project/"Agent.md").read_text(encoding="utf-8")
+        assert (default/"Agent.md").read_text(encoding="utf-8")=="DEFAULT MEMORY MUST NOT LOAD"
+        assert captured["memory"]==["/workspace/Agent.md"]
         summary=next(m for m in captured["middleware"] if m.name=="SummarizationMiddleware")
         assert summary.trigger[0]=="tokens" and summary.keep==("tokens",6000)
         budget=next(m for m in captured["middleware"] if hasattr(m,"thread_limit"))
@@ -357,46 +358,35 @@ def test_agent_memory_route_is_independent_of_selected_root(database, tmp_path, 
         (project/"selected.txt").write_text("selected project",encoding="utf-8")
         backend=runtime.get_main_backend(session["id"],user.id)
         assert "selected project" in backend.read('/workspace/selected.txt').file_data["content"]
-        assert "PERSISTENT USER MEMORY" in backend.read('/memories/Agent.md').file_data["content"]
-        remember=next(tool for tool in captured["tools"] if tool.name=="remember")
+        assert "Agent 记忆" in backend.read('/workspace/Agent.md').file_data["content"]
         import json
-        saved=json.loads(remember.invoke({"key":"language","title":"语言","content":"中文","source":"user:1"}))
-        assert saved["path"]=="/memories/.agent-memory/language.md"
-        assert "中文" in backend.read(saved["path"]).file_data["content"]
-        assert not (project/".agent-memory").exists()
-        # A fresh file-panel backend must mount the same user memory before an agent is cached.
-        runtime.invalidate_agents(session["id"])
-        fresh=runtime.get_main_backend(session["id"],user.id)
-        assert "PERSISTENT USER MEMORY" in fresh.read('/memories/Agent.md').file_data["content"]
+        remember = next(tool for tool in captured["tools"] if tool.name == "remember")
+        saved = json.loads(remember.invoke({"key": "build", "title": "构建", "content": "Selected project notes", "source": "project:build"}))
+        assert saved["path"] == "/workspace/.agent-memory/build.md"
+        assert "Selected project notes" in backend.read(saved["path"]).file_data["content"]
+        assert not (default / ".agent-memory").exists()
     finally:
         runtime.invalidate_agents(session["id"])
 
 
-def test_user_memory_preserved_across_workspaces_and_isolated_by_user(tmp_path, monkeypatch):
-    from app.agent.prompt import memory_sources, memory_file_path
-    monkeypatch.setenv("HARNESS_WORKSPACE",str(tmp_path/"users"))
+def test_selected_memory_preserved_and_scoped(tmp_path):
+    from app.agent.prompt import memory_sources
     first=tmp_path/"first";second=tmp_path/"second"
     first.mkdir();second.mkdir()
     memory_sources("user",workspace=first)
-    path=memory_file_path("user")
-    path.write_text("USER MEMORY",encoding="utf-8")
+    (first/"Agent.md").write_text("PROJECT ONE MEMORY",encoding="utf-8")
     memory_sources("user",workspace=first)
     memory_sources("user",workspace=second)
-    assert memory_file_path("user",workspace=second)==path
-    assert path.read_text(encoding="utf-8")=="USER MEMORY"
-    assert not (first/"Agent.md").exists() and not (second/"Agent.md").exists()
-    memory_sources("other",workspace=first)
-    assert "USER MEMORY" not in memory_file_path("other").read_text(encoding="utf-8")
+    assert (first/"Agent.md").read_text(encoding="utf-8")=="PROJECT ONE MEMORY"
+    assert "PROJECT ONE" not in (second/"Agent.md").read_text(encoding="utf-8")
 
 
-def test_memory_absent_during_history_is_not_created(tmp_path,monkeypatch):
-    from app.agent.prompt import memory_sources,build_system_prompt,memory_file_path
-    monkeypatch.setenv("HARNESS_WORKSPACE",str(tmp_path/"users"))
+def test_memory_absent_during_history_is_not_created(tmp_path):
+    from app.agent.prompt import memory_sources,build_system_prompt
     assert memory_sources("user",workspace=tmp_path,create=False)==[]
     assert not (tmp_path/"Agent.md").exists()
-    assert not memory_file_path("user").exists()
     text=build_system_prompt(workspace=tmp_path,memory_available=False)
-    assert "当前用户没有可加载" in text
+    assert "当前工作区没有可加载" in text
     assert "已在启动时加载" not in text
 
 
@@ -432,14 +422,10 @@ def test_real_memory_loading_and_old_empty_checkpoint(tmp_path,monkeypatch,cache
     class Model(FakeMessagesListChatModel):
         def bind_tools(self,tools,**kwargs):return self
     project=tmp_path/"project";project.mkdir()
-    monkeypatch.setenv("HARNESS_WORKSPACE",str(tmp_path/"users"))
-    from app.agent.prompt import ensure_memory_file
-    memory=ensure_memory_file("user")
-    memory.write_text("PERSISTENT USER MEMORY",encoding="utf-8")
-    (project/"Agent.md").write_text("PROJECT FILE MUST NOT LOAD",encoding="utf-8")
+    (project/"Agent.md").write_text("CURRENT PROJECT MEMORY",encoding="utf-8")
     monkeypatch.setattr(settings,"harness_machine_access",False)
     monkeypatch.setattr(settings,"sandbox_enabled",False)
-    backend=build_main_backend(session_key="memory-test",workspace=project,mode="sandbox",memory_root=memory.parent)
+    backend=build_main_backend(session_key="memory-test",workspace=project,mode="sandbox")
     sources=memory_sources("user",workspace=project)
     from langgraph.checkpoint.memory import InMemorySaver
     g=create_deep_agent(model=Model(responses=[AIMessage(content="ok")]),backend=backend,memory=sources,
@@ -447,17 +433,16 @@ def test_real_memory_loading_and_old_empty_checkpoint(tmp_path,monkeypatch,cache
     async def run():
         config={"configurable":{"thread_id":"memory-test"}}
         if cached_empty:
-            await g.aupdate_state(config,{"memory_contents":{"/workspace/Agent.md":"STALE PROJECT MEMORY"}},as_node="model")
+            await g.aupdate_state(config,{"memory_contents":{}},as_node="model")
         await g.ainvoke({"messages":[{"role":"user","content":"hi"}]},config)
         snapshot=await g.aget_state(config)
-        assert snapshot.values["memory_contents"]=={"/memories/Agent.md":"PERSISTENT USER MEMORY"}
-        memory.write_text("EDITED FROM SETTINGS",encoding="utf-8")
+        assert snapshot.values["memory_contents"]["/workspace/Agent.md"]=="CURRENT PROJECT MEMORY"
+        (project/"Agent.md").write_text("EDITED FROM SETTINGS",encoding="utf-8")
         await g.ainvoke({"messages":[{"role":"user","content":"next turn"}]},config)
         snapshot=await g.aget_state(config)
-        assert snapshot.values["memory_contents"]["/memories/Agent.md"]=="EDITED FROM SETTINGS"
-        memory.write_text("",encoding="utf-8")
+        assert snapshot.values["memory_contents"]["/workspace/Agent.md"]=="EDITED FROM SETTINGS"
+        (project/"Agent.md").write_text("",encoding="utf-8")
         await g.ainvoke({"messages":[{"role":"user","content":"cleared memory"}]},config)
         snapshot=await g.aget_state(config)
-        assert snapshot.values["memory_contents"]["/memories/Agent.md"]==""
-        assert (project/"Agent.md").read_text(encoding="utf-8")=="PROJECT FILE MUST NOT LOAD"
+        assert snapshot.values["memory_contents"]["/workspace/Agent.md"]==""
     asyncio.run(run())
