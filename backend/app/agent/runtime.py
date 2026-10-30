@@ -331,9 +331,8 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
         backend=backend,
         middleware=middlewares + [skills_mw],
         tools=tools,
-        # 长期记忆：Agent.md 每次运行开始时被读入并注入系统提示词，
-        # 智能体可用 edit_file 自行更新它（记录用户偏好等），跨会话生效。
-        # 按工作区加载；同工作区的会话在下一轮自动获取文件的新内容。
+        # 工作区记忆保持会话初始基线，后续变化追加一次内部通知。
+        # 上下文压缩时合并最新快照，避免每次写文件都改变系统提示前缀。
         memory=sources,
         # 访问本机真实文件 → 人工审批中断（deepagents HITL）
         # 热插拔：开 = 返回 interrupt 权限（访问 /mnt/** 需人工同意）；关 = 空列表。
@@ -996,7 +995,7 @@ async def agent_event_stream(session_id: str, agent_input, user_id: str | None =
 
         if (metadata.get("lc_source") == "summarization"
                 or "langchain:internal" in metadata.get("tags", [])
-                or getattr(msg, "additional_kwargs", {}).get("lc_source") == "summarization"):
+                or getattr(msg, "additional_kwargs", {}).get("lc_source") in ("summarization", "workspace_memory")):
             continue
 
         if node not in ("model", "tools"):

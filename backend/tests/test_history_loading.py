@@ -29,6 +29,17 @@ def test_history_reconstructs_graph_messages(monkeypatch):
     assert calls == ["original-session"]
     assert [m["content"] for m in result] == ["原会话问题", "原会话回复"]
 
+
+def test_memory_notices_are_excluded_from_display_archive_and_search():
+    from app.agent.conversation_history import archive_messages, read_messages, search_archive
+    async def check():
+        await archive_messages("memory-notice", [HumanMessage(content="real user", id="u"),
+            HumanMessage(content="INTERNAL_MEMORY_UPDATE", id="notice", additional_kwargs={"lc_source": "workspace_memory"}),
+            AIMessage(content="real answer", id="a")])
+        assert [m.content for m in await read_messages("memory-notice")] == ["real user", "real answer"]
+        assert await search_archive(["memory-notice"], "INTERNAL_MEMORY_UPDATE") == []
+    asyncio.run(check())
+
 def test_offline_graph_reconstructs_delta_messages(monkeypatch, tmp_path):
     from langgraph.checkpoint.memory import InMemorySaver
     from langgraph.store.memory import InMemoryStore

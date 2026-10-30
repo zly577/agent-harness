@@ -436,13 +436,18 @@ def test_real_memory_loading_and_old_empty_checkpoint(tmp_path,monkeypatch,cache
             await g.aupdate_state(config,{"memory_contents":{}},as_node="model")
         await g.ainvoke({"messages":[{"role":"user","content":"hi"}]},config)
         snapshot=await g.aget_state(config)
-        assert snapshot.values["memory_contents"]["/workspace/Agent.md"]=="CURRENT PROJECT MEMORY"
+        baseline = snapshot.values["memory_contents"]
+        assert "CURRENT PROJECT MEMORY" in baseline["/workspace/Agent.md"]
         (project/"Agent.md").write_text("EDITED FROM SETTINGS",encoding="utf-8")
         await g.ainvoke({"messages":[{"role":"user","content":"next turn"}]},config)
         snapshot=await g.aget_state(config)
-        assert snapshot.values["memory_contents"]["/workspace/Agent.md"]=="EDITED FROM SETTINGS"
+        assert snapshot.values["memory_contents"]==baseline
+        notices = [m for m in snapshot.values["messages"] if m.additional_kwargs.get("lc_source") == "workspace_memory"]
+        assert "EDITED FROM SETTINGS" in notices[-1].content
         (project/"Agent.md").write_text("",encoding="utf-8")
         await g.ainvoke({"messages":[{"role":"user","content":"cleared memory"}]},config)
         snapshot=await g.aget_state(config)
-        assert snapshot.values["memory_contents"]["/workspace/Agent.md"]==""
+        assert snapshot.values["memory_contents"]==baseline
+        notices = [m for m in snapshot.values["messages"] if m.additional_kwargs.get("lc_source") == "workspace_memory"]
+        assert "清空" in notices[-1].content
     asyncio.run(run())

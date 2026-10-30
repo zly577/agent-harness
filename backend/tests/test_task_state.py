@@ -58,3 +58,12 @@ def test_user_corrections_do_not_rotate_back_to_older_messages():
         assert [m["id"] for m in state["task_user_updates"]] == ["0", "7", "8", "9", "10", "11"]
         assert await task.abefore_model(state, None) is None
     asyncio.run(run())
+
+
+def test_memory_notice_does_not_become_a_user_instruction_in_system_prompt():
+    task = TaskStateMiddleware()
+    async def check():
+        update = await task.abefore_model({"messages": [HumanMessage(content="actual task", id="user"),
+            HumanMessage(content="disk memory change", id="memory", additional_kwargs={"lc_source": "workspace_memory"})]}, None)
+        assert update["task_user_updates"] == [{"id": "user", "text": "actual task", "truncated": False}]
+    asyncio.run(check())

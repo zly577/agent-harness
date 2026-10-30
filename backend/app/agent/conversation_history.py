@@ -17,6 +17,10 @@ def is_internal_summary(message):
     return getattr(message, "additional_kwargs", {}).get("lc_source") == "summarization"
 
 
+def is_internal_message(message):
+    return getattr(message, "additional_kwargs", {}).get("lc_source") in ("summarization", "workspace_memory")
+
+
 async def _connection():
     global _ready_conn, _fts_available
     conn = await _ensure_conn()
@@ -141,7 +145,7 @@ async def read_archive(session_ids, message_ids, current_session, offset=0, max_
 async def archive_messages(session_id, messages, *, partial=False):
     rows = []
     for message in messages:
-        if isinstance(message, RemoveMessage) or is_internal_summary(message):
+        if isinstance(message, RemoveMessage) or is_internal_message(message):
             continue
         payload = json.dumps(message_to_dict(message), ensure_ascii=False)
         # Graph messages normally have IDs; the hash supports old ID-less data.
@@ -221,7 +225,7 @@ async def archive_stream(source, session_id):
             namespace, message, metadata = normalize_chunk(chunk)
             if (metadata.get("langgraph_node") == "model"
                     and not parse_subagent_namespace(namespace)
-                    and not is_internal_summary(message)
+                    and not is_internal_message(message)
                     and metadata.get("lc_source") != "summarization"
                     and "langchain:internal" not in metadata.get("tags", [])
                     and isinstance(message, AIMessage) and message.id):

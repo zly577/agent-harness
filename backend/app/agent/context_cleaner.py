@@ -56,7 +56,7 @@ class ContextCleaner:
             # handles its supported media formats; never flatten binary into text.
             if not isinstance(message.content, str) or not message.content:
                 continue
-            if getattr(message, "additional_kwargs", {}).get("lc_source") == "summarization":
+            if getattr(message, "additional_kwargs", {}).get("lc_source") in ("summarization", "workspace_memory"):
                 continue
             large = len(message.content) > self.tool_tokens * 2
             old_tool = pressure and index < len(messages) - 6 and len(message.content) > 800

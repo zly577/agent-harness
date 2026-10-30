@@ -182,6 +182,9 @@ class EnhancedSummarizationMiddleware(SummarizationMiddleware):
 
     async def _acreate_summary(self, messages):
         started = time.monotonic()
+        current = self._request_context.get()
+        if current is not None:
+            current["memory_compacted"] = True
         try:
             return await super()._acreate_summary(messages)
         finally:
@@ -197,8 +200,7 @@ class EnhancedSummarizationMiddleware(SummarizationMiddleware):
         result = super()._count_tokens(messages, system_message, tools)
         return int(result * (current["calibration"] if current else 1))
 
-    async def awrap_model_call(self, request, handler):
-        budget = resolve_budget(request.model, self.preferences, request.model_settings)
+    def _project_request(self, request):
         projected = request
         # These inner middleware only format copies of the request. Include their
         # memory/skill prompt fragments in the budget without injecting them twice.
@@ -212,6 +214,11 @@ class EnhancedSummarizationMiddleware(SummarizationMiddleware):
             if required - available:
                 continue
             projected = middleware.modify_request(projected)
+        return projected
+
+    async def awrap_model_call(self, request, handler):
+        budget = resolve_budget(request.model, self.preferences, request.model_settings)
+        projected = self._project_request(request)
         prior = request.state.get("context_usage") or {}
         current = {"system_message": projected.system_message,
                    "tools": projected.tools,
@@ -227,8 +234,14 @@ class EnhancedSummarizationMiddleware(SummarizationMiddleware):
                                                          cutoff=event.get("cutoff_index", 0))
             request = request.override(messages=cleaned)
             sent = {}
+            memory_update = {}
 
             async def measured(next_request):
+                from app.agent.workspace_memory import prepare_memory_request
+                next_request, rebased = prepare_memory_request(next_request, compacted=current.get("memory_compacted", False))
+                memory_update.update(rebased)
+                projected = self._project_request(next_request)
+                current.update(system_message=projected.system_message, tools=projected.tools)
                 sent["estimate"] = self._count_tokens(next_request.messages, next_request.system_message, next_request.tools)
                 if sent["estimate"] > budget.input_limit:
                     raise ValueError("上下文仍超过输入预算：请缩小工具定义、常驻记忆或单条输入，或配置正确的模型窗口")
@@ -240,6 +253,7 @@ class EnhancedSummarizationMiddleware(SummarizationMiddleware):
                            if getattr(m, "usage_metadata", None)), 0)
             update = dict(response.command.update or {}) if isinstance(response, ExtendedModelResponse) and response.command else {}
             compacted = "_summarization_event" in update
+            update.update(memory_update)
             raw_estimate = max(1, sent["estimate"] / current["calibration"])
             metrics = {"window": budget.window, "source": budget.source, "input_limit": budget.input_limit,
                        "trigger": budget.trigger, "estimated_before": before,

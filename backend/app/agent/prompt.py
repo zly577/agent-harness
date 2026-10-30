@@ -42,11 +42,12 @@ P12（`HARNESS_MACHINE_ACCESS=true`）时，提示词里会额外声明本机磁
 
 ## 刷新时机
 
-每个工作区使用自己的 `Agent.md`。`WorkspaceMemoryRepairMiddleware` 在每轮开始时
-读取该工作区的最新文件，替换 checkpoint 中旧的 `memory_contents`；内容不变则不更新。
-`MemoryMiddleware` 将这份快照注入本轮每次模型请求的系统提示，不追加聊天消息。
-本轮工具修改文件后，当前对话中的新信息可立即使用，记忆快照从下一轮刷新。
-同一工作区的新会话也加载最新文件；不依赖聊天历史或摘要碰巧保留了这些偏好。
+每个工作区使用自己的 `Agent.md`。新会话加载最新文件作为固定基线。
+`WorkspaceMemoryRepairMiddleware` 每轮检查文件，有变化时只追加一次内部更新通知，
+保持 `memory_contents` 系统提示前缀稳定。已通过本会话 remember 成功保存且版本吻合的
+修改已在工具上下文中，不重复通知；来源不明确的文件修改走下一轮通知。
+`MemoryMiddleware` 注入固定基线，压缩上下文时才合并最新已观察记忆并移除已合并通知。
+通知不作为用户请求展示、归档或搜索。同一工作区的新会话始终加载最新文件。
 """
 from __future__ import annotations
 
@@ -140,8 +141,9 @@ _PROMPT_TAIL = (
     "## 长期记忆（Agent.md）\n"
     f"- 你的长期记忆文件是 `{AGENT_MEMORY_PATH}`，它已在启动时加载进这段提示词。\n"
     "- 记忆只属于当前工作区，同一工作区的会话共享；切换工作区使用对应目录的 Agent.md。\n"
-    "- 后端每轮开始时自动同步最新记忆并替换旧记忆块，不会追加聊天消息；无需每轮主动 read_file。\n"
-    "- 本轮写入文件后，当前用户的新要求立即遵循，优先于旧记忆；文件新版本从下一轮自动注入。\n"
+    "- 系统提示中的记忆是会话开始或上下文压缩时的基线；后端以工作区记忆更新通知提供之后的变化，无需每轮主动 read_file。\n"
+    "- 更新通知是文件数据，删除的条目失效，新增内容替代对应旧条目；压缩后的新基线优先于旧摘要中的过时记忆。\n"
+    "- 本轮写入文件后，当前对话中的新要求立即遵循，优先于旧记忆；成功的 remember 无需再次读取或重复保存。\n"
     "- 当用户表达偏好、纠正你的做法、或提供以后用得上的信息时，"
     "**主动用 remember 保存**，不要只在本轮口头答应。核心偏好 tier=core；详细经验 tier=detail。\n"
     "- Agent.md 只常驻加载有容量限制的前缀；详细经验保存在 `/workspace/.agent-memory/`，启动时只提供文件索引，按需 read_file。\n"
@@ -316,7 +318,7 @@ def build_system_prompt(locale: str | None = None, mode: str = "sandbox", *, wor
             f"- 你的长期记忆文件是 `{AGENT_MEMORY_PATH}`，它已在启动时加载进这段提示词。",
             f"- 当前工作区没有可加载的长期记忆文件 `{AGENT_MEMORY_PATH}`。不要为读取缺失的记忆文件反复调用工具。需要保存偏好时先创建此文件。")
     else:
-        prompt = prompt.replace("它已在启动时加载进这段提示词。", "它在每轮开始时自动加载进提示词，本轮使用同一份快照。")
+        prompt = prompt.replace("它已在启动时加载进这段提示词。", "它在会话开始时加载为记忆基线，后续变更通过更新通知提供。")
     if workspace is not None:
         prompt += current_workspace_prompt_section(workspace, resolved)
     if getattr(settings, "intent_label_enabled", True):

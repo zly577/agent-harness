@@ -18,7 +18,7 @@
           <h3>长期记忆</h3>
           <p class="pv-caption">当前工作区：{{ workspaceName }} · Agent.md</p>
           <p class="pv-caption">保存回答习惯、项目约定和工作偏好。同一工作区的会话共享记忆，保存后从下一轮对话生效。</p>
-          <p class="pv-caption">每轮开始自动同步本工作区的最新 Agent.md；已有会话和新会话均会生效。正在生成的回答使用本轮开始时的记忆。</p>
+          <p class="pv-caption">新会话加载最新 Agent.md；已有会话从下一轮接收一次变更通知，压缩上下文时合并最新记忆。正在生成的回答不会中途刷新记忆。</p>
           <p v-if="memory" class="pv-caption">每轮常驻加载前 {{ memory.core_limit?.toLocaleString() }} 字；详细经验保存在 {{ memory.detail_directory }}，按需读取。</p>
           <p v-if="memory && memoryContent.length > memory.core_limit" class="pv-result bad" role="status">当前内容超过常驻容量，超出部分仍保存在文件中。请把详细记录整理到按需记忆目录，核心偏好保持简短。</p>
           <p v-if="memoryError" class="pv-result bad" role="alert">{{ memoryError }}</p>

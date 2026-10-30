@@ -68,7 +68,7 @@ class TaskStateMiddleware(AgentMiddleware):
         previous = state.get("task_user_updates") or []
         updates, ids = [], set()
         for message in state.get("messages", []):
-            if not isinstance(message, HumanMessage) or message.additional_kwargs.get("lc_source") == "summarization":
+            if not isinstance(message, HumanMessage) or message.additional_kwargs.get("lc_source") in ("summarization", "workspace_memory"):
                 continue
             key = message.id
             if not key or key in ids:
