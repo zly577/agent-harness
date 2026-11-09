@@ -159,6 +159,7 @@ class _Status:
     status: str
     at: datetime
     reason: str = ""
+    source_run: SessionRun | None = None
 
 
 def _save_updates(updates: list[_Status]) -> None:
@@ -238,7 +239,7 @@ class Scheduler:
         if status == "stopped" and self._stopping:
             status, reason = "interrupted", "服务已停止，本次执行中断"
         at = datetime.fromtimestamp(run.finished_at or run.started_at, UTC).replace(tzinfo=None)
-        self._updates.append(_Status(run.session_id, run.user_id, status, at, reason))
+        self._updates.append(_Status(run.session_id, run.user_id, status, at, reason, source_run=run))
         self._wake.set()
 
     async def _read_pending(self, session_id: str, owner_id: str | None) -> str | None:
@@ -258,7 +259,7 @@ class Scheduler:
             if item.status == "failed":
                 pending = await self._read_pending(item.session_id, item.owner_id)
                 current = run_manager.current(item.session_id)
-                if current and datetime.fromtimestamp(current.started_at, UTC).replace(tzinfo=None) > item.at:
+                if current is not None and current is not item.source_run:
                     # The owner retried while we were reading the checkpoint.
                     continue
                 if pending:
