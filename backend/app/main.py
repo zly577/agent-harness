@@ -136,15 +136,23 @@ async def lifespan(app: FastAPI):
         logger.exception("数据库迁移失败，拒绝启动")
         raise RuntimeError(f"数据库迁移失败：{type(e).__name__}: {e}") from e
 
+    from app.agent.runner import run_manager
     from app.db.bootstrap import run_bootstrap
+    from app.services.scheduler import Scheduler
 
     run_bootstrap()
 
+    scheduler = Scheduler()
     try:
+        await scheduler.start()
         yield
     finally:
-        from app.agent.runner import run_manager
-        if await run_manager.aclose() is False:
+        await scheduler.stop_dispatching()
+        try:
+            runs_closed = await run_manager.aclose()
+        finally:
+            await scheduler.close()
+        if runs_closed is False:
             raise RuntimeError("后台任务仍在停止，未关闭存储连接；请检查仍在运行的命令")
         await _close_agent_storage()
 

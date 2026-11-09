@@ -166,10 +166,10 @@ class SandboxRegistry:
         return bool(getattr(settings, "sandbox_enabled", False))
 
     # ---- 获取连接 ----
-    def get(self, session_key: str, path_prefix: str | None = None) -> _SandboxEntry:
+    def get(self, session_key: str, path_prefix: str | None = None, *, allow_machine_mounts: bool = True) -> _SandboxEntry:
         """取（或建）该会话的沙箱连接；失败直接抛异常，由上层转成工具错误信息。"""
         key = session_key or "default"
-        wanted = sandbox_mount_key()
+        wanted = sandbox_mount_key() if allow_machine_mounts else ""
         with self._lock:
             entry = self._entries.get(key)
             if entry is not None and entry.volumes_key == wanted and self._alive(entry):
@@ -185,7 +185,8 @@ class SandboxRegistry:
                         wanted or "(无挂载)",
                     )
                 self._entries.pop(key, None)
-            entry = self._create(key, path_prefix)
+            entry = (self._create(key, path_prefix) if allow_machine_mounts
+                     else self._create(key, path_prefix, allow_machine_mounts=False))
             self._entries[key] = entry
             return entry
 
@@ -197,7 +198,7 @@ class SandboxRegistry:
             return False
 
     @staticmethod
-    def _create(key: str, path_prefix: str | None = None) -> _SandboxEntry:
+    def _create(key: str, path_prefix: str | None = None, *, allow_machine_mounts: bool = True) -> _SandboxEntry:
         """调用 opensandbox SDK 创建容器。
 
         延迟 import：沙箱未启用时不需要装 opensandbox 包，也不拖慢启动。
@@ -238,7 +239,7 @@ class SandboxRegistry:
         }
 
         # 方案 A：把本机挂载点只读挂进容器，容器内路径与模型侧 /mnt/<名> 一致。
-        volumes = _build_sandbox_volumes()
+        volumes = _build_sandbox_volumes() if allow_machine_mounts else []
         try:
             client = SandboxSync.create(
                 settings.sandbox_image, volumes=volumes or None, **create_kwargs
@@ -322,9 +323,10 @@ class OpenSandboxBackend(SandboxBackendProtocol):
     不浪费远程往返。
     """
 
-    def __init__(self, session_key: str, path_prefix: str | None = None) -> None:
+    def __init__(self, session_key: str, path_prefix: str | None = None, *, allow_machine_mounts: bool = True) -> None:
         self._session_key = session_key or "default"
         self._path_prefix = path_prefix
+        self._allow_machine_mounts = allow_machine_mounts
 
     # ---- 必需：唯一标识 ----
     @property
@@ -334,6 +336,8 @@ class OpenSandboxBackend(SandboxBackendProtocol):
 
     @property
     def _entry(self) -> _SandboxEntry:
+        if not self._allow_machine_mounts:
+            return registry.get(self._session_key, self._path_prefix, allow_machine_mounts=False)
         return registry.get(self._session_key, self._path_prefix)
 
     # ---- 必需：执行 ----
@@ -539,13 +543,13 @@ class HybridDefaultBackend(WorkspacePrefixMixin, FilesystemBackend, SandboxBacke
         sync_before_execute: bool = True,
         sync_after_execute: bool = True,
         prefix: str | None = None,
+        allow_machine_mounts: bool = True,
     ) -> None:
         super().__init__(root_dir=root_dir, virtual_mode=virtual_mode)
-        self._session_key = session_key or "default"
         self._sync_before = sync_before_execute
         self._sync_after = sync_after_execute
-        self._path_prefix = prefix
-        self._sandbox = OpenSandboxBackend(session_key, path_prefix=prefix)
+        self._sandbox = OpenSandboxBackend(session_key, path_prefix=prefix, allow_machine_mounts=allow_machine_mounts)
+        self._allow_machine_mounts = allow_machine_mounts
         self._prefix = PathMapper(prefix) if prefix else None
 
     # 路径层（_strip_prefix / ls / read / write / edit / delete / grep / glob 及其
@@ -595,7 +599,7 @@ class HybridDefaultBackend(WorkspacePrefixMixin, FilesystemBackend, SandboxBacke
 
     # ---- 同步实现 ----
     def _entry(self) -> _SandboxEntry:
-        return registry.get(self._session_key, self._path_prefix)
+        return self._sandbox._entry
 
     def local_manifest(self) -> dict[str, tuple[int, int]]:
         """扫描本地根目录，返回 {虚拟路径: (mtime_ns, size)}。"""
@@ -622,7 +626,10 @@ class HybridDefaultBackend(WorkspacePrefixMixin, FilesystemBackend, SandboxBacke
         （前缀在 `_strip_prefix` 里已被折掉），所以这里也要剥掉后缀前缀，
         否则会写成 `<root>/workspace/x`。
         """
-        return Path(self.cwd) / self._strip_prefix(virtual_path).lstrip("/")
+        if not self._allow_machine_mounts:
+            # Sync must enforce the same workspace boundary as direct file tools.
+            return self._resolve_path(virtual_path)
+        return self.cwd / self._strip_prefix(virtual_path).lstrip("/")
 
     def push_local_changes(self) -> list[str]:
         """把本地新增/修改过的文件推到沙箱，返回推送的虚拟路径列表。"""
@@ -635,7 +642,7 @@ class HybridDefaultBackend(WorkspacePrefixMixin, FilesystemBackend, SandboxBacke
         for virt in changed:
             try:
                 data = self._local_path(virt).read_bytes()
-            except OSError:
+            except (OSError, ValueError, RuntimeError):
                 continue
             if total + len(data) > self.SYNC_MAX_BYTES:
                 logger.warning("[sandbox] push skipped %s (sync size cap reached)", virt)
@@ -676,12 +683,12 @@ class HybridDefaultBackend(WorkspacePrefixMixin, FilesystemBackend, SandboxBacke
             for resp in responses:
                 if resp.error or resp.content is None:
                     continue
-                target = self._local_path(resp.path)
                 try:
+                    target = self._local_path(resp.path)
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_bytes(resp.content)
                     written.append(resp.path)
-                except OSError as e:
+                except (OSError, ValueError, RuntimeError) as e:
                     logger.warning("[sandbox] pull %s failed: %s", resp.path, e)
 
         # 拉回后本地多出了这些文件 → 刷新两侧基线，避免下一轮把刚拉回的产物又原样推回沙箱
@@ -1070,6 +1077,7 @@ def build_hybrid_backend(
     prefix: str | None = DEFAULT_PREFIX,
     sync_before_execute: bool = True,
     sync_after_execute: bool = True,
+    allow_machine_mounts: bool = True,
 ) -> CompositeBackend:
     """构建「本地磁盘读写 + OpenSandbox 执行」的混合 backend。
 
@@ -1097,6 +1105,7 @@ def build_hybrid_backend(
         sync_before_execute=sync_before_execute,
         sync_after_execute=sync_after_execute,
         prefix=prefix,
+        allow_machine_mounts=allow_machine_mounts,
     )
     return CompositeBackend(default=default, routes=dict(routes or {}))
 

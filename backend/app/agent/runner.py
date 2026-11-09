@@ -124,8 +124,20 @@ class RunManager:
 
     def __init__(self) -> None:
         self._runs: dict[str, SessionRun] = {}
+        self._status_observer: Callable[[SessionRun], None] | None = None
         # start() performs its check and reservation without an await, so they
         # are atomic on the application's single event loop.
+
+    def set_status_observer(self, observer: Callable[[SessionRun], None] | None) -> None:
+        """Observe starts and terminal statuses on the runner's event loop."""
+        self._status_observer = observer
+
+    def _notify_status(self, run: SessionRun) -> None:
+        if self._status_observer is not None:
+            try:
+                self._status_observer(run)
+            except Exception:
+                logger.exception("[runner] 会话 %s 的运行状态通知失败", run.session_id)
 
     # ---------- 查询 ----------
 
@@ -176,6 +188,7 @@ class RunManager:
         self._runs[session_id] = run
         run.task = asyncio.create_task(self._drive(run, agent_input, _runtime, event_stream))
         run.task.add_done_callback(lambda task: self._task_done(run, task))
+        self._notify_status(run)
         logger.info("[runner] 会话 %s 开始新一轮（后台运行，与连接解耦）", session_id)
         return run
 
@@ -207,6 +220,7 @@ class RunManager:
 
     def _finish(self, run: SessionRun) -> None:
         run.finished_at = time.time()
+        self._notify_status(run)
         self._close(run)
         if not run.suspended:
             run.expiry_handle = asyncio.get_running_loop().call_later(KEEP_SECONDS, self._expire, run)

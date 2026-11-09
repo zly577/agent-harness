@@ -25,6 +25,12 @@
         :workspace-id="activeWorkspaceId" :workspace-name="selectedWorkspace.title"
         @close="showSettings = false" @password-changed="onPasswordChanged" />
     </Transition>
+    <Transition name="settings-dialog">
+      <SchedulesView v-if="showSchedules" :workspace-id="activeWorkspaceId" :workspaces="workspaces"
+        :provider-id="scheduledSession ? scheduledSession.provider_id || '' : chosenProvider" :providers="providers"
+        :opening-session="scheduleSessionOpening"
+        @close="showSchedules = false" @open-session="openScheduledSession" />
+    </Transition>
     <ConfirmDialog :confirmation="confirmation" @resolve="resolveConfirmation" />
     <!-- 轻量提示条 -->
     <div v-if="toast.text" class="toast" :class="toast.kind">{{ toast.text }}</div>
@@ -44,6 +50,10 @@
         <button class="sb-new" :disabled="creatingWorkspace" @click="createWorkspace">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h5l2 2h5v7H2z" /></svg>
           <span>{{ creatingWorkspace ? '请选择目录…' : '新建工作区' }}</span>
+        </button>
+        <button class="sb-new" aria-haspopup="dialog" @click="showSchedules = true">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5" /><path d="M8 5v3l2 1.5" /></svg>
+          <span>定时任务</span>
         </button>
       </div>
 
@@ -124,8 +134,8 @@
           <select
             class="model-select"
             :class="{ unset: !chosenProvider }"
-            :value="chosenProvider"
-            :disabled="!providers.length"
+            :value="scheduledSession ? scheduledSession.provider_id || '' : chosenProvider"
+            :disabled="!!scheduledSession || !providers.length"
             :title="modelSelectTitle"
             aria-label="选择模型"
             @change="onProviderChange($event.target.value)"
@@ -136,7 +146,9 @@
               而不是悄悄用一个"默认"跑起来。
               disabled 的占位项负责把"还没选"这个状态显示出来。
             -->
-            <option v-if="!chosenProvider" value="" disabled>请选择模型</option>
+            <option v-if="scheduledSession && !scheduledSession.provider_id" value="">跟随我的默认模型</option>
+            <option v-else-if="scheduledSession && !providers.some(p => p.id === scheduledSession.provider_id)" :value="scheduledSession.provider_id">模型已不可用</option>
+            <option v-else-if="!chosenProvider" value="" disabled>请选择模型</option>
             <option v-for="p in providers" :key="p.id" :value="p.id">
               {{ p.name || p.model }}（{{ p.model }}）
             </option>
@@ -167,10 +179,10 @@
           <button
             class="tbtn switchable"
             :class="{ danger: accessFull }"
-            :disabled="accessBusy || (!accessFull && !accessAllowFull)"
+            :disabled="!!scheduledSession || accessBusy || (!accessFull && !accessAllowFull)"
             :aria-pressed="accessFull"
             :aria-busy="accessBusy"
-            :title="accessFull
+            :title="scheduledSession ? '定时任务会话固定使用沙箱权限' : accessFull
               ? '完全访问：可修改已挂载磁盘，命令由后端 LocalShell 执行；不依赖 OpenSandbox。'
               : '默认模式：工作区可读写，已挂载磁盘只读；代码执行需要 OpenSandbox。'"
             @click="toggleAccessMode"
@@ -180,11 +192,11 @@
           </button>
           <button
             class="tbtn switchable"
-            :class="{ off: !hitlOn || accessFull }"
-            :disabled="hitlBusy"
-            :aria-pressed="hitlOn && !accessFull"
+            :class="{ off: !effectiveHitl || accessFull }"
+            :disabled="!!scheduledSession || hitlBusy"
+            :aria-pressed="effectiveHitl && !accessFull"
             :aria-busy="hitlBusy"
-            :title="accessFull
+            :title="scheduledSession ? '定时任务执行命令前需要人工审批' : accessFull
               ? '完全访问模式下不弹审批，这个开关暂时不生效（切回沙箱内后恢复）'
               : (hitlOn
                 ? '人工介入已开启：访问本机文件（/mnt 下的真实文件）会先弹窗等你同意'
@@ -192,7 +204,7 @@
             @click="toggleHitlBtn"
           >
             <span class="tbtn-dot"></span>
-            <span>{{ hitlBusy ? '切换中…' : (hitlOn ? '需要审批' : '自动执行') }}</span>
+            <span>{{ hitlBusy ? '切换中…' : (effectiveHitl ? '需要审批' : '自动执行') }}</span>
           </button>
           <button
             class="tbtn switchable"
@@ -799,7 +811,11 @@
             <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14M7 3v4M13 8v4M8 13v4" /></svg>
             <span>设置</span>
           </button>
-        <p class="disclaimer">{{ accessFull
+          <button class="settings-entry mobile-settings" aria-haspopup="dialog" @click="showSchedules = true">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5" /><path d="M8 5v3l2 1.5" /></svg>
+            <span>定时任务</span>
+          </button>
+        <p class="disclaimer">{{ scheduledSession ? '定时任务在沙箱中运行，执行命令前需要审批。' : accessFull
           ? '完全访问：可修改已挂载磁盘；LocalShell 在后端所在环境执行命令。'
           : '默认模式：工作区可读写，已挂载磁盘只读；读磁盘时按审批设置确认。' }}</p>
         </div>
@@ -843,6 +859,7 @@ import AuthView from './AuthView.vue'
 import ProvidersView from './ProvidersView.vue'
 import McpView from './McpView.vue'
 import SettingsView from './SettingsView.vue'
+import SchedulesView from './SchedulesView.vue'
 import DialogOverlay from './DialogOverlay.vue'
 import ConfirmDialog from './ConfirmDialog.vue'
 import { provideConfirmation } from './composables/useConfirmation'
@@ -866,7 +883,7 @@ function formatTime() {
 }
 
 export default {
-  components: { ToolArguments, TaskPlan, AuthView, ProvidersView, McpView, SettingsView, DialogOverlay, ConfirmDialog },
+  components: { ToolArguments, TaskPlan, AuthView, ProvidersView, McpView, SettingsView, SchedulesView, DialogOverlay, ConfirmDialog },
   setup() {
     const { confirmation, confirm, resolveConfirmation } = provideConfirmation()
     // ===== 登录态=====
@@ -900,6 +917,8 @@ export default {
     // 挂载时才去拉列表，切账号/登出时组件整个卸载，不会残留上一个用户的数据。
     const showMcp = ref(false)
     const showSettings = ref(false)
+    const showSchedules = ref(false)
+    const scheduleSessionOpening = ref(false)
     const chosenProvider = ref('')
     // 退出登录确认框是否显示
     const logoutConfirm = ref(false)
@@ -908,6 +927,7 @@ export default {
 
     /** 选择器 hover 提示（不再有"跟随默认"，所以只在"未选/已选"两种状态间区分）。 */
     const modelSelectTitle = computed(() => {
+      if (scheduledSession.value) return '定时任务会话使用任务配置的模型'
       if (!providers.value.length) {
         return '还没有配置模型，点右侧「模型」添加一个 —— 不配置就没有模型可用'
       }
@@ -999,6 +1019,11 @@ export default {
 
     const sessionId = ref(null)
     const sessions = ref([])
+    let sessionListRequest = 0
+    const scheduledSession = computed(() => {
+      const session = sessions.value.find(item => item.id === sessionId.value)
+      return session?.scheduled ? session : null
+    })
     const loadingSessions = ref(false)
     const loadingHistory = ref(false)
     // 新会话不预置任何消息：空状态由欢迎页承担，不在对话流里塞一条自我介绍
@@ -1053,12 +1078,13 @@ export default {
     // 人工介入（HITL）热插拔开关：后端为准，这里只做镜像
     const hitlOn = ref(true)
     const hitlBusy = ref(false)
+    const effectiveHitl = computed(() => !!scheduledSession.value || hitlOn.value)
     // 权限模式。'sandbox' = 默认权限（沙箱内）；'full' = 完全访问（本机 shell）。
     // 同样是后端为准、这里只做镜像；后端存的是内存态，所以每次进入界面都要重新拉。
     const accessMode = ref('sandbox')
     const accessBusy = ref(false)
     const accessAllowFull = ref(true)
-    const accessFull = computed(() => accessMode.value === 'full')
+    const accessFull = computed(() => !scheduledSession.value && accessMode.value === 'full')
     // 轻量提示条（不往对话里塞消息，避免污染会话气泡）
     const toast = reactive({ text: '', kind: 'info' })
     let toastTimer = null
@@ -1252,19 +1278,22 @@ export default {
 
     async function loadSessions() {
       const version = getSessionVersion()
+      const request = ++sessionListRequest
       loadingSessions.value = true
       try {
         const [data, workspaceData] = await Promise.all([apiGet('/api/v1/sessions'), apiGet('/api/v1/workspaces')])
-        if (version !== getSessionVersion()) return
+        if (request !== sessionListRequest || version !== getSessionVersion()) return
         workspaces.value = workspaceData
         const serverList = Array.isArray(data) ? data : []
         // 保留前端乐观创建的临时项（尚未收到真实 session_id 的新会话）
         const tempItems = sessions.value.filter((s) => s._temp || (typeof s.id === 'string' && s.id.startsWith('temp_')))
         sessions.value = [...tempItems, ...serverList]
+        return serverList
       } catch {
         // 忽略网络错误，保留旧列表（401 已由 api 层统一处理为回登录页）
+      } finally {
+        if (request === sessionListRequest && version === getSessionVersion()) loadingSessions.value = false
       }
-      if (version === getSessionVersion()) loadingSessions.value = false
     }
 
     // ===== 与后端运行"重连" =====
@@ -1488,6 +1517,26 @@ export default {
       restorePendingApproval(id)
     }
 
+    async function openScheduledSession(id) {
+      if (scheduleSessionOpening.value) return
+      const version = getSessionVersion()
+      scheduleSessionOpening.value = true
+      try {
+        const sessionList = await loadSessions()
+        if (!showSchedules.value || version !== getSessionVersion()) return
+        const session = sessionList?.find(item => item.id === id)
+        if (!session) {
+          notify('会话无法打开，请刷新后重试。', 'error')
+          return
+        }
+        collapsedWorkspaces[session.workspace_id || 'legacy'] = false
+        showSchedules.value = false
+        await openSession(id)
+      } finally {
+        if (version === getSessionVersion()) scheduleSessionOpening.value = false
+      }
+    }
+
     async function newChat(workspaceId = 'legacy') {
       if (creatingChat.value || loadingHistory.value) return
       const current = sessions.value.find(s => s.id === sessionId.value)
@@ -1636,7 +1685,8 @@ export default {
       // 没有可用的模型就**不要发出去**。
       // 以前会把请求发上去、由后端回一句"尚未配置供应商"，用户还得自己猜去哪儿配；
       // 现在在本地就拦住，并直接把人带到配置界面 —— 输入框内容保持不动，不白打一遍。
-      if (!chosenProvider.value) {
+      const startingProviderId = scheduledSession.value ? null : chosenProvider.value
+      if (!scheduledSession.value && !startingProviderId) {
         notify(
           providers.value.length
             ? '请先选择要使用的模型'
@@ -1758,7 +1808,7 @@ export default {
             assistantMsg.content = `⚠️ ${evt.detail}`
             assistantMsg.error = true
           }
-        }, chosenProvider.value || null, startingWorkspaceId, sentAttachments)
+        }, startingProviderId, startingWorkspaceId, sentAttachments)
       } catch (e) {
         if (e.name === 'StreamDisconnectedError') {
           markConnectionLost(assistantMsg, e)
@@ -1984,6 +2034,7 @@ export default {
      * 正在跑的那一轮不受影响（权限是编译期输入，见 backend/app/agent/access.py）。
      */
     async function toggleAccessMode() {
+      if (scheduledSession.value) return
       const next = accessFull.value ? 'sandbox' : 'full'
       if (next === 'full') {
         const ok = await confirm({
@@ -2016,6 +2067,7 @@ export default {
     }
 
     async function toggleHitl(evt) {
+      if (scheduledSession.value) return
       const next = !!evt?.target?.checked
       // 先把界面切过去（乐观更新）：等接口返回才变的话，标签会"慢半拍"。
       hitlOn.value = next
@@ -2334,6 +2386,8 @@ export default {
       // MCP 工具源弹层也要一起关（同供应商，换账号后不能留着上一个用户的界面）
       showMcp.value = false
       showSettings.value = false
+      showSchedules.value = false
+      scheduleSessionOpening.value = false
     }
 
     /** 凭证失效（任意请求 401）→ 回登录页并说明原因。 */
@@ -2423,6 +2477,10 @@ export default {
       showProviders,
       showMcp,
       showSettings,
+      showSchedules,
+      scheduleSessionOpening,
+      scheduledSession,
+      openScheduledSession,
       onPasswordChanged,
       chosenProvider,
       modelSelectTitle,
@@ -2444,6 +2502,7 @@ export default {
       editClarificationAnswer,
       deciding,
       hitlOn,
+      effectiveHitl,
       hitlBusy,
       toast,
       scroller,
@@ -2458,7 +2517,7 @@ export default {
       argPairs,
       isSessionStreaming,
       // 新版界面
-      workspaceGroups, activeWorkspaceId, selectedWorkspace,
+      workspaces, workspaceGroups, activeWorkspaceId, selectedWorkspace,
       nativeWorkspaceTicket, cancelNativeWorkspace, openBrowserWorkspace,
       creatingWorkspace, workspacePicker, workspaceBrowsing, workspacePickerError, workspaceFolderName, browseWorkspace, confirmWorkspace,
       currentWorkspace,

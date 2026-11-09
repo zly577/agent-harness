@@ -160,7 +160,7 @@ def agent_permissions(session_id: str | None = None, user_id: str | None = None,
 
 
 def hitl_interrupt_on(session_id: str | None = None, user_id: str | None = None,
-                      mode: str | None = None) -> dict | None:
+                      mode: str | None = None, *, scheduled: bool = False) -> dict | None:
     """构建 Agent 时要传的 `interrupt_on`（决定"有没有审批表"）。
 
     有审批规则时：返回 None —— 审批表完全由 `permissions` 生成
@@ -177,16 +177,20 @@ def hitl_interrupt_on(session_id: str | None = None, user_id: str | None = None,
     **空列表**（没有本机路径可审批），所以"空规则 ⇒ 也要挂中间件"这条现在真的会被
     走到 —— 以前总有一条 `/workspace/**` 兜着，不会暴露这个问题。
     """
+    if scheduled:
+        # With no machine routes, the usual file rules have nothing to guard.
+        # Declarative subagents inherit this rule from the parent graph.
+        return {"execute": {"allowed_decisions": ["approve", "reject"]}}
     if _interrupt_rules(session_id, user_id, mode):
         return None
     return {DISABLED_INTERRUPT_KEY: False}
 
 
-def hitl_state(session_id: str | None = None, user_id: str | None = None) -> dict:
+def hitl_state(session_id: str | None = None, user_id: str | None = None, *, scheduled: bool = False) -> dict:
     """给前端/接口看的开关状态。"""
     return {
-        "enabled": hitl_enabled(session_id, user_id),
-        "scope": "session" if (session_id and session_id in _session_hitl)
+        "enabled": scheduled or hitl_enabled(session_id, user_id),
+        "scope": "session" if (scheduled or session_id in _session_hitl)
                  else ("user" if (user_id and user_id in _user_hitl) else "global"),
         "global_default": _global_hitl,
         "user_overrides": dict(_user_hitl),
