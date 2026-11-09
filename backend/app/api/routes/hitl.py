@@ -24,7 +24,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session as OrmSession
 
-from app.agent import permissions, runtime
+from app.agent import access, permissions, runtime
 from app.api.deps import get_current_user, owned_session_or_404
 from app.db.models import User
 from app.db.session import get_db
@@ -48,7 +48,8 @@ async def get_hitl_config(
     """
     if session_id:
         owned_session_or_404(db, session_id, user)
-    return HitlConfigResponse(**permissions.hitl_state(session_id, user.id))
+    scheduled = access.is_scheduled_session(session_id, db)
+    return HitlConfigResponse(**permissions.hitl_state(session_id, user.id, scheduled=scheduled))
 
 
 @router.put("/config", response_model=HitlConfigResponse)
@@ -69,6 +70,10 @@ async def set_hitl_config(
     if req.session_id:
         # 会话级：必须是自己的会话
         owned_session_or_404(db, req.session_id, user)
+        if access.is_scheduled_session(req.session_id, db):
+            if not req.enabled:
+                raise HTTPException(status_code=409, detail="定时任务会话必须保留人工审批")
+            return HitlConfigResponse(**permissions.hitl_state(req.session_id, user.id, scheduled=True))
         scope = "session"
     elif req.scope == "global":
         # 全局默认：仅管理员（普通用户请求这一层会被拒绝，而不是悄悄降级 ——

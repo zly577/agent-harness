@@ -58,6 +58,7 @@ pywin32>=311 ; sys_platform == "win32"
 # ===== 业务数据（MySQL 8.0）=====
 sqlalchemy>=2.0.51               # ORM；config.mysql_url 是 mysql+pymysql://
 pymysql>=1.1                     # mysql+pymysql:// 驱动
+tzdata>=2026.2                   # zoneinfo 在没有系统 IANA 时区数据库的环境中使用
 # 若将来迁到 PostgreSQL，换成 psycopg[binary] 并改 MYSQL_URL 的驱动段。
 # （历史清单里的 psycopg2-binary / langchain-community / langchain-ollama /
 #   langchain-google-genai 从未被任何代码 import，已确认移除，勿再加回）

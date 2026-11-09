@@ -28,6 +28,7 @@ from app.api.routes import (
     llm,
     mcp,
     preferences,
+    schedules,
     sessions,
     skills,
 )
@@ -38,6 +39,7 @@ api_router = APIRouter(dependencies=[Depends(get_current_user)])
 api_router.include_router(chat.router)
 api_router.include_router(chat_stream.router)
 api_router.include_router(sessions.router)
+api_router.include_router(schedules.router)
 api_router.include_router(llm.router)
 # MCP 工具源管理（按用户隔离）
 api_router.include_router(mcp.router)

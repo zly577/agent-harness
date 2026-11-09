@@ -31,7 +31,7 @@ from app.agent.middleware import (
 )
 from app.agent.model import build_llm
 from app.agent.permissions import agent_permissions, hitl_interrupt_on
-from app.agent.prompt import build_system_prompt, memory_sources
+from app.agent.prompt import build_system_prompt, memory_sources, scheduled_task_prompt_section
 from app.agent.sandbox import build_main_backend, validate_permissions
 from app.agent.skills import build_skills_middleware, compile_all_skills, seed_skills
 from app.agent.subagent_stream import (
@@ -57,7 +57,7 @@ from app.agent.web_search import web_search
 from app.agent.tool_outcome import classify_tool_result
 from app.core.config import settings
 from app.core.workspace import workspace_for
-from app.db.models import Session as DbSession
+from app.db.models import Session as DbSession, User
 from app.db.session import SessionLocal
 logger = logging.getLogger(__name__)
 
@@ -105,19 +105,28 @@ def session_owner(session_id: str) -> str | None:
     return session_context(session_id)[0]
 
 
-def _resolve_provider_for_agent(user_id: str | None, session_provider_id: str | None):
+def _resolve_provider_for_agent(user_id: str | None, session_provider_id: str | None, *, scheduled: bool = False):
     """解析本次要用的供应商配置（查库 + 解密）。
 
     单独抽出来是为了让单元测试能直接替换它（起一个真实 agent 太重），
     以及让"解析失败"这件事在 get_agent 里只有一处出口。
     """
-    from app.agent.providers import resolve_for_agent
+    from app.agent import providers
 
-    db = SessionLocal()
-    try:
-        return resolve_for_agent(db, user_id, session_provider_id)
-    finally:
-        db.close()
+    with SessionLocal() as db:
+        if scheduled:
+            owner = db.get(User, user_id) if user_id else None
+            if owner is None or not owner.is_active:
+                raise RuntimeError("定时任务的账号已禁用或不存在")
+            if session_provider_id:
+                row = providers.get_owned_provider(db, session_provider_id, owner.id)
+                if row is None or not row.enabled:
+                    raise providers.ProviderNotConfigured("定时任务选定的模型供应商已停用或不可用")
+                try:
+                    return providers.config_from_row(row)
+                except ValueError as exc:
+                    raise providers.ProviderNotConfigured("定时任务选定的模型供应商密钥无法解密") from exc
+        return providers.resolve_for_agent(db, user_id, session_provider_id)
 
 
 def set_session_provider(session_id: str, provider_id: str | None) -> bool:
@@ -182,8 +191,9 @@ def get_main_backend(session_key: str = _MAIN_SESSION, user_id: str | None = Non
     每次构建的成本只是一组对象（实测 get_agent 冷启动里纯 IO 只占 7ms）。
     """
     session_key = session_key or _MAIN_SESSION
+    scheduled = access.is_scheduled_session(session_key)
     cached = _agents.get(session_key)
-    if cached is not None:
+    if cached is not None and not scheduled:
         return cached[1]
     owner = user_id or session_owner(session_key)
     # 尚未跑过对话的会话：先按用户建 backend（本地磁盘目录会立即创建）
@@ -193,7 +203,8 @@ def get_main_backend(session_key: str = _MAIN_SESSION, user_id: str | None = Non
     return build_main_backend(
         session_key=session_key,
         workspace=session_workspace(session_key, owner),
-        mode=access.access_mode(session_key, owner),
+        mode=access.MODE_SANDBOX if scheduled else access.access_mode(session_key, owner),
+        allow_machine_access=not scheduled,
     )
 
 
@@ -207,15 +218,18 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
             传空时用 `session_owner()` 兜底（避免"忘了传"导致工作区串台）。
     """
     session_key = session_key or _MAIN_SESSION
+    scheduled = access.is_scheduled_session(session_key)
     cached = _agents.get(session_key)
-    if cached is not None:
+    if cached is not None and not scheduled:
         return cached[0]
 
     # 一次查库拿到「归属用户」与「会话绑定的供应商」。
     # user_id 显式传进来时以调用方为准（路由已经做过归属校验），
     # 为空才用查库兜底 —— 避免"某处忘了传"导致工作区串到匿名目录。
     db_owner, session_provider_id = session_context(session_key)
-    owner = user_id or db_owner
+    owner = db_owner if scheduled else (user_id or db_owner)
+    if scheduled and (not owner or (user_id is not None and user_id != owner)):
+        raise RuntimeError("定时任务的会话归属无效")
 
     # 按「会话 → 用户默认 → 系统默认」解析出本次要用的模型供应商。
     # 这一步必须在构建 graph **之前**完成：模型是 create_deep_agent 的编译期输入，
@@ -224,7 +238,8 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
         from app.agent.history_model import HistoryModel
         model = HistoryModel()
     else:
-        provider = _resolve_provider_for_agent(owner, session_provider_id)
+        provider = (_resolve_provider_for_agent(owner, session_provider_id, scheduled=True) if scheduled
+                    else _resolve_provider_for_agent(owner, session_provider_id))
         model = build_llm(provider)
 
     # 本地磁盘读写（FilesystemBackend）+ OpenSandbox 执行（execute 工具）
@@ -232,19 +247,20 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
     # 权限模式决定"执行层" —— 默认权限进沙箱，完全访问直接在本机跑。
     #      它同时决定 backend、permissions、interrupt_on 与系统提示词（见下），
     #      所以必须在构建 graph 之前解析出来（和模型一样是编译期输入）。
-    mode = access.access_mode(session_key, owner)
+    mode = access.MODE_SANDBOX if scheduled else access.access_mode(session_key, owner)
     workspace_root = session_workspace(session_key, owner)
     sources = memory_sources(owner, workspace=workspace_root, create=not history_only)
     backend = build_main_backend(
         session_key=session_key,
         workspace=workspace_root,
         mode=mode,
+        allow_machine_access=not scheduled,
     )
 
     # 自检：权限路径（主 Agent + 各子智能体）必须都落在 route 前缀内，
     # 否则 deepagents 的 FilesystemMiddleware 会抛 NotImplementedError（且只在有
     # 子智能体时才暴露）。这里提前把问题说清楚，避免用户看到一句框架内部报错。
-    problems = validate_permissions(backend, mode=mode)
+    problems = validate_permissions(backend, mode=mode, allow_machine_access=not scheduled)
     if problems:
         raise RuntimeError(
             "文件权限配置与沙箱执行后端不兼容：\n  - " + "\n  - ".join(problems)
@@ -301,7 +317,7 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
     # ⚠️ 必须传 owner：MCP 工具是"能读内网/带密钥"的能力，按用户隔离是硬要求，
     #    传空就等于只加载 YAML 那份（老行为），用户自己配的一条都不会出现。
     extra_tools: list = []
-    if settings.mcp_enabled and not history_only:
+    if settings.mcp_enabled and not history_only and not scheduled:
         mcp_tools, mcp_errors = await build_mcp_tools(load_mcp_configs(owner))
         extra_tools.extend(mcp_tools)
         for err in mcp_errors:
@@ -316,6 +332,12 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
     # 工具熔断的"手动恢复"入口（模型可主动调用，见 middleware.ConsecutiveToolFailureMiddleware）
     tools.extend(recovery_tools)
 
+    subagents = load_all_subagents(workspace=None if scheduled else workspace_root, mode=mode, backend=backend,
+                                  context_model=model, preferences=preferences, session_id=session_key, inherited_tools=tools)
+    if scheduled:
+        for spec in subagents:
+            spec["system_prompt"] += scheduled_task_prompt_section()
+
     agent = create_deep_agent(
         # 模型来自「会话 → 用户默认 → 系统默认」解析出的供应商配置。
         # 子智能体（subagents）**不传 model**，因此天然继承这一个实例 ——
@@ -324,7 +346,7 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
         # 框架级规则（稳定）：工具用法 / 委派规范 / 路径约定
         # 完全访问模式下这一段会换成"本机 shell"版本（路径怎么写、
         #      execute 不再进容器），见 prompt.full_access_prompt_section()。
-        system_prompt=build_system_prompt(mode=mode, workspace=workspace_root, memory_available=bool(sources)),
+        system_prompt=build_system_prompt(mode=mode, workspace=workspace_root, memory_available=bool(sources), scheduled=scheduled),
         name="assistant",
         checkpointer=await get_checkpointer(),
         store=await get_store(),
@@ -340,15 +362,14 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
         # 权限是编译期输入，所以模式/开关变化时必须丢掉这个缓存的 agent 重建。
         # 开关按「会话 → 用户 → 全局」三级解析，所以这里要把 owner 传下去，
         #      否则某个用户关掉审批后，他自己的会话依然会弹窗。
-        permissions=agent_permissions(session_key, owner, mode),
+        permissions=[] if scheduled else agent_permissions(session_key, owner, mode),
         # 关闭人工介入（或完全访问）时给一个**永不匹配的占位键**，只为让 deepagents
         # 仍然装配 HumanInTheLoopMiddleware —— **图结构在开关前后必须一致**，否则已挂起的
         # 中断会因为"图里没有 HITL 节点"而读不出来（点同意 → 409 无待审批项），
         # 再打开时又冒出来（弹窗复活）。详见 app/agent/permissions.py 模块注释。
-        interrupt_on=hitl_interrupt_on(session_key, owner, mode),
+        interrupt_on=hitl_interrupt_on(session_key, owner, mode, scheduled=scheduled),
         # 子智能体（YAML 注册表），同一模型；task 工具委派 + 隔离上下文
-        subagents=load_all_subagents(workspace=workspace_root, mode=mode, backend=backend,
-                                    context_model=model, preferences=preferences, session_id=session_key, inherited_tools=tools),
+        subagents=subagents,
     )
     if history_only:
         # Only aget_state may use this graph. Never cache it as an executable
@@ -365,8 +386,11 @@ async def get_agent(session_key: str = _MAIN_SESSION, user_id: str | None = None
             "子智能体若卡住将无限等待。",
             settings.subagent_timeout_seconds,
         )
-    _agents[session_key] = (agent, backend)
-    _agent_owner[session_key] = owner
+    # Model configuration and account validity may have changed while a scheduled
+    # execution was waiting for approval. Recheck on the next executable build.
+    if not scheduled:
+        _agents[session_key] = (agent, backend)
+        _agent_owner[session_key] = owner
     return agent
 
 

@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.agent import runtime
+from app.agent.access import scheduled_session_status
 from app.agent.approvals import read_pending_approval
 from app.agent.attachments import prepare_content, save_refusal, supports_vision
 from app.agent import providers
@@ -13,6 +14,7 @@ from app.agent.runner import RunConflict, SessionRun, run_manager
 from app.api.deps import owned_session_or_404
 from app.db.models import User, Workspace
 from app.schemas.chat import ChatRequest
+from app.services.schedule_rules import ACTIVE_RUN_STATUSES
 
 
 @dataclass(frozen=True)
@@ -46,6 +48,11 @@ async def prepare_chat(req: ChatRequest, user: User, db: Session) -> PreparedCha
     else:
         row = owned_session_or_404(db, req.session_id, user)
         session_id = req.session_id
+        scheduled_status = scheduled_session_status(session_id, db)
+        if scheduled_status in ACTIVE_RUN_STATUSES:
+            raise HTTPException(status_code=409, detail="请先在定时任务会话中处理待审批或补充事项，或等待本次执行结束")
+        if scheduled_status is not None and req.provider_id not in (None, row.provider_id):
+            raise HTTPException(status_code=409, detail="定时任务会话的模型只能在定时任务设置中修改")
         if run_manager.is_running(session_id):
             raise HTTPException(status_code=409, detail="该会话已有一轮回答正在进行中")
         agent = await runtime.get_agent(session_id, user_id=user.id, history_only=True)

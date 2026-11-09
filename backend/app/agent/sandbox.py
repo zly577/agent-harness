@@ -115,6 +115,8 @@ def build_main_backend(
     session_key: str = "default",
     workspace: str | None = None,
     mode: str = MODE_SANDBOX,
+    *,
+    allow_machine_access: bool = True,
 ):
     r"""主智能体的 backend。**同一套文件层 + 两种执行层**。
 
@@ -184,7 +186,7 @@ def build_main_backend(
     这从根上消除了「三套路径命名空间不一致」，且大文件不受 32MB 同步上限约束。
     前提：OpenSandbox 服务端与目标文件同机、且运行时支持 host mount。
     """
-    resolved = normalize_mode(mode)
+    resolved = normalize_mode(mode) if allow_machine_access else MODE_SANDBOX
     if resolved == MODE_FULL:
         # 完全访问：execute 直接在本机 shell 跑（HostShellBackend）。
         # 不需要同步（文件本来就在本机），也不需要 session_key。
@@ -198,9 +200,10 @@ def build_main_backend(
             session_key=session_key,
             root_dir=workspace,
             prefix=WORKSPACE_PREFIX,  # 对齐虚拟路径与容器路径，见上面的说明
-            routes=build_machine_routes(),
+            routes=build_machine_routes() if allow_machine_access else {},
             sync_before_execute=settings.sandbox_sync_enabled,
             sync_after_execute=settings.sandbox_sync_enabled,
+            allow_machine_mounts=allow_machine_access,
         )
     return _finish_backend(backend)
 
@@ -232,7 +235,7 @@ def execute_allowed() -> bool:
     return bool(settings.sandbox_enabled)
 
 
-def validate_permissions(backend=None, mode: str = MODE_SANDBOX) -> list[str]:
+def validate_permissions(backend=None, mode: str = MODE_SANDBOX, *, allow_machine_access: bool = True) -> list[str]:
     """启动期自检：所有权限路径（主 Agent + 每个子智能体）是否都落在 route 前缀内。
 
     背景：backend 一旦具备执行能力，deepagents 的 `FilesystemMiddleware` 就要求
@@ -248,11 +251,12 @@ def validate_permissions(backend=None, mode: str = MODE_SANDBOX) -> list[str]:
     """
     from deepagents.middleware.filesystem import _all_paths_scoped_to_routes
 
-    backend = backend if backend is not None else build_main_backend(mode=mode)
+    if backend is None:
+        backend = build_main_backend(mode=mode, allow_machine_access=allow_machine_access)
 
     problems: list[str] = []
     sources: list[tuple[str, list]] = [
-        ("主 Agent default_permissions()", default_permissions(mode))
+        ("主 Agent default_permissions()", default_permissions(mode) if allow_machine_access else [])
     ]
 
     # 子智能体：deepagents 会继承父级 backend，所以它们的权限同样受这条约束

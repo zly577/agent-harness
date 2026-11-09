@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
+from app.db.base import Base
 from app.db.models import Session as DbSession, Workspace
 from app.api.routes import sessions
 from app.agent import runtime
@@ -12,8 +13,7 @@ from app.agent import runtime
 @pytest.fixture
 def database(monkeypatch, tmp_path):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    DbSession.__table__.create(engine)
-    Workspace.__table__.create(engine)
+    Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
     monkeypatch.setattr(runtime, "SessionLocal", factory)
     monkeypatch.setenv("HARNESS_WORKSPACE", str(tmp_path))

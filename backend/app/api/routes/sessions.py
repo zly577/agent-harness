@@ -12,15 +12,18 @@
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session as OrmSession
 
 from app.agent import runtime
+from app.agent.access import is_scheduled_session, scheduled_session_status
 from app.agent.runner import run_manager
 from app.api.deps import get_current_user, owned_session_or_404
 from app.api.routes.chat_stream import SSE_HEADERS, sse, stream_events
 from app.db.models import Session as DbSession
-from app.db.models import User, Workspace
+from app.db.models import ScheduledRun, ScheduledTask, User, Workspace
 from app.db.session import get_db
+from app.services.schedule_rules import ACTIVE_RUN_STATUSES, utcnow
 
 router = APIRouter(prefix="/api/v1", tags=["sessions"])
 # Registered directly on the app: these two ticket-authorized endpoints must
@@ -280,14 +283,39 @@ async def delete_workspace(workspace_id: str, user: User = Depends(get_current_u
     rows = db.query(DbSession).filter(DbSession.user_id == user.id, DbSession.workspace_id == workspace_id).all()
     for row in rows:
         await run_manager.stop_and_wait(row.id)
+    # The scheduler may have created another session while we were stopping
+    # the original set. Lock the plans before refreshing the session list.
+    user_id = user.id
+    db.rollback()
+    tasks_in_workspace = (ScheduledTask.user_id == user_id, ScheduledTask.workspace_id == workspace_id)
+    db.execute(update(ScheduledTask).where(*tasks_in_workspace).values(enabled=False, next_run_at=None))
+    workspace = db.get(Workspace, workspace_id, with_for_update=True)
+    if not workspace or workspace.user_id != user_id:
+        raise HTTPException(status_code=404, detail="工作区不存在")
+    rows = db.scalars(
+        select(DbSession).where(DbSession.user_id == user_id, DbSession.workspace_id == workspace_id).with_for_update()
+    ).all()
     if any(run_manager.is_running(row.id) for row in rows):
         raise HTTPException(status_code=409, detail="工作区内仍有任务正在停止，请稍后再删除")
+    stopped = {"status": "stopped", "reason": "已删除任务工作区", "finished_at": utcnow()}
+    db.execute(update(ScheduledRun).where(
+        ScheduledRun.task_id.in_(select(ScheduledTask.id).where(*tasks_in_workspace)),
+        ScheduledRun.status == "queued",
+    ).values(**stopped))
+    _unlink_scheduled_sessions(db, [row.id for row in rows], stopped)
     for row in rows:
         runtime.invalidate_agents(row.id)
         db.delete(row)
     db.delete(workspace)
     db.commit()
     return {"ok": True}
+
+
+def _unlink_scheduled_sessions(db: OrmSession, session_ids: list[str], stopped: dict) -> None:
+    if session_ids:
+        runs = update(ScheduledRun).where(ScheduledRun.session_id.in_(session_ids))
+        db.execute(runs.where(ScheduledRun.status.in_(ACTIVE_RUN_STATUSES)).values(**stopped))
+        db.execute(runs.values(session_id=None))
 
 
 @router.get("/sessions")
@@ -304,14 +332,18 @@ def list_sessions(
     运行与页面无关（见 app/agent/runner.py），所以即使你切到了别的会话，
     侧边栏也能显示"那边还在输出"。
     """
-    rows = (db.query(DbSession)
-            .filter(DbSession.user_id == user.id)
-            .order_by(DbSession.updated_at.desc())
-            .all())
+    rows = db.execute(
+        select(DbSession, ScheduledRun.id)
+        .outerjoin(ScheduledRun, ScheduledRun.session_id == DbSession.id)
+        .where(DbSession.user_id == user.id)
+        .order_by(DbSession.updated_at.desc())
+    )
     out = []
-    for s in rows:
+    for s, scheduled_run_id in rows:
         item = _serialize(s)
         item["running"] = run_manager.is_running(s.id)
+        if scheduled_run_id is not None:
+            item["scheduled"] = True
         out.append(item)
     return out
 
@@ -342,7 +374,10 @@ def rename_session(
 
     s.title = title[:255]
     if req.provider_id is not None:
-        s.provider_id = req.provider_id.strip() or None
+        provider_id = req.provider_id.strip() or None
+        if provider_id != s.provider_id and is_scheduled_session(session_id, db):
+            raise HTTPException(status_code=409, detail="定时任务会话的模型只能在定时任务设置中修改")
+        s.provider_id = provider_id
     db.commit()
     return _serialize(s)
 
@@ -381,6 +416,11 @@ async def get_session_run(
     """
     owned_session_or_404(db, session_id, user)
     run = run_manager.current(session_id)
+    scheduled_status = scheduled_session_status(session_id, db)
+    if scheduled_status is not None and scheduled_status not in ACTIVE_RUN_STATUSES and (
+        run is None or run.suspended
+    ):
+        return {"session_id": session_id, "running": False, "status": "idle", "event_count": 0}
     if run is None:
         from app.agent.approvals import read_pending_approval
         agent = await runtime.get_agent(session_id, user_id=user.id, history_only=True)
@@ -455,6 +495,9 @@ async def delete_session(
     await run_manager.stop_and_wait(session_id)
     if run_manager.is_running(session_id):
         raise HTTPException(status_code=409, detail="任务仍在停止，请稍后再删除会话")
+    _unlink_scheduled_sessions(db, [session_id], {
+        "status": "stopped", "reason": "已删除执行会话", "finished_at": utcnow(),
+    })
     runtime.invalidate_agents(session_id)
     db.delete(s)
     db.commit()

@@ -23,9 +23,10 @@ McpServer：外部 MCP 工具源配置（按用户；headers/env 加密）
 `WHERE user_id = <当前用户>` 永远匹配不到它 —— 即 **fail-closed**：
 最坏情况是"谁都看不到"，绝不会"别人看得到"。
 """
-from datetime import datetime
+from datetime import datetime, time
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, String, Text, Time, UniqueConstraint, func
+from sqlalchemy.dialects.mysql import DATETIME
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -93,6 +94,57 @@ class Session(Base):
         DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
     )
     note: Mapped[str] = mapped_column(Text, default="", comment="备注")
+
+
+_UTC_DATETIME = DateTime().with_variant(DATETIME(fsp=6), "mysql", "mariadb")
+
+
+class ScheduledTask(Base):
+    """User-owned schedule. All persisted datetimes are UTC without an offset."""
+
+    __tablename__ = "scheduled_tasks"
+    __table_args__ = (Index("ix_scheduled_tasks_due", "enabled", "next_run_at"),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(32), index=True)
+    title: Mapped[str] = mapped_column(String(128))
+    prompt: Mapped[str] = mapped_column(Text)
+    # Keep an explicitly selected target ID after deletion so execution can fail closed.
+    workspace_id: Mapped[str | None] = mapped_column(String(32), index=True)
+    provider_id: Mapped[str | None] = mapped_column(String(32))
+    timezone: Mapped[str] = mapped_column(String(128))
+    frequency: Mapped[str] = mapped_column(String(8))
+    time_of_day: Mapped[time | None] = mapped_column(Time)
+    weekdays: Mapped[list[int]] = mapped_column(JSON, default=list)
+    once_at: Mapped[datetime | None] = mapped_column(_UTC_DATETIME)
+    next_run_at: Mapped[datetime | None] = mapped_column(_UTC_DATETIME)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(_UTC_DATETIME)
+    updated_at: Mapped[datetime] = mapped_column(_UTC_DATETIME)
+
+
+class ScheduledRun(Base):
+    """Durable record of a trigger and its associated Agent session, if started."""
+
+    __tablename__ = "scheduled_runs"
+    __table_args__ = (
+        UniqueConstraint("task_id", "scheduled_for", name="uq_scheduled_runs_occurrence"),
+        UniqueConstraint("session_id", name="uq_scheduled_runs_session"),
+        Index("ix_scheduled_runs_task_created", "task_id", "created_at"),
+        Index("ix_scheduled_runs_status_created", "status", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    task_id: Mapped[str] = mapped_column(ForeignKey("scheduled_tasks.id", ondelete="CASCADE"))
+    # Session deletion unlinks this reference while preserving the execution record.
+    session_id: Mapped[str | None] = mapped_column(String(32))
+    trigger_type: Mapped[str] = mapped_column(String(12))
+    scheduled_for: Mapped[datetime | None] = mapped_column(_UTC_DATETIME)
+    status: Mapped[str] = mapped_column(String(24))
+    reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(_UTC_DATETIME)
+    started_at: Mapped[datetime | None] = mapped_column(_UTC_DATETIME)
+    finished_at: Mapped[datetime | None] = mapped_column(_UTC_DATETIME)
 
 
 class ToolCallLog(Base):

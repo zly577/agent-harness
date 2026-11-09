@@ -279,7 +279,18 @@ def machine_mount_prompt_section() -> str:
     return "".join(lines)
 
 
-def build_system_prompt(locale: str | None = None, mode: str = "sandbox", *, workspace: Path | None = None, memory_available: bool = True) -> str:
+def scheduled_task_prompt_section() -> str:
+    return (
+        "\n## 定时任务的权限（以本节为准）\n"
+        "- 文件工具使用 `/workspace/...`，仅访问本次指定的工作区。"
+        "本机磁盘挂载和 MCP 工具在定时任务中不可用。\n"
+        "- `execute` 仅在隔离沙箱运行，每次命令都必须经用户审批。"
+        "命令使用 `/workspace` 中的路径。\n"
+    )
+
+
+def build_system_prompt(locale: str | None = None, mode: str = "sandbox", *, workspace: Path | None = None,
+                        memory_available: bool = True, scheduled: bool = False) -> str:
     """返回主 Agent 的系统提示词（框架规则；偏好由 memory 通道注入）。
 
     本机磁盘挂载说明是**按当前配置动态生成**的（列出真实挂载点），
@@ -302,7 +313,11 @@ def build_system_prompt(locale: str | None = None, mode: str = "sandbox", *, wor
     from app.core.config import settings
 
     resolved = access.normalize_mode(mode)
-    if resolved == access.MODE_FULL:
+    if scheduled:
+        prompt = _PROMPT_HEAD + scheduled_task_prompt_section() + _PROMPT_TAIL
+        if not settings.sandbox_enabled:
+            prompt += "\n当前 OpenSandbox 未启用，定时任务无法执行命令；工作区文件工具仍可用。\n"
+    elif resolved == access.MODE_FULL:
         prompt = (
             _PROMPT_HEAD
             + _FS_TOOLS_FULL
@@ -319,7 +334,7 @@ def build_system_prompt(locale: str | None = None, mode: str = "sandbox", *, wor
             f"- 当前工作区没有可加载的长期记忆文件 `{AGENT_MEMORY_PATH}`。不要为读取缺失的记忆文件反复调用工具。需要保存偏好时先创建此文件。")
     else:
         prompt = prompt.replace("它已在启动时加载进这段提示词。", "它在会话开始时加载为记忆基线，后续变更通过更新通知提供。")
-    if workspace is not None:
+    if workspace is not None and not scheduled:
         prompt += current_workspace_prompt_section(workspace, resolved)
     if getattr(settings, "intent_label_enabled", True):
         prompt += render_intent_prompt_section(locale or getattr(settings, "intent_locale", "zh"))

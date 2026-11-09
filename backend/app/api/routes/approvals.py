@@ -31,7 +31,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session as OrmSession
 
-from app.agent import approvals, runtime
+from app.agent import access, approvals, runtime
 from app.agent.runner import run_manager
 from app.api.deps import get_current_user, owned_session_or_404
 from app.api.routes.chat_stream import SSE_HEADERS, sse, stream_events
@@ -39,6 +39,7 @@ from app.core.crypto import scrub_secrets
 from app.db.models import User
 from app.db.session import get_db
 from app.schemas.approval import ApprovalCheckResponse, ApprovalDecideRequest, ClarificationAnswerRequest
+from app.services.schedule_rules import ACTIVE_RUN_STATUSES
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,11 @@ _state: dict[str, dict] = {}
 
 def _config(session_id: str) -> dict:
     return {"configurable": {"thread_id": session_id}}
+
+
+def _require_resumable_schedule(status: str | None) -> None:
+    if status not in ACTIVE_RUN_STATUSES:
+        raise HTTPException(status_code=409, detail="本次定时任务已结束，无法继续")
 
 
 # ===== 人工介入开关（热插拔）=====
@@ -110,6 +116,8 @@ async def _resume_pending(session_id: str) -> str | None:
     归属不在这里校验：调用方（开关路由）已经限定在"当前用户的会话"范围内。
     这里用 `session_owner()` 拿到归属只是为了给 get_agent 定位工作区。
     """
+    if access.is_scheduled_session(session_id):
+        return None
     owner = runtime.session_owner(session_id)
     agent = await runtime.get_agent(session_id, user_id=owner)
     info = await approvals.read_pending_approval(agent, _config(session_id), user_id=owner)
@@ -148,6 +156,9 @@ async def check_approval(
 ):
     """查看该会话当前是否有待审批项（含全部中断）。"""
     owned_session_or_404(db, session_id, user)
+    status = access.scheduled_session_status(session_id, db)
+    if status is not None and status not in ACTIVE_RUN_STATUSES:
+        return ApprovalCheckResponse(session_id=session_id, pending=False)
     agent = await runtime.get_agent(session_id, user_id=user.id, history_only=True)
     info = await approvals.read_pending_approval(agent, _config(session_id), user_id=user.id)
     return ApprovalCheckResponse(
@@ -168,7 +179,10 @@ async def decide(
 ):
     """批准或拒绝当前待审批项，并以 SSE 流回恢复执行的过程与最终回复。"""
     owned_session_or_404(db, session_id, user)
-    agent = await runtime.get_agent(session_id, user_id=user.id)
+    status = access.scheduled_session_status(session_id, db)
+    if status is not None:
+        _require_resumable_schedule(status)
+    agent = await runtime.get_agent(session_id, user_id=user.id, history_only=status is not None)
     info = await approvals.read_pending_approval(agent, _config(session_id), user_id=user.id)
     if not info.get("actions"):
         # 说清楚"为什么没有了"：前端据此**关闭弹窗并同步**，而不是把它当成一次
@@ -191,6 +205,10 @@ async def decide(
     decided = sum(len(g.get("decisions") or []) for g in resume.values()) if isinstance(resume, dict) \
         else len(resume)
 
+    if status is not None:
+        # The interrupt read yielded to stop/delete. Read the latest committed status
+        # outside the request's existing MySQL snapshot before starting a resume.
+        _require_resumable_schedule(access.scheduled_session_status(session_id))
     try:
         run = run_manager.start(session_id, runtime.resume_input(resume), user_id=user.id)
     except RuntimeError as exc:
@@ -227,14 +245,19 @@ async def answer_question(
 ):
     """Answer exactly one clarification; operation approvals remain untouched."""
     owned_session_or_404(db, session_id, user)
+    status = access.scheduled_session_status(session_id, db)
+    if status is not None:
+        _require_resumable_schedule(status)
     if not req.cancelled and not req.answer.strip():
         raise HTTPException(status_code=422, detail="请填写回答或选择取消任务")
     if run_manager.is_running(session_id):
         raise HTTPException(status_code=409, detail="回答已提交，正在处理中，请稍候")
-    agent = await runtime.get_agent(session_id, user_id=user.id)
+    agent = await runtime.get_agent(session_id, user_id=user.id, history_only=status is not None)
     info = await approvals.read_pending_approval(agent, _config(session_id), user_id=user.id)
     if not any(question["id"] == req.interrupt_id for question in info.get("clarifications", [])):
         raise HTTPException(status_code=409, detail="当前无待回答问题（问题已处理或已失效）")
+    if status is not None:
+        _require_resumable_schedule(access.scheduled_session_status(session_id))
     # No await between checking the current interrupt and starting: duplicate requests cannot claim it twice.
     try:
         run = run_manager.start(session_id, runtime.resume_input({question["id"]: {

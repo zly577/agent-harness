@@ -53,7 +53,8 @@ async def get_access_config(
     """
     if session_id:
         owned_session_or_404(db, session_id, user)
-    return AccessConfigResponse(**access.access_state(session_id, user.id))
+    scheduled = access.is_scheduled_session(session_id, db)
+    return AccessConfigResponse(**access.access_state(session_id, user.id, scheduled=scheduled))
 
 
 @router.put("/config", response_model=AccessConfigResponse)
@@ -79,6 +80,10 @@ async def set_access_config(
 
     if req.session_id:
         owned_session_or_404(db, req.session_id, user)
+        if access.is_scheduled_session(req.session_id, db):
+            if mode != access.MODE_SANDBOX:
+                raise HTTPException(status_code=409, detail="定时任务会话固定使用沙箱权限")
+            return AccessConfigResponse(**access.access_state(req.session_id, user.id, scheduled=True))
         scope = "session"
     elif req.scope == "global":
         if (user.role or "").lower() != "admin":

@@ -39,7 +39,11 @@ from __future__ import annotations
 
 import logging
 
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
 from app.core.config import settings
+from app.db.session import SessionLocal
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +89,23 @@ _user_mode: dict[str, str] = {}
 _session_mode: dict[str, str] = {}
 
 
+def scheduled_session_status(session_id: str | None, db: Session | None = None) -> str | None:
+    """Read a session's durable schedule association, if any."""
+    if not session_id:
+        return None
+    from app.db.models import ScheduledRun
+
+    statement = select(ScheduledRun.status).where(ScheduledRun.session_id == session_id)
+    if db is not None:
+        return db.scalar(statement)
+    with SessionLocal() as session:
+        return session.scalar(statement)
+
+
+def is_scheduled_session(session_id: str | None, db: Session | None = None) -> bool:
+    return scheduled_session_status(session_id, db) is not None
+
+
 def access_mode(session_id: str | None = None, user_id: str | None = None) -> str:
     """该会话/该用户当前的权限模式。优先级：会话 → 用户 → 全局默认。"""
     if not settings.harness_allow_full_access:
@@ -128,19 +149,19 @@ def set_access_mode(mode: str, session_id: str | None = None,
     return resolved
 
 
-def access_state(session_id: str | None = None, user_id: str | None = None) -> dict:
+def access_state(session_id: str | None = None, user_id: str | None = None, *, scheduled: bool = False) -> dict:
     """给前端/接口看的模式状态。"""
-    current = access_mode(session_id, user_id)
+    current = MODE_SANDBOX if scheduled else access_mode(session_id, user_id)
     return {
         "mode": current,
         "label": MODE_LABELS.get(current, current),
         "full_access": current == MODE_FULL,
-        "scope": "session" if (session_id and session_id in _session_mode)
+        "scope": "session" if (scheduled or session_id in _session_mode)
                  else ("user" if (user_id and user_id in _user_mode) else "global"),
         "global_default": _global_mode,
         "user_overrides": dict(_user_mode),
         "session_overrides": dict(_session_mode),
-        "valid_modes": list(VALID_MODES) if settings.harness_allow_full_access else [MODE_SANDBOX],
+        "valid_modes": list(VALID_MODES) if settings.harness_allow_full_access and not scheduled else [MODE_SANDBOX],
     }
 
 
